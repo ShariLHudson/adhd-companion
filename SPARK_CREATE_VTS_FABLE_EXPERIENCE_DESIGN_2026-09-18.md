@@ -339,7 +339,7 @@ The member arranges, and Spark keeps up with the meaning: moving a card into a g
 
 ### Phone
 
-Full VTS arrangement on a phone is precision-hostile. The phone VTS view therefore offers the same meaning with a lighter interaction model: cards in a scrollable vertical list grouped by their current groups, with drag handles to reorder and a per-card **Move to…** action to change groups. Connections show as text on the card (*leads to: Timeline*). A **See the layout** button shows the spatial view zoomable and read-only for orientation. Spark says, once: *You can rearrange here, or open this on a tablet or laptop to move things around freely.* Nothing is lost on phone; the arrangement is simply done through ordering and grouping rather than free placement. Voice works fully: *put pricing under offers*.
+The phone shows the same full canvas as tablet and desktop, zoomable, with interaction adapted so nothing depends on finger-drag precision. One-finger drag on empty space pans; pinch zooms. Tapping a card selects it (large target) and shows a compact chip: **Move** · **Into group** · **Connect** · **Words**. Moving happens in any of three equivalent ways: **tap-to-place** (tap Move, then tap where the card should go; it lands there, no drag), **zoomed local drag** (double-tap a region to zoom in; inside it, dragging the selected card is precise because targets are large, and two-finger drag still pans), or **conversational placement** (*put pricing under offers*, *B goes at month two*). When a card sits in an ordered group, the chip adds **Before / After**. **Into group…** lists groups by name plus *new group*. Spatial meaning (proximity, position on a timeline, deliberate separation) is fully available on phone. The grouped list of cards and relationships remains available as the accessibility view (Section 22), not as a phone substitute. Corrected in Founder Decision Round 2 for capability parity.
 
 ### Tablet
 
@@ -461,7 +461,7 @@ Selection also sets conversational scope: with the headline selected, *make it b
 
 ### Moving and resizing
 
-Tablet and desktop: drag to move, drag corners to resize, with snapping that the member does not configure. Phone: dragging is replaced by nudge arrows on the chip and **Bigger / Smaller** steps, because finger-drag precision on a phone produces frustration and accidental changes. A phone member who wants free movement is offered the editable escalation (Section 17) or told, honestly, that a tablet or laptop allows free dragging.
+Tablet and desktop: drag to move, drag corners to resize, with snapping that the member does not configure. Phone: the same moves are done by select-then-place. Tap the element, tap **Move**, tap where it goes; or double-tap to zoom into a region and drag within it with large targets; or say it (*put the logo bottom right*). Nudge arrows and **Bigger / Smaller** steps remain on the chip as extra precision tools. Free finger-drag on an unzoomed phone canvas is not the primary path because it produces accidental moves, but no movement capability is absent on phone. Corrected in Founder Decision Round 2 for capability parity.
 
 ### Text editing
 
@@ -686,7 +686,7 @@ Secondary (only when supported and the member has expressed the intent):
 
 - **Share**, **Send**, **Publish**, **Continue in Canva** (Section 17)
 
-Each action has a one-line description under it that states honestly what it does and does not do, for example *Save to my Drive: puts a copy in your Drive. Changes here won't update it.*
+Each action has a one-line description under it that states honestly what it does and does not do, for example *Save to my Drive: puts a copy in Spark Estate in your Drive. Changes here won't update it.*
 
 ### What "done" means
 
@@ -710,13 +710,15 @@ Autosave is silent and continuous. **Save** means *I want to keep this*: it crea
 
 ### Save to my Drive
 
-Appears only when a proven Drive connection exists. Doing it places a copy in the member's Drive. Spark states the boundaries once, in the confirmation:
+Appears only when a proven Drive connection exists. Doing it places a copy in the member's Drive.
 
-> Copied to your Drive as "Workshop handout". If you change it here, that copy stays as it is until you save it again.
+**Destination (Founder Decision 57, LOCKED).** The first time a member explicitly saves to Drive, Spark establishes a member-controlled default in one exchange: *I'll put Spark creations in My Drive / Spark Estate. Fine, or somewhere else?* with **Fine** as the one-tap answer and *somewhere else* opening the member's folder picker through the proven connection. That is the only time the member is asked. Every later save uses the default, and Spark names it in the confirmation:
 
-Later Spark edits never overwrite the Drive copy silently. Saving again offers *replace the Drive copy* or *save a new copy*, and the default is a new copy. Deleting in Spark never deletes the Drive copy, and Spark says so at deletion time.
+> Copied to Spark Estate in your Drive as "Workshop handout". If you change it here, that copy stays as it is until you save it again.
 
-Where the copy goes inside Drive (folder choice) is a FOUNDER DECISION (Section 30).
+A one-time instruction (*put this in my Workshop folder*) does exactly that, once, and does not change the default; Spark says *Put it in Workshop this time. Spark Estate stays your usual spot.* An ongoing preference (*from now on put these in Workshop*) changes the default if the proven Drive capability supports it, confirmed once. Spark never creates folder hierarchies unless the member explicitly chooses that organization.
+
+Later Spark edits never overwrite the Drive copy silently. Saving again creates a new copy by default. *Replace the earlier copy* is offered only if the proven connection supports replacing a file in place; otherwise Spark says a new copy was made. Spark never says "replaced", "updated", "synced", or "moved" about a Drive file beyond what the connection actually did. Deleting in Spark never deletes the Drive copy, and Spark says so at deletion time.
 
 ### Export
 
@@ -728,7 +730,8 @@ Delete is intentional, confirmed, and scoped:
 
 - If the artifact is one of several in a Set: *Delete just this version, or the whole set?* with *just this version* as default.
 - The confirmation states what will not be affected: *Your Drive copy stays. Nothing else in Spark changes.*
-- After deletion, Spark says *Deleted.* If structured history permits, a short *Put it back* option follows for a brief period. Whether deleted work has any grace period is a FOUNDER DECISION (Section 30).
+- If the item was praised or saved, the confirmation adds one line so the member knows what they are deleting: *You saved this one on Tuesday.*
+- After deletion, Spark says *Deleted.* Immediately afterward, *undo* or *put it back* reverses it exactly like any other change, until the member moves on. After that, it is gone. There is no trash screen, retention setting, or recovery system. The immediate undo depends on structured history (unproven); if unavailable, the confirmation alone is the protection and Spark does not offer an undo it cannot perform. Resolved by canonical rule; see Founder Decision Round 2.
 
 ### Status
 
@@ -779,7 +782,7 @@ The Set records that this piece was continued in Canva, so the finder can answer
 
 ### Phone / Tablet / Desktop
 
-Phone: escalation is most often triggered on phone, because dragging is hardest there. The offer includes the honest alternative *or open this on your tablet or laptop, where you can drag pieces here in Spark.* Tablet and desktop: same offer, without that line.
+Phone: escalation is most often triggered on phone, because members try to finger-drag a flat image there. Before offering an external editor, Spark first names what the phone can already do: *I can remake this with the pieces separate so you can move each one here.* The external offer follows only if the member wants an outside editor. Tablet and desktop: same sequence.
 
 ---
 
@@ -875,7 +878,7 @@ Zero required tutorial, a few short optional demonstrations.
 
 Each demo is a short captioned recording of the real product on the member's device class (phone demo on phone, tablet demo on tablet). Captions are on by default. Demos can be paused, scrubbed, and closed at any moment. They play in a sheet over the current work; closing returns exactly where the member was. No demo autoplays. No demo is a slideshow of tips.
 
-Voice, captions, and narration style are a FOUNDER DECISION (Section 30).
+Captions are required (accessibility). Whether demos are also narrated is proposed Founder Decision 58 (Section 30), not yet locked; the experience-design recommendation is captioned only for V1.
 
 ---
 
@@ -909,7 +912,7 @@ Under the stage, a quiet line states what the creation was made from: *Made from
 
 - **Brand chip**: when a Brand Profile is in use, a small chip under the stage reads *Using your Studio brand*. A style experiment (*try it in navy*) shows *Trying navy, just here*. Nothing about the Brand Profile changes. If the member wants the experiment kept as brand, they say so, and Spark takes them to the Brand Profile to confirm there. Local experiments never write to canonical brand.
 - **Business context**: when Spark uses Business Understanding (a client name, an offer, a price), the provenance line names it (*using what I know about the Retreat offer*). Known does not mean relevant: Spark uses business context only when the thread makes it relevant, and says what it used so the member can correct it. Nothing said inside a creation rewrites Business Understanding.
-- **Client boundaries**: a creation for one client never draws on another client's material or context. If the thread is ambiguous about which client (two clients named Kerry), Spark asks that one question before using either client's context, because the cost of getting it wrong is not cheap or reversible. How firmly client context is confirmed at thread start is a FOUNDER DECISION (Section 30).
+- **Client boundaries** (Founder Decision 56, LOCKED): a creation for one client never draws on another client's material or context. When the thread establishes the client unambiguously (the member names them, the material is theirs, or the thread was re-entered from that client's work), that boundary stays active for the whole thread and across legitimate re-entry, and Spark does not re-confirm it. Spark asks the smallest question, before using any client-specific information, only when no client is established, more than one is materially plausible, or the available context conflicts (*This is for Kerry at Northwind, right?*). Cross-client information is never inferred across an ambiguous boundary. If the boundary cannot be resolved, Spark proceeds without client-specific context and says so. No reassurance confirmations.
 
 ### Uncertainty in visuals
 
@@ -947,7 +950,7 @@ Accessibility is structural.
 ### Screen readers
 
 - Artifacts carry a generated text description (*One-page handout: headline, three sections, one photo of a group*) that Spark also uses to describe changes.
-- VTS canvases expose their cards and relationships as a structured list (the same list the phone VTS uses), so the arrangement is readable without sight.
+- VTS canvases expose their cards and relationships as a structured, grouped list on every device, so the arrangement is readable and editable (order, group, connect) without sight.
 
 ### Cognitive
 
@@ -981,7 +984,7 @@ Phone is designed as its own thing, not a shrunk desktop. It emphasizes voice, c
 
 ### VTS on phone
 
-Ordering-and-grouping list with a read-only spatial view (Section 6). Voice works fully.
+Full canvas with select-then-place: tap-to-place, zoomed local drag, Before/After, Into group, Connect, and conversational placement (Section 6). Voice works fully. Nothing is read-only.
 
 ### Capture-first behavior
 
@@ -1156,15 +1159,15 @@ Member: *"I think that's it."*
 
 Spark: *One thing: the last line gets cut off when printed. Fix it, or leave it?* Member taps **Fix it**. Spark tightens spacing, marks it: *Fits now.*
 
-Sheet opens. Member taps **Save in Spark**: *Saved this version.* Then **Print**: preview on a letter page, then the system print dialog. Then **Save to my Drive** (proven connection): *Copied to your Drive as "Workshop handout". Changes here won't update it unless you save it again.*
+Sheet opens. Member taps **Save in Spark**: *Saved this version.* Then **Print**: preview on a letter page, then the system print dialog. Then **Save to my Drive** (proven connection), for the first time ever: *I'll put Spark creations in My Drive / Spark Estate. Fine, or somewhere else?* Member taps **Fine**. Spark: *Copied to Spark Estate in your Drive as "Workshop handout". Changes here won't update it unless you save it again.*
 
-Later, the member changes the headline in Spark. Spark does not touch the Drive copy. If they Save to Drive again: *Replace the Drive copy, or save a new one?* Default: new one.
+Later, the member changes the headline in Spark. Spark does not touch the Drive copy. If they Save to Drive again, Spark makes a new copy and says so: *Saved a new copy, "Workshop handout (2)", in Spark Estate.* If replacing in place is a proven capability, *replace the earlier copy* is offered as the secondary choice. No folder question is asked again.
 
 ### I. Phone capture → tablet visual work → desktop completion
 
 **Phone, in a car park.** Voice: *"Idea for the retreat: three days, day one is grounding, day two is the hard stuff, day three is planning. And some kind of evening thing each night. Don't make it yet, just hold it."*
 
-Spark: *Got it. I'll hold it.* It sits as a thread with material only. No task, no project.
+Spark: *Got it. I'll hold it.* Nothing is created: no artifact, task, project, reminder, or copy anywhere else. The conversation simply keeps the member's words and the intention Spark understood. It appears under Continue something only because the member asked Spark to hold it, and it stops appearing if they later say *forget that*.
 
 **Tablet, that evening.** Continue something shows *Retreat idea, from this afternoon.* Tap. Spark: *You gave me the three-day shape and the evening idea. Want a first version, or want to lay it out first?* Member: *"Lay it out."* Canvas: three day cards, three evening cards. Member drags evenings under days, groups "hard stuff" with two sub-cards they add by voice.
 
@@ -1215,7 +1218,7 @@ I tried to break the design. Each finding states the risk, where it bites, and t
 
 **Brand contamination.** Risk: a "try it in navy" experiment leaks into the Brand Profile. Mitigation: local experiments never write to canonical brand; the chip says *just here*; promotion requires going to the Brand Profile. Verified by design, not by implementation.
 
-**Cross-client contamination.** Risk: Spark pulls client A's pricing into client B's proposal. Mitigation: one-question client confirmation when ambiguous before using any client context; provenance line names the client context used. This is the one place the design chooses asking over showing, because the mistake is not cheap. FOUNDER DECISION on strictness (Section 30).
+**Cross-client contamination.** Risk: Spark pulls client A's pricing into client B's proposal. Mitigation (Founder Decision 56, LOCKED): an established client boundary persists through the thread and re-entry without re-confirmation; when the boundary is genuinely ambiguous, Spark asks one recognition question before using any client context; nothing is inferred across an ambiguous boundary; the provenance line names the client context used. This is the one place the design chooses asking over showing, because the mistake is not cheap.
 
 **Conversational scope ambiguity.** Risk: *make it pop* redesigns everything. Mitigation: the scope ladder, marked changes, praised-work protection, and *you changed too much* as a recognized correction.
 
@@ -1223,7 +1226,7 @@ I tried to break the design. Each finding states the risk, where it bites, and t
 
 **False verification confidence.** Risk: a readiness line implies more than was checked. Mitigation: three honest shapes, "couldn't check" language, no badge. Residual: the phrase *looks ready* could still be read as a guarantee. Recommendation: pair it with the specific checks every time, never alone.
 
-**Version clutter.** Risk: Try another used ten times produces a strip of ten near-identical thumbnails. Mitigation: Spark labels alternatives with what differs; after five alternatives Spark may offer, once, *want me to keep the two you liked and tuck the rest away?* (tucked items remain in Restore). FOUNDER DECISION on whether tucking exists in V1.
+**Version clutter.** Risk: Try another used ten times produces a strip of ten near-identical thumbnails. Mitigation: Spark labels alternatives with what differs and folds the strip on its own: it shows the current item, anything praised or saved, and the most recent alternative, with *and 4 more* at the end for the rest. Nothing is hidden from Restore and the member never sorts. Resolved by canonical rule (the system carries structure; information does not automatically deserve attention); see Founder Decision Round 2.
 
 **Re-entry failure.** Risk: the re-entry line is generic (*You were working on a graphic*). Mitigation: the line must come from the last intent in the thread, not from the artifact type. If the thread has no clear last intent, Spark shows the thumbnail and asks nothing.
 
@@ -1250,7 +1253,7 @@ Ranked by how likely they are to hurt a real member.
 3. **Set strip growth** after many alternatives. Mitigated by labels and optional tucking.
 4. **Reading Spark's one-line explanations.** Members will skim. Every important fact (what changed, what was used, what was checked) is also visible on the stage as a marker, chip, or provenance line, so skimming loses nothing critical.
 5. **Phone keyboard covering the work.** Mitigated by the stage strip; must be tested with real on-screen keyboards, including split and floating keyboards on iPad.
-6. **Client-context confirmation** adds one question at the start of some threads. It is the right trade, but it must be phrased as recognition (*This is for Kerry at Northwind, right?*) with a one-tap yes.
+6. **Client-context confirmation** adds one question only when the client boundary is genuinely ambiguous (Founder Decision 56), never at thread start by default and never as re-confirmation. When it happens it must be phrased as recognition (*This is for Kerry at Northwind, right?*) with a one-tap yes.
 7. **VTS on phone** asks the member to think in lists rather than space. Voice keeps it usable; the honest bigger-screen suggestion keeps it from feeling like a dead end.
 
 ---
@@ -1270,19 +1273,27 @@ Ranked by how likely they are to hurt a real member.
 
 ## 30. FOUNDER DECISION NEEDED
 
-These cannot be answered from the brief without inventing product truth.
+Updated after Founder Decision Round 2 (see `SPARK_CREATE_VTS_FOUNDER_DECISION_ROUND_2_2026-09-18.md`).
 
-1. **Client-context confirmation strictness.** When a thread plausibly concerns a client, should Spark always confirm the client once before using any client context (safest, one extra tap), or only when two or more clients are plausible (fewer questions, higher contamination risk)? This report's design assumes "only when ambiguous"; the safer choice is "always once".
-2. **Deleted-work grace period.** Should Delete offer a short *Put it back* window, and for how long? Depends on structured history, which is unproven. Design assumes a brief window if history permits, otherwise immediate.
-3. **Drive destination.** When the member says *save this to my Drive*, where does the copy go: a Spark-managed folder, the Drive root, or a member-chosen folder each time? Design assumes a single Spark folder with a one-time choice, but this touches the Drive capability boundary.
-4. **Tucking alternatives.** Should the Set strip support tucking away unwanted alternatives in V1, or is that version management by another name? Design treats it as optional and offered once.
-5. **Welcome threshold.** Is "actively touched, left mid-action, plausibly useful now" the right bar for the single Welcome card, or should the bar be higher (only work with a pending Spark action) or lower (any work touched this week)?
-6. **Try another default.** One alternative (design assumption) or two side by side on tablet and desktop?
-7. **Phone VTS scope.** Is the ordering-and-grouping list plus read-only spatial view the right V1 for phone, or should phone offer constrained free placement (large cards, snap-to-grid) despite precision risk?
-8. **Demo voice and style.** Narrated, captioned only, or both? Whose voice? Length ceiling of 45 seconds is a design assumption.
-9. **Capture-and-hold.** When a phone member says *just hold it*, the design keeps it as a material-only thread findable under Continue something. Should it also be reachable from Parking Lot or Clear My Mind, or is that a cross-area link that needs its own decision?
-10. **"Looks good" semantics.** Design treats it as "stop offering alternatives, move toward finishing". Should it instead create a Save checkpoint automatically? That would blur Save and approval, so the design says no, but it is a product-feel call.
-11. **Brand promotion path.** When a member wants a local style experiment to become brand, should Spark offer to open the Brand Profile with the values pre-filled, or only navigate there? Pre-filling touches Brand authority.
+**Locked by the Founder:**
+
+1. **Client-context confirmation.** Founder Decision 56, LOCKED. Spark asks only when the boundary is genuinely ambiguous, never re-confirms an established context, and never infers across an ambiguous boundary. Applied in Sections 21, 27, 28, 31.
+3. **Drive destination.** Founder Decision 57, LOCKED. One-time member-controlled default (preferred: My Drive / Spark Estate), one-time instructions do not change it, no hierarchies, no Drive claims beyond proven capability. Applied in Sections 15, 16 and Scenario H.
+
+**Resolved by existing canonical rules (no Founder judgment needed):**
+
+2. **Deleted-work grace period.** Delete is confirmed, immediately undoable, then gone. No trash.
+4. **Tucking alternatives.** Spark folds the Set strip itself; no member tucking.
+5. **Welcome threshold.** An intention test (restatable unfinished intention, not closed by the member), not a time threshold.
+6. **Try Another default.** One alternative on every device; screen size changes presentation, not count.
+7. **Phone VTS scope.** Full canvas with select-then-place; capability parity. Sections 6, 9, 23 corrected.
+9. **Capture-and-hold.** *Hold it* creates nothing; one record; found by memory; listed under Continue something only because the member asked Spark to hold it.
+10. **"Looks good" semantics.** A protecting reaction, not a Save.
+11. **Brand promotion path.** Spark carries the proposed value into the Brand Profile's own confirmation, pre-filled; canonical truth changes only on confirmation there.
+
+**Still open for the Founder:**
+
+8. **Demo voice and style.** Proposed Founder Decision 58: captioned only (recommended for V1) or narrated plus captions. Not locked.
 
 ---
 
@@ -1301,7 +1312,7 @@ Each of these improves the experience without new agents, rooms, dashboards, dat
 9. **Cap Whole → Many at one artifact per turn** with a stated plan for the rest. Prevents explosion without limiting ambition.
 10. **Use the member's own words as labels wherever they exist** (Set labels, Restore labels, finder context). Cheapest possible recognition aid.
 11. **Validate the on-screen keyboard behavior early** on iPhone, Android, and iPad split/floating keyboards. It is the single most likely place phone continuity breaks in practice.
-12. **Pilot the client-confirmation question with real members** before choosing strictness (Decision 1). It is the one deliberate exception to show-before-asking and deserves evidence.
+12. **Validate Spark's detection of client ambiguity** (no client established, several plausible, conflicting context) with real member threads. Founder Decision 56 fixes the rule; its safety depends on that detection being reliable.
 
 ### The 12/10 test, applied to this design
 
