@@ -5,7 +5,9 @@
 
 **Outcome.** Every room in scope now asks One Brain (Boundary → `permitsFor`) before it stores the member's words or moves forward. When the member asks something, asks what Spark meant, says "I don't know, help me", corrects Spark, or gives a bare "Yes." to an open question, the room holds. It explains its own question in its own words, and the question stays pending for the next turn.
 
-In the real-room certification matrix, divergence fell from **61 of 120 cells (OB-1) to 8 of 120**, and to **4 of 165** once the brief's extra phrasings and distress are included. Every remaining divergence is the Rhythm correction defect, which OB-4 owns.
+In the real-room certification matrix, divergence fell from **61 of 120 cells (OB-1) to 2 of 120** after OB-2R. It is **4 of 165** with the OB-2 extra phrasings and distress, and **4 of 285** with the OB-2R uncertainty and clarification phrasings. Every remaining divergence is the Rhythm post-execution correction defect, which OB-4 owns. Current Focus non-event Create is certified separately; it is async, so it sits outside the synchronous matrix (§18).
+
+> **Correction (OB-2R).** The original OB-2 text said "8 of 120", which did not match its own committed baseline. It also counted Board meeting's "I don't know" as green only through a declared exception, `acceptsUnknown`. The Founder has since rejected that exception. §18 gives the exact before and after.
 
 With the kill switch set to `0`, the matrix reproduces the OB-1 baseline **exactly**.
 
@@ -25,7 +27,7 @@ With the kill switch set to `0`, the matrix reproduces the OB-1 baseline **exact
 | | |
 |---|---|
 | Branch | `ob2/one-brain-hold-answer`, created from `c1110a89` |
-| Ending SHA | `6b48a4bc9b755233f4568d2bca7855ce2cb0e3d8` (local commit on `ob2/one-brain-hold-answer`) |
+| Ending SHA | OB-2 `6b48a4bc9b755233f4568d2bca7855ce2cb0e3d8`; **OB-2R `3a30dc26a0791a395e88d249dce11da635c7a59d`** (local commits on `ob2/one-brain-hold-answer`) |
 | Pushed | **No.** Pushing any branch in this repository triggers a Vercel preview, and the brief asks for no push until the Founder authorizes one after local certification. A patch or review pack is delivered alongside this report. |
 
 ## 3. Files changed
@@ -132,7 +134,7 @@ room: proceed → its own domain validation, then store / advance exactly as bef
 | Yes/no question | A HIGH `accept`/`decline` is the answer → `proceed` (Claire confirmation) |
 | `acceptsQuestions` | The room's question invites a question as its answer, so a HIGH `ask` proceeds. Used by Board intake's first step and the Strategy Chamber opening. |
 | `hasCorrectionSpecialist` | A HIGH `correct` goes to the room's own correction specialist. Used by Claire's confirmation contract ("modified"). |
-| `acceptsUnknown` (+ `unknownWithHelp`) | The room's own answer affordance accepts "I don't know" as information. The gate returns an **`unknown` verdict** (with a `helpRequested` flag) and the room applies its own semantics. **Board meeting:** a settled unknown the Directors reason with, with help riding along (R3F-5B, Founder-certified). **Events:** pause the question and come back later; a help request still holds and helps. |
+| ~~`acceptsUnknown`~~ | **Removed in OB-2R (Founder decision).** A HIGH `unsure` holds with `help_with_pending` in every room, including Board and Events. A test now enforces that no room can declare uncertainty to be an answer. |
 | `openingInvitation` | An opening invitation (Strategy Chamber's first question, Board intake's "decision, situation, or question") accepts anything the member offers. It holds only for a request to explain the invitation, or for distress. |
 | Room question + "No, <content>" | A room asked a question, not an offer, so "No, I don't have savings set aside." answers it. `decline_with_content` proceeds. It stays LOW (check) in main chat, where offers exist. |
 | Everything else | `hold`, with `explain_own_last_contribution`, `answer_question`, `help_with_pending`, `apply_or_confirm_correction`, `acknowledge_and_release`, `pause_for_person` or `check_meaning` |
@@ -151,8 +153,8 @@ room: proceed → its own domain validation, then store / advance exactly as bef
 | Main chat (Boundary) | `resolveConversationBoundary` reconciliation | — (the model answers in chat) | Turn claim, legacy-clear guard, Create grant |
 | Claire — confirmation pending | `resolveClaireConfirmationTurn` → Claire's contract | "I'm checking before I save anything…" | A question no longer falls into the decline branch that dropped the candidate |
 | Board intake | `boardIntakeTurn` (and `answerBoardIntakeStep` delegates to it) | Per step: decision / why now / options / concerns | The UI shows the hold reply under the question. The chat sticky-intake route returns the hold reply. "Start with decision only" is gated. |
-| Board meeting | `applyBoardMemberAnswers` | The asking **Director** replies through the existing `memberAskedYou` seam | The Board's local clarification/correction detection is replaced (legacy only with the switch off). "I don't know" stays a **settled unknown** through One Brain's `unknown` verdict. Questions embedded beside a real answer still travel with the answer (3F-5B); One Brain judges the statement part. |
-| Events | `applyEventConversationalAnswer` (entrance, chat and Current Focus all call it) | Per foundation section (event type, purpose, audience, …), with a section-label fallback | A hold writes **nothing** to the event record. A plain "I don't know (yet)" is One Brain's `unknown`, which Events applies as its certified defer (pause, next question). "…help me figure it out" holds and helps. Events keeps only its domain dispositions. |
+| Board meeting | `applyBoardMemberAnswers` | The asking **Director** replies through the existing `memberAskedYou` seam | The Board's local clarification/correction detection is replaced (legacy only with the switch off). OB-2R: a HIGH "I don't know" / "help me figure that out" **holds with `help_with_pending`**, and the asking Director helps. A factual unknown stated as the answer ("No revenue yet") still proceeds. Questions embedded beside a real answer still travel with the answer (3F-5B); One Brain judges the statement part. |
+| Events | `applyEventConversationalAnswer` (entrance, chat and Current Focus all call it) | Per foundation section (event type, purpose, audience, …), with a section-label fallback | A hold writes **nothing** to the event record. OB-2R: every HIGH `unsure` ("I don't know.", "I'm not sure.", "help me figure that out") **holds and helps**; there is no automatic defer. An explicit decline of the optional question ("skip it", "not now") is still Events' skip. Events keeps only its domain dispositions. |
 | Strategy Apply | `processStrategyApplyTurn` | Per question (problem / better / constraints), with a strategy fallback | The local `isWorkflowConceptQuestion` is replaced |
 | Strategy Chamber | `applyGuidedJourneyAnswer` | Opening vs. later questions | A hold changes only Shari's reflection. A held opening is no longer handed to chat. |
 | Day Designer (Plan My Day) | `dayDesignerTurn` / `processDayDesignerMessage` | Per step (time / energy / environment / priorities) | The chat shows the hold reply; a hold never builds a plan |
@@ -170,9 +172,9 @@ room: proceed → its own domain validation, then store / advance exactly as bef
 | OB-2, plus "I don't know. Help me…", "No, that's not what I meant." and distress | 165 | **4** |
 | OB-2 with `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0` | 120 | **Every observed room behavior identical to OB-1, cell for cell** (asserted) |
 
-**One documented room expectation.** Board meeting declares `acceptsUnknown`. For the two unsure situations, its expected outcome is therefore "stored as a settled unknown and moved on", not a hold (R3F-5B, Founder-certified). In the drivers this is declared as data (`acceptsUnknown: true`), not inferred.
+**No room exceptions (OB-2R).** The Board meeting `acceptsUnknown` expectation has been removed. Every room is now judged against the same contract.
 
-The OB-2 matrix, with One Brain on:
+The matrix, with One Brain on, after OB-2R (Board meeting "unsure" cells are now true holds, not exceptions):
 
 | Room | clarify | ask | unsure | don't-know+help | correct | not-what-I-meant | bare yes | decline | frustrated+clarify | distress | real answer |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -216,9 +218,9 @@ The OB-2 matrix, with One Brain on:
 | Board meeting | `detectConversationalMove`, `detectHelpRequest` | **REPLACED** | Used only when the kill switch is `0` |
 | Board meeting | `extractMemberQuestion` (which Director is named) | **KEEP** | Specialist referent resolution; One Brain judges the remainder |
 | Board meeting | `classifyMemberBoardResponseKind` (factual unknown: "no revenue yet") | **KEEP** | Runs only on `proceed`; a factual unknown is a real answer |
-| Board meeting | Treating "I don't know" as a settled unknown | **KEEP (affordance), meaning REPLACED** | One Brain decides the member doesn't know (`unknown` verdict); the Board decides what an unknown means for the Directors |
+| Board meeting | Treating "I don't know" as a settled unknown | **REMOVED (OB-2R)** | HIGH `unsure` holds with `help_with_pending`; a factual unknown given as the answer still proceeds through `classifyMemberBoardResponseKind` |
 | Board meeting | Sentence-punctuation split (embedded question beside an answer) | **KEEP** | 3F-5B structure; no vocabulary; One Brain judges the statement part |
-| Events | "I don't know (yet)" → defer | **Meaning REPLACED, semantics KEPT** | One Brain's `unknown` verdict; Events applies its certified defer |
+| Events | "I don't know (yet)" → defer | **REMOVED (OB-2R)** | HIGH `unsure` holds with `help_with_pending`; defer stays reachable only through the kill switch (legacy `detectDisposition`) |
 | Events | `detectDisposition` "I don't know" → defer, "later/not now" → skip | **REPLACED** | Used only when the kill switch is `0` |
 | Events | organizer-holds-info / not-my-responsibility / redirect-to-work | **KEEP** | Event-domain meanings, run only on `proceed` |
 | Events | `applyCorrections` (duration/headcount/"moved from X to Y") | **KEEP** | Domain correction of values inside an answer |
@@ -227,7 +229,8 @@ The OB-2 matrix, with One Brain on:
 | Day Designer | `parseMinutes/Energy/Environment` | **KEEP** | Domain value parsing |
 | Create entrance | `SOP_TEXT_RE`, `signalPatterns` | **KEEP** | Domain routing / owner affordances |
 | Work Recognition | `isSimpleAffirmation` (typed ready-line yes), `isExplicitNavigationIntent` | **DEFER → OB-3** | Binding and navigation |
-| **Current Focus — non-event Create path** | `applyAnswerToRuntimeCreationRecord` stores any reply | **DEFER — gap** | Not in OB-2 scope and not in the OB-1 baseline. **It still stores a clarification as an answer.** Recommended for OB-3 or an OB-2.1 add-on (the same one-call gate). |
+| **Current Focus — non-event Create path** | `applyAnswerToRuntimeCreationRecord` stored any reply | **REPLACED (OB-2R)** | `submitCurrentFocusResponse` now calls the same gate before the discovery and section writes (§18) |
+| Board meeting / Events | `acceptsUnknown` room exception ("I don't know" = answer) | **REMOVED (OB-2R)** | Founder decision; HIGH `unsure` holds with `help_with_pending` |
 
 `oneBrainConsumers.test.ts` enforces the structure:
 - only the room gate calls `permitsFor` or reads the meaning fields;
@@ -298,7 +301,7 @@ Pending context as noted. "Room verdict" is what a converged room does.
 |---|---|---|
 | 1–3 | OB-1 corpus, holdout, HIGH-precision gate | **Green** (plus OB-2 additions) |
 | 4 | False executions | **0** |
-| 5 | Real-room divergence baseline | **Updated deliberately:** 61/120 → 8/120 (4/165 with extras); OB-1 reproduced exactly with the switch off |
+| 5 | Real-room divergence baseline | **Updated deliberately (OB-2R):** 61/120 → 2/120 (4/165 with the OB-2 extras; 4/285 with OB-2R); OB-1 reproduced exactly with the switch off |
 | 6 | Boundary snapshot purity (`conversationBoundaryPreTurnSnapshot`) | **Green** (full suite) |
 | 7 | Existing Boundary suites | **Green** (full suite) |
 | 8 | Directly affected room suites | Board, Events, Strategy, Day Designer, Create entrance, Work Recognition, Claire, continuity, executable intent — see the full-suite row |
@@ -341,12 +344,8 @@ Also try "I'm falling apart. I can't do this.": the pause is kept and the place 
 - **No live browser or preview run.** Not pushed (§2). The React surfaces were changed minimally (a hold message and early returns), but they were not rendered in a browser this round.
 - The main-chat `handleSend` ordering was not replayed end to end. Its seams are covered by unit tests and the Boundary differential.
 - Deterministic rooms (Board intake, Day Designer, Strategy, Events, Create) **cannot answer arbitrary factual questions**. For `answer_question` they answer from their own "why this question" copy and hold. Main chat and Board meeting answer through the model and the Directors.
-- **Current Focus non-event Create path** still stores any reply (§9 gap).
-- **A design tension resolved in favor of Founder-certified behavior (Founder may wish to confirm):**
-  - The brief's generic rule is "unsure → help, don't store".
-  - Two rooms have certified designs where "I don't know" *is* meaningful information: the Board (settled unknown, R3F-5B) and Events (pause and come back).
-  - One Brain still decides that the member doesn't know. Those two rooms declare `acceptsUnknown` and apply their own semantics.
-  - Every other room holds and helps.
+- ~~Current Focus non-event Create path still stores any reply~~ — **fixed in OB-2R** (§18).
+- ~~Board and Events accept "I don't know"~~ — **the Founder decided NO; fixed in OB-2R** (§18).
 - **The first full-suite run found 17 new failures,** all in converged rooms (Board R3F-5/5B/5C, Events defer/skip, Strategy Chamber opening, Board intake fixture). All 17 were resolved:
   - by the affordance options above;
   - by the two structural reader refinements (pseudo-cleft, weak correction yields to decline);
@@ -382,7 +381,7 @@ Also try "I'm falling apart. I can't do this.": the pause is kept and the place 
 4. **Fold in:**
    - Claire's subject-change check and the Decision Ledger B-10 case (reproduce it first);
    - the remaining legacy confirmation clear;
-   - the Current Focus non-event Create gap, which is the same one-call gate if it stays in OB-2.x.
+   - (the Current Focus non-event Create gap is closed by OB-2R).
 
 **Not in OB-3:** the Rhythm Tuesday correction and receipts (OB-4), capabilities (OB-5), the KNOW lens (OB-6).
 
@@ -394,4 +393,116 @@ Also try "I'm falling apart. I can't do this.": the pause is kept and the place 
 
 ---
 
-*OB-2 complete. Certified locally. Not pushed. Not merged. Not deployed. OB-3 not started.*
+## 18. OB-2R — Final hold-and-answer repair
+
+**Base.** Verified `ob2/one-brain-hold-answer` @ `6b48a4bc9b755233f4568d2bca7855ce2cb0e3d8`. The working tree held only the OB-2R edits, and the OB-2 work was recovered, not recreated.
+
+### Repairs made
+
+1. **Board and Events: uncertainty is not an answer (Founder decision).**
+   - The gate's `acceptsUnknown` / `unknownWithHelp` options and its `unknown` verdict are **removed** (`lib/conversationBoundaryRoomGate.ts`).
+   - Board meeting and Events no longer declare them.
+   - A HIGH `unsure` ("I don't know.", "I'm not sure.", "Can you help me figure that out?", "I really don't know how to answer that.") now results in:
+     - **hold** with `help_with_pending`;
+     - nothing stored and nothing settled;
+     - no automatic advance or defer;
+     - the same question kept.
+   - Board then flags the asking Director to help (`helpRequested`). Events explains its own question and writes nothing.
+   - No phrases were added to either room.
+2. **Current Focus, non-event Create path.** The path was:
+
+   `submitCurrentFocusResponse` → `handleDiscoverySubmission` → `applyDiscoveryAnswerToRuntimeCreationRecord` (discovery), and → `applyAnswerToRuntimeCreationRecord` (sections).
+
+   - Both stored any reply.
+   - Both now call `roomTurnVerdict` first (`lib/currentFocus/submitCurrentFocusResponse.ts`).
+   - A hold returns the same Focus, with `advanced:false` and `realityUpdated:false`.
+   - Create explains its own question. Discovery questions use Create's slot copy (`createDiscoveryQuestionCopy`, now exported from `entranceUnderstanding.ts`). Sections use the Focus's authored `purpose` and the existing "Give me ideas" guidance. No new copy source was added.
+   - A declined question uses Current Focus's existing Skip path.
+   - The kill switch restores the previous store.
+3. **A reader refinement the Founder decision exposed: `unsure_with_content` (structural).**
+   - Before OB-2R, Board's `acceptsUnknown` hid the fact that the reader read *any* turn with an uncertainty marker as HIGH `unsure`, including the Founder-tested turns that carry real information:
+     - "I don't know off the top of my head — **there's no revenue yet**."
+     - "I still don't know — **but I'm spending about 15 hours a week on it**."
+   - Holding those would discard what the member told the Board.
+   - An `unsure` with a companion clause of real content is now LOW `unsure_with_content`. "Real content" means a clause that is not:
+     - itself uncertainty (intensifiers ignored);
+     - a help request;
+     - a question;
+     - a feeling.
+
+     It must also have three or more words.
+   - The rule mirrors OB-2's `decline_with_content`. In a room's answer box it proceeds to the room's own specialist; for example, the Board's `classifyMemberBoardResponseKind` still marks "no revenue yet" as a factual unknown.
+   - **Pure uncertainty stays HIGH and holds.**
+   - The change only lowers confidence and never raises it, so it cannot create a false HIGH reading.
+   - The OB-2 `tentative_answer_inside_unsure` rule ("…, but I think maybe …") is unchanged: it is still a check.
+
+### Tests updated (Founder decision supersedes; rationale inline in each)
+
+| Test | Change |
+|---|---|
+| `round3f5cConversationalMoveUnderstanding` | A pure unknown+help turn now **holds open with help** and is never settled |
+| `eventQaLoop` "skip phrases" | Uses an explicit skip; a new test asserts that "I don't know yet." holds and writes nothing |
+| `eventConversationControl` | An explicit deferral moves past the question; a bare "I don't know yet." no longer does |
+| `round3f3MemberQuestionContinuation` (pause-once guard) and `round3f5bConversationalMoveConsequence` (drain loop) | The bare "I'm not sure." / "I don't know yet." replaced by an explicit domain answer; the tests' intent (pause once; meeting completes) is unchanged |
+
+The R3F-5B Founder transcripts (`round3f5bConversationContinuity`, `…MeetingTruthContinuity`, `…FounderRetest3`, `round3f5ConversationalTurns` 5/6/22) are **not edited**. Their information-bearing turns proceed through `unsure_with_content`.
+
+### Divergence: exact before and after
+
+| Matrix | Before OB-2R (OB-2 committed baseline) | After OB-2R |
+|---|---|---|
+| The 8 OB-1 situations × 15 rooms | 2/120 reported green, but Board "unsure" was green **only by exception**; under the Founder's rule it was **3/120** | **2/120** |
+| + the OB-2 extras (11 situations) | 4/165 reported; **6/165** without the exception | **4/165** |
+| + the OB-2R phrasings (19 situations) | — (not measured) | **4/285** |
+| Current Focus non-event Create (async; `roomHold.ob2.test.ts`) | Stored every clarification (not in the matrix) | **12/12 hold rows green**; genuine answer stores; kill switch restores |
+
+**Board and Events unsure rows:** Board meeting S3, S3b and R1–R4, and Events S3, S3b and R1–R4, are all green, as holds.
+
+**Remaining divergences, exactly:** 4 cells, all Rhythm (OB-4):
+- Rhythm owner (offer pending) × S4-correct;
+- Rhythm owner (offer pending) × S4b-not-what-i-meant;
+- Rhythm owner (just executed) × S4-correct;
+- Rhythm owner (just executed) × S4b-not-what-i-meant.
+
+The Remember owner's own decline rule reads a correction as a decline, so the offer is released and the executed Rhythm is not corrected. Nothing else diverges. The OB-2 summary's two contradictory statements are both resolved: the Current Focus gap is closed, and only Rhythm remains.
+
+### Defect found during OB-2R (reported, not fixed — needs new lexicon vocabulary)
+
+**Longer deferral phrasings are stored as answers in Events.**
+- **Examples:** "Let's come back to that one later." and "Let's skip that one for now." Both were probed with One Brain on.
+- **Cause:**
+  - OB-2 correctly retired Events' own deferral regex (duplicate authority).
+  - Boundary's decline vocabulary (`CONFIRMATION_DECLINE_RE`, `DEFERRAL_SUPPLEMENT_RE` in `lib/conversationBoundaryLexicon.ts`) is anchored to the start of the message and does not cover these forms.
+  - So the reader returns `relation none`, and the room stores the words.
+- **Not in the matrix:** the matrix's decline situation is "Not now.", which works.
+- **Smallest repair:** widen Boundary's deferral vocabulary as one certified paraphrase family, with negative controls. It belongs in One Brain's lexicon, never in a room.
+- **Why it wasn't fixed here:** the OB-2R brief forbids new interpretation phrases, so it is left for the Founder to schedule, as OB-3 or a one-item OB-2.1.
+
+### Tests
+
+| Check | Result |
+|---|---|
+| Targeted OB-2R: `roomHold.ob2` (49), `oneBrainConsumers` (6) | **Green** |
+| OB-1 corpus / holdout / OB-2 additions; HIGH-precision gate (`bakeoff.ob1`) | **Green (100% HIGH precision)** |
+| False execution authorizations | **0** |
+| Kill switch `=0` reproduces the OB-1 room behavior cell for cell | **Green** |
+| Board unsure rows (S3, S3b, R1–R4) · Events unsure rows · Current Focus clarify/ask rows | **All green (holds)** |
+| Genuine answers store and advance (every room's S8 control plus the Current Focus answer test) | **Green** |
+| **Full suite vs OB-1 and vs the final OB-2** | OB-1: 20,665 tests, 464 failing. OB-2R: **20,720 tests, 464 failing. Identical failing-id set: 0 new, 0 fixed.** (The first OB-2R full run found 12 new failures, all tests that encode the behavior the Founder rejected, or information-bearing turns. They were resolved by the structural `unsure_with_content` refinement, plus 5 test updates with an inline rationale, as listed above.) |
+| `tsc --noEmit` | **353 vs 353; identical (file, code) multiset, 0 new** |
+| ESLint, changed files | **0 new.** 4 pre-existing findings (unused imports / `prefer-const`), identical at `6b48a4bc` |
+
+### Branch state
+
+- **Branch:** `ob2/one-brain-hold-answer`, a single OB-2R commit on top of `6b48a4bc`.
+- **Ending SHA:** `3a30dc26a0791a395e88d249dce11da635c7a59d`
+- **Committed locally. Not pushed, not merged, not deployed. `main` untouched.**
+- A Founder preview requires pushing this isolated branch, which triggers a Vercel preview. **That needs Founder authorization. Stopped before push.**
+
+### Recommended OB-3 scope
+
+Unchanged from §17: one pending authority (binding unification). The capability audit (`BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md`) confirms it as the next step. It counts 24 local "yes" detectors and 30 local pending-state holders, and those are exactly OB-3's work. The capability CONNECT gap (the catalog is not visible to One Brain) is recommended as **OB-5**, after OB-4 receipts and corrections.
+
+---
+
+*OB-2 + OB-2R. Certified locally. Not pushed. Not merged. Not deployed. OB-3 not started.*

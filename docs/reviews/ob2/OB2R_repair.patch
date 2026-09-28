@@ -1,0 +1,4683 @@
+From 3a30dc26a0791a395e88d249dce11da635c7a59d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 14:40:13 +0000
+Subject: [PATCH] fix(boundary): OB-2R hold-and-answer repair + capability
+ connection audit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Founder decision: uncertainty is not an answer. Remove the room gate's
+  acceptsUnknown/unknown verdict; Board meeting and Events now hold a HIGH
+  `unsure` with help_with_pending (nothing stored, settled, deferred).
+- Current Focus non-event Create (discovery + section writes) now goes
+  through roomTurnVerdict; Create explains its own question on a hold.
+- Reader: structural LOW `unsure_with_content` so information-bearing turns
+  ("I don't know — there's no revenue yet") reach the room's specialist;
+  pure uncertainty stays HIGH and holds. Certified with a paraphrase family
+  and negative controls.
+- Certification: OB-2R situations in the matrix (4/285, all Rhythm/OB-4),
+  Current Focus hold tests, consumer rule forbidding acceptsUnknown.
+- Five tests updated with inline Founder-decision rationale.
+- Reports: OB-2 return report §18 (OB-2R) and the capability connection audit.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0162D2EyVC24X9wVgoMdDuJm
+---
+ ...PARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md |  201 ++
+ .../BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md   |  147 +-
+ docs/reviews/ob2/divergence_baseline.json     | 2484 +++++++++++++----
+ .../orchestration/boardMemberQuestions.ts     |   21 +-
+ ...ound3f3MemberQuestionContinuation.test.tsx |    6 +-
+ ...d3f5bConversationalMoveConsequence.test.ts |    4 +-
+ ...f5cConversationalMoveUnderstanding.test.ts |   10 +-
+ lib/conversationBoundaryMeaning.ts            |   21 +
+ lib/conversationBoundaryRoomGate.ts           |   39 +-
+ lib/createEstate/entranceUnderstanding.ts     |   13 +
+ .../submitCurrentFocusResponse.ts             |   56 +-
+ .../applyEventConversationalAnswer.ts         |    8 +-
+ .../eventConversationControl.test.ts          |    6 +-
+ lib/eventsIntelligence/eventQaLoop.test.ts    |   14 +-
+ .../oneBrainConsumers.test.ts                 |    7 +
+ .../roomDivergence.ob1.test.ts                |   11 +-
+ lib/oneBrainCertification/roomDrivers.ts      |   41 +-
+ .../roomHold.ob2.test.ts                      |  152 +-
+ 18 files changed, 2678 insertions(+), 563 deletions(-)
+ create mode 100644 docs/reviews/BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md
+
+diff --git a/docs/reviews/BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md b/docs/reviews/BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md
+new file mode 100644
+index 00000000..2e55431d
+--- /dev/null
++++ b/docs/reviews/BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md
+@@ -0,0 +1,201 @@
++# BRAIN SPARK ESTATE™ — Capability Connection Audit
++## What Spark is already supposed to do, and where the connection breaks
++
++**Scope.** This is a read-only audit of `ShariLHudson/adhd-business-companion-vs3` at the OB-2R working state (base `6b48a4bc` plus the OB-2R edits). It records repository truth, not a wishlist. Every claim cites a file. No capability was built in this round.
++
++**How it was done.**
++- I traced each capability from the member's natural-language sentence in main chat (`app/companion/CompanionPageClient.tsx`, 31,817 lines) through every seam that can intercept it, into the room that owns it, and back.
++- The question at each step was whether the chain holds: **Understand → Connect → Decide → Act → Return → Continue**.
++- "First broken connection" means the earliest step at which that chain fails.
++
++**Limits.**
++- This is a code trace. There was no browser run and no live model run.
++- Where I did not trace something to the end, the text says **not traced**, not "missing".
++
++**Bucket key:**
++- **A** works;
++- **B** built but not connected;
++- **C** connected in only some rooms or paths;
++- **D** One Brain cannot discover or route to it;
++- **E** context is lost at handoff;
++- **F** cannot act or write correctly;
++- **G** the result does not return to the conversation;
++- **H** duplicated;
++- **I** partially built;
++- **J** truly missing.
++
++---
++
++## 0. The one structural fact that explains most failures
++
++**One Brain decides *what the member is doing*. It does not decide *which capability is relevant*.**
++
++**Evidence:**
++- **Boundary's input has no capability field.** `BoundaryTurnInput` (`lib/conversationBoundary.ts:162-175`) holds only these: the text, the turn, the active topic, active work, a pending question, a pending offer, suspended items, the last assistant text, armed items, and the last executed item. Nothing in it names a room, a specialist or a capability.
++- **CONNECT happens outside One Brain.** After Boundary runs (`CompanionPageClient.tsx:16589`), it happens in about 20 page-level regex seams. Each one is gated only by `!boundaryClaimedTurn`. Some of the seam call sites:
++
++  | Seam | Location |
++  |---|---|
++  | Work Recognition | `:17404` |
++  | Universal capability | `:17853` |
++  | App-feature navigation | `:19342` |
++  | Estate guide | `:20382` |
++  | `resolveFrictionlessAction` | `:21443` |
++  | Strategy open | `:21836` |
++  | Estate intelligence route | `:23613` |
++
++- **The biggest router is a 6,243-line regex layer.** `lib/frictionlessActionLayer.ts` itself consults the capability catalog, navigation intelligence, estate-intelligence runtime and concierge (`:391`, `:421`, `:450-453`).
++- **The model cannot act.** The main chat model call (`app/api/companion-chat/route.ts:374-379`) is `gpt-4o-mini` with **no tools**. The system prompt tells it so: "Never claim you opened, saved, or drafted from chat" (`lib/companionPrompt.ts:196`).
++- **So a capability is reachable from natural language only if some regex seam was written for it.** If none was, the model can at most *name* the feature.
++
++**Consequence.** The member *does* have to know how to phrase things, or which room or button to use, for any capability without a seam. This is the root cause behind most D, C and G findings below. It is a **connection** problem, not a construction problem: the capability catalog, the rooms and the specialists already exist.
++
++---
++
++## 1. What Spark can do now (A — the full chain works from natural language)
++
++| Capability | Evidence |
++|---|---|
++| **Reminders:** create from a chat sentence, ask for a missing time, save | `resolveReminderTurn` at `CompanionPageClient.tsx:18193`; the reminder driver in `roomDrivers.ts` executes and stores |
++| **Rhythms:** offer → "yes" → create | `lib/rhythms`, and `lib/remindersVsRhythms/conversationPending.ts`. The offer-pending "yes" row is green in the matrix. |
++| **Create (Universal Creation):** discovery from chat, workspace, Current Focus | `lib/universalCreation`, `lib/createEstate/entranceUnderstanding.ts`, `lib/currentFocus/*`. Discovery holds on clarification (OB-2/OB-2R). |
++| **Plan My Day / Day Designer** from chat | `lib/day-designer` (`CompanionPageClient.tsx:2642`); `lib/planMyDayRouting` (`:1886`) |
++| **Research:** launch from conversation, with the result **returned** into the chat | `lib/researchLibrary/conversationResearchLaunch.ts`; the return path runs through `activeConversationResearchReturn` / `researchReturnHintForChat` (`CompanionPageClient.tsx:1542-1544, 23722`). This is one of the few full round-trips. |
++| **VTS (Visual Thinking Studio) menu:** offer → choose → open | `lib/visualThinkingContinuation`, `lib/visualRecommendationEngine`; the matrix rows are green |
++| **Estate identity and room canon answers** | `lib/canonContext/canonContextForChat.ts:14-23`, injected server-side into every chat (`route.ts:346-353`) |
++| **Board intake invite from conversation:** the continuity gate offers the Board, "yes" seeds the decision | `CompanionPageClient.tsx:17642-17663` (invite), `:17134-17160` (acceptance) |
++| **Strategy open from chat** | `resolveStrategyOpenFromChat` (`:21836`) |
++| **Calendar handoff (no account needed):** prefilled Google/Outlook links and `.ics` files | `lib/calendar/memberCalendarDestination.ts`; stated honestly in `companionPrompt.ts:252` |
++| **Hold-and-answer (One Brain) in every converged room** | OB-2 + OB-2R: clarify, ask and unsure hold with the room's own explanation. Matrix: 2/120 and 4/285 diverging (Rhythm only). |
++
++## 2. What Spark already has but cannot reliably use (C / D)
++
++| Capability | What exists | First broken connection | Bucket |
++|---|---|---|---|
++| **Claire / Business Understanding** | A full conversation engine, a write-candidate contract, confirmation, and the `claire-reasoning` API (`lib/businessProfileFounder/*`, `app/api/claire-reasoning/route.ts`) | **No path from main chat.** `CompanionPageClient.tsx` contains no reference to Claire. Claire is hosted only in `ProfileDestinationHost.tsx:5` (Profile → My Business Profile, a button) and the prototype page. A member who says "I want to update what my business does" in chat never reaches Claire. | **D** |
++| **Estate capability catalog** (what each capability is for, when to use it, its room, whether it can launch) | `lib/estateCapabilityRegistry/catalog.ts` (composed from `estateBrain/capabilityRegistry` and the creation plugins) | The catalog reaches runtime **only through regex seams** in `frictionlessActionLayer` (concierge, `:450`). **It is never given to the model or to Boundary.** The model's prompt instead carries a separate hand-written list (`companionPrompt.ts:205-213`, 262) that omits Claire, Events, Strategy Chamber, Rhythms and Reminders. It mentions the Board only as an *advisory voice* (`:177-191`), not as the Board Room. | **D + H** |
++| **Board of Directors: deliberation, Directors' reasoning, handoffs** | `lib/board/reconstructed/*`, `app/api/board/*` | It is reachable only through the continuity-gate invite (C). The Board's **results do not return to main chat**: no Board outcome, recommendation or settled decision is read anywhere in `CompanionPageClient.tsx` (a search for `boardOutcome\|boardRecommendation\|settledDecision…` finds 0 matches). | **C + G** |
++| **Projects coach** | `lib/projectCoachSession`, `lib/projectsIntelligence`, `app/api/project-brain` | It runs only while the Projects panel is open (`CompanionPageClient.tsx:22972`, `workspacePanel === "projects"`). Saying "help me with my launch project" in chat does not start it. | **C** |
++| **Strategy Chamber specialists** (pricing and other domain intelligence) | `lib/strategyChamber/intelligence/registry.ts`, `…/domains/pricing/*`, `chamberAuthorizedPromptBlock` (`route.ts:256-262`) | The specialist context reaches the model **only when the Chamber authorizes a prompt block** (passed in by the client). Outside the Chamber the specialists are not consulted. | **C** |
++| **Events** | `lib/eventsIntelligence/*`, `lib/eventsEstate/*` | The Events entrance and Current Focus work. Whether a chat sentence starts Events directly: **not traced** to a single seam in this round. | **C** (partial trace) |
++| **LMC (Living Model Canvas)** | Business-model projection of the profile (`lib/lmc/*`) with an LMC → Claire handoff (`lib/businessProfileFounder/lmcClaireHandoff.ts`) | It is a Profile surface only; no chat path reaches it (same break as Claire) | **C/D** |
++| **Files and uploads** | Upload inputs exist in panels: `ProjectAssetsPanel`, `IdealClientBuilder`, `Growth*`, `MyProfilePanel` | **The chat composer has no file input** (0 × `type="file"` in `CompanionPageClient.tsx`). A file cannot enter the conversation, so One Brain never sees it. | **C** |
++| **Member knowledge and context** | Business profile (`companion-business-profile-v1`), relationship memory (`companion-relationship-memory-v1`, `lib/companionAdaptiveUserEngine.ts:44`), estate memory (`spark:estate:memory:v1`), strategy decision memory (`spark:strategy-decision-memory:v1`) | The chat receives a client-assembled `businessContext` string (`CompanionPageClient.tsx:23776`). Rooms read their own stores. The Estate's own ledger states "Three relationship stores" and "Companion profile is client localStorage — no server-authoritative sync" (`lib/adaptiveCompanionArchitecture.ts:133, 222`). | **H + E** |
++
++## 3. What is built but disconnected (B), by the code's own admission
++
++| Built piece | Evidence that it is disconnected |
++|---|---|
++| **Board shared handoffs** → decision record, evidence research, specialist intelligence, execution next step | `resolveSharedHandoffConnectionStatus` returns **`DESTINATION_NOT_CONNECTED`** for everything except Board re-entry (`lib/board/reconstructed/sharedHandoff/resolveDestinationCapability.ts:29-36`). Tests assert it (`atomic8.test.ts:136,176,308`; `atomic9c.test.ts:130,235`). |
++| **Board Room "Research this", "Bring into meeting" and "Ask about this"** | Marked `status: "seam_only"`, with member toasts saying "isn't connected in this proof yet" (`lib/board/visualFoundation/boardRoomV4BCapabilitySeams.ts:6-34`). Research exists (§1); the Board → Research connection does not. |
++| **Board handoff packaging** | `DESTINATION_NOT_CONNECTED_YET` status labels (`lib/board/delivery/handoffPackaging/types.ts:23,31`) |
++| **Founder board for end-user chat** | "Founder board not wired through companionIntelligenceRouter for end-user chat" (`lib/adaptiveCompanionArchitecture.ts:303`) |
++| **Continuous learning** | "Production learning OFF by default", "Signal bus in shadow mode only" (`adaptiveCompanionArchitecture.ts:329-331`) |
++| **Governor as the turn authority** | "Governor OS not sole turn entry (page.tsx still orchestrates)" (`adaptiveCompanionArchitecture.ts:192`) |
++
++## 4. What is duplicated (H) and the likely canonical owner
++
++| Responsibility | Implementations found | Likely canonical owner |
++|---|---|---|
++| **Estate self-knowledge** (what the Estate is, its rooms, capabilities and places) | `canonContext` (canon + `estateKnowledgeBase` loader); `estateKnowledge/estateKnowledgeRegistry`; `estateKnowledgeBase` (locations, assets, aliases, vocabulary); `estateBrain/{capabilityRegistry,expertRegistry,knowledgeRegistry,environmentRegistry}`; `estateCapabilityRegistry/catalog`; `estateObjectIntelligence/estateObjects`; `estateExperiences/registry`; `estateMap/*`; `sparkKnowledge/estateGuide`; `appFeatureNavigation`; `universalBlueprintInterface/capabilityManifest`; `presentation/sparkFeatureRegistry`; plus the **hand-written lists in `companionPrompt.ts:205-262`**. **At least 12 sources.** | `estateCapabilityRegistry/catalog` for *capabilities* (it already composes estateBrain and the creation plugins); `canonContext` for *identity and canon*. The others should become adapters that read from these two, not parallel sources. |
++| **Intent / capability routing** | `frictionlessActionLayer`; `conversationRouter/*`; `companionIntelligenceRouter`; `estateIntelligence/estateCommandRouter` (+ `estateConversationPipeline`); `estateBrain/routeEstateIntelligence` and `routeIntentFirstNavigation`; `estateNavigationIntelligence`; `estateIntelligenceRuntime` → `semanticIntentResolver`; `estateHelpDiscoveryIntelligence`; `universalAccess`; `conversationContinuity/resolveContinuityGate`. `lib/` holds **864 exported `route*/resolve*/classify*` functions across 666 files**. | Boundary for *what the member is doing*. **There is no single owner yet for *which capability*.** That gap is the OB-3/OB-5 target (§10). |
++| **Acceptance ("yes") parsing** | **24** production files hold their own affirmation detectors (e.g. `pendingAcceptanceAuthority.ts:90,94` `isBareGenericAcceptance`/`isAcceptanceAttempt`; `confirmationContract.ts:50`; Work Recognition's `isSimpleAffirmation`). The model prompt adds another: "YES MEANS CONTINUE" (`companionPrompt.ts:201`). | Boundary + `permitsFor.mayExecute` (OB-3, already scoped) |
++| **Correction handling** | **15** production files hold their own correction detectors (e.g. Board `detectConversationalMove`, `classifyMemberBoardResponse.ts:55`, now legacy-only; Events `applyCorrections`; Remember's decline rule, which causes the Rhythm "Tuesday" defect) | Boundary `relation = correct` + the owner's correction specialist (OB-4) |
++| **Pending-question and offer state** | **30** production files hold `pendingQuestion`/`PendingQuestion` state (for example the frictionless pending store `companion-frictionless-pending-v1`, `frictionlessActionLayer.ts:658`; Board, Events, Create, Claire and Remember each keep their own) | A single spine `pendingOwnerSnapshot` (OB-3, already scoped) |
++| **Advisor models** | "Three parallel advisor models (4 workspace, 7 founder, 8 legacy AdvisorType)", "No shared advisor registry" (`adaptiveCompanionArchitecture.ts:301-302`) | The reconstructed Board registry (`lib/board/reconstructed`) |
++| **Prediction** | "Two prediction systems" (`adaptiveCompanionArchitecture.ts:249`) | Not in One Brain scope; noted only |
++
++**Not consolidated on purpose.** Several of these share names but serve different jobs: `estateMap` (the visual map), `estateExperiences` (scenic places) and the capability catalog. Merging them would be wrong. The fix is one **read path** for One Brain, not a merge.
++
++## 5. What is partially built (I)
++
++| Piece | Evidence |
++|---|---|
++| Enumerated armed offers and receipts for Boundary | `armedItems` / `lastExecuted` exist in `BoundaryTurnInput` (`conversationBoundary.ts:171-174`) but are commented "not yet fed by production" |
++| Rhythm post-execution correction | The receipt exists (`phase: "executed"`, `executedItemId`) but the correction path is not wired; this is the 4 remaining matrix cells (OB-4) |
++| Behavioral scenario registry | "categories still TypeScript union, not data-driven registry" (`adaptiveCompanionArchitecture.ts:164`) |
++| Profile learning | "disabled by default (NEXT_PUBLIC_PROFILE_LEARNING)" (`adaptiveCompanionArchitecture.ts:132`) |
++
++## 6. What is truly missing (J), with evidence that no equivalent exists
++
++| Missing | Searches that found nothing equivalent |
++|---|---|
++| **Main-chat model tool use / function calling** (the model *doing* something) | `app/api/companion-chat/route.ts`: no `tools`, `tool_choice`, `function_call` or `tool_use` (a search for all four returned 0 matches). The only other model routes (`claire-reasoning`, `board/*`, `generate`, `research-live`) are room-internal. |
++| **Writing to the member's actual calendar** | The Google OAuth scope is `drive.file forms.body openid email` only (`lib/google.ts:6-7`). No `googleapis.com/calendar` anywhere in `lib/`. The link-out and `.ics` path exists and works (§1). |
++| **A capability-selection authority inside One Brain** | `BoundaryTurnInput` has no capability field (§0); no module takes Boundary's decision plus the catalog and returns a capability. The routers in §4 each choose on their own. |
++| **Email account connection** | Stated as not built (`companionPrompt.ts:254`); consistent with the OAuth scope above |
++
++Nothing else is labelled J. Everything else the Estate claims to support exists in some form.
++
++## 7. Why each important failure happens (root cause, not symptom)
++
++1. **A member asks for something with no seam, and Spark only talks about it.**
++   - Root cause: CONNECT lives in regex seams, not in One Brain, and the model has no tools (§0).
++2. **Spark says a feature isn't there, or names the wrong one.**
++   - Root cause: the model's feature knowledge is a hand-written prompt list (`companionPrompt.ts:205-262`), not the capability catalog, so the two disagree.
++   - For example, the prompt list never mentions Claire, Events or the Board Room.
++   - Worse, the prompt tells the model that it "owns research" and should "gather and synthesize it automatically" (`companionPrompt.ts:63-64`), but the model has no tools. The prompt instructs a capability the model cannot perform; the real Research path is a separate launch-and-return flow (§1). This is an **F** risk: Spark may present unsourced text as research.
++3. **The Board decides something and main chat doesn't know.**
++   - Root cause: the Board result is not read back into the conversation (G), and its handoffs are `DESTINATION_NOT_CONNECTED` (B).
++4. **Claire is unreachable from "update my business info".**
++   - Root cause: Claire is only a Profile destination; there is no handoff from chat (D).
++5. **"Yes" does the wrong thing after a detour.**
++   - Root cause: 24 local yes-detectors, and ~20 page fast paths that bind "yes" to whichever offer they own (H). This is already scoped as OB-3.
++6. **The Rhythm "No, I said Tuesday" correction fails.**
++   - Root cause: the Remember owner's own decline rule reads the correction as a decline, and there is no correction/receipt execution (I/F). This is OB-4.
++7. **Context resets between rooms.**
++   - Root cause: member knowledge is spread across several localStorage stores, and each room reads its own (H/E; the Estate's own ledger agrees).
++
++## 8. What needs connection rather than construction
++
++| Connect | Existing pieces |
++|---|---|
++| The capability catalog → One Brain's CONNECT step | `estateCapabilityRegistry/catalog` (`bestUsedWhen`, `requiredRoomId`, `canLaunchDirectly`, `requiresDiscovery`) |
++| The capability catalog → the model prompt, replacing the hand-written lists | The same catalog; `canonContext` already shows the server-side injection pattern (`route.ts:346-353`) |
++| Board result → main chat | The Board session store and the `memberAskedYou`/shared-handoff shapes; the Research return (`researchReturnHintForChat`) is the working template |
++| Board → Research | `lib/researchLibrary/contextualResearch.ts` (named by the seam itself, `boardRoomV4BCapabilitySeams.ts:31`) |
++| Chat → Claire | `lib/businessProfileFounder/claireTopicHandoff.ts` and `lmcClaireHandoff.ts` already build topic handoffs *into* Claire; they need a chat-side entry |
++| Chat → Projects coach | `projectCoachSession` / `projectCoachHandoff` exist; they need a chat entry instead of the panel-only gate |
++| One pending/binding authority | `armedItems` / `lastExecuted` already in `BoundaryTurnInput`; `permitsFor.mayExecute` already exists |
++
++## 9. What One Brain still cannot see or reach
++
++- **Capabilities:** there is no catalog input (§0).
++- **Specialists and what they know:** Chamber and Board specialist registries exist but are not inputs to Boundary.
++- **Results of rooms it routed to**, except Research.
++- **Files:** there is no chat upload.
++- **The member's full context:** Boundary gets only the active topic, work and pending state. Business, relationship and estate memory are not unified.
++- **Armed offers and receipts:** the fields exist but production does not feed them.
++
++## 10. The smallest remaining work for the Estate to behave like one connected intelligence
++
++This reuses what exists. Each step is a *connection*, and each has a named owner round.
++
++1. **OB-3 — One pending authority** (already scoped in the OB-2 report §17).
++   - Feed `armedItems`/`lastExecuted` from the spine.
++   - Route the ~20 "yes" fast paths and the 24 local affirmation detectors through Boundary + `permitsFor.mayExecute`.
++   - Fold in Claire's subject-change check and the B-10 Decision Ledger case.
++2. **OB-4 — Receipts and corrections.**
++   - Connect `relation = correct` against `lastExecuted` to the owner's correction/receipt path.
++   - This fixes the 4 Rhythm cells, the only remaining matrix divergence.
++3. **OB-5 — Capability connection (the CONNECT step).**
++   - Give One Brain *one read path* to `estateCapabilityRegistry/catalog`: a `capabilityCandidates` input computed from the catalog, not new vocabulary.
++   - Inject the same catalog into the model prompt in place of the hand-written feature lists.
++   - Existing seams then become consumers of One Brain's choice, removed one by one. This is the same method as OB-2's room gate.
++   - First connections, in order of member impact:
++     - Chat → Claire;
++     - Board result → chat, reusing the Research-return template;
++     - Board → Research;
++     - Chat → Projects coach.
++4. **OB-6 — Knowledge (KNOW lens).**
++   - Make member context one read model over the existing stores (business profile, relationship memory, estate memory, strategy memory) for Boundary and the rooms.
++   - Do not create a new store.
++5. **Only after OB-5, and only if the Founder wants Spark to act in external systems:** decide on genuinely missing pieces (model tool use, calendar write scope). These are the only J items that need construction.
++
++**Sequence from here:**
++
++OB-2R (done; committed locally) → **OB-3** pending/binding → **OB-4** receipts/corrections → **OB-5** capability CONNECT (catalog → One Brain → seams retired) → **OB-6** unified member knowledge → (optional) external action tools.
++
++---
++
++*Read-only audit. No capability was built. Items marked "not traced" were not followed to the end in this round.*
+diff --git a/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md b/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md
+index 470082e4..c56a54e9 100644
+--- a/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md
++++ b/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md
+@@ -5,7 +5,9 @@
+ 
+ **Outcome.** Every room in scope now asks One Brain (Boundary → `permitsFor`) before it stores the member's words or moves forward. When the member asks something, asks what Spark meant, says "I don't know, help me", corrects Spark, or gives a bare "Yes." to an open question, the room holds. It explains its own question in its own words, and the question stays pending for the next turn.
+ 
+-In the real-room certification matrix, divergence fell from **61 of 120 cells (OB-1) to 8 of 120**, and to **4 of 165** once the brief's extra phrasings and distress are included. Every remaining divergence is the Rhythm correction defect, which OB-4 owns.
++In the real-room certification matrix, divergence fell from **61 of 120 cells (OB-1) to 2 of 120** after OB-2R. It is **4 of 165** with the OB-2 extra phrasings and distress, and **4 of 285** with the OB-2R uncertainty and clarification phrasings. Every remaining divergence is the Rhythm post-execution correction defect, which OB-4 owns. Current Focus non-event Create is certified separately; it is async, so it sits outside the synchronous matrix (§18).
++
++> **Correction (OB-2R).** The original OB-2 text said "8 of 120", which did not match its own committed baseline. It also counted Board meeting's "I don't know" as green only through a declared exception, `acceptsUnknown`. The Founder has since rejected that exception. §18 gives the exact before and after.
+ 
+ With the kill switch set to `0`, the matrix reproduces the OB-1 baseline **exactly**.
+ 
+@@ -132,7 +134,7 @@ room: proceed → its own domain validation, then store / advance exactly as bef
+ | Yes/no question | A HIGH `accept`/`decline` is the answer → `proceed` (Claire confirmation) |
+ | `acceptsQuestions` | The room's question invites a question as its answer, so a HIGH `ask` proceeds. Used by Board intake's first step and the Strategy Chamber opening. |
+ | `hasCorrectionSpecialist` | A HIGH `correct` goes to the room's own correction specialist. Used by Claire's confirmation contract ("modified"). |
+-| `acceptsUnknown` (+ `unknownWithHelp`) | The room's own answer affordance accepts "I don't know" as information. The gate returns an **`unknown` verdict** (with a `helpRequested` flag) and the room applies its own semantics. **Board meeting:** a settled unknown the Directors reason with, with help riding along (R3F-5B, Founder-certified). **Events:** pause the question and come back later; a help request still holds and helps. |
++| ~~`acceptsUnknown`~~ | **Removed in OB-2R (Founder decision).** A HIGH `unsure` holds with `help_with_pending` in every room, including Board and Events. A test now enforces that no room can declare uncertainty to be an answer. |
+ | `openingInvitation` | An opening invitation (Strategy Chamber's first question, Board intake's "decision, situation, or question") accepts anything the member offers. It holds only for a request to explain the invitation, or for distress. |
+ | Room question + "No, <content>" | A room asked a question, not an offer, so "No, I don't have savings set aside." answers it. `decline_with_content` proceeds. It stays LOW (check) in main chat, where offers exist. |
+ | Everything else | `hold`, with `explain_own_last_contribution`, `answer_question`, `help_with_pending`, `apply_or_confirm_correction`, `acknowledge_and_release`, `pause_for_person` or `check_meaning` |
+@@ -151,8 +153,8 @@ room: proceed → its own domain validation, then store / advance exactly as bef
+ | Main chat (Boundary) | `resolveConversationBoundary` reconciliation | — (the model answers in chat) | Turn claim, legacy-clear guard, Create grant |
+ | Claire — confirmation pending | `resolveClaireConfirmationTurn` → Claire's contract | "I'm checking before I save anything…" | A question no longer falls into the decline branch that dropped the candidate |
+ | Board intake | `boardIntakeTurn` (and `answerBoardIntakeStep` delegates to it) | Per step: decision / why now / options / concerns | The UI shows the hold reply under the question. The chat sticky-intake route returns the hold reply. "Start with decision only" is gated. |
+-| Board meeting | `applyBoardMemberAnswers` | The asking **Director** replies through the existing `memberAskedYou` seam | The Board's local clarification/correction detection is replaced (legacy only with the switch off). "I don't know" stays a **settled unknown** through One Brain's `unknown` verdict. Questions embedded beside a real answer still travel with the answer (3F-5B); One Brain judges the statement part. |
+-| Events | `applyEventConversationalAnswer` (entrance, chat and Current Focus all call it) | Per foundation section (event type, purpose, audience, …), with a section-label fallback | A hold writes **nothing** to the event record. A plain "I don't know (yet)" is One Brain's `unknown`, which Events applies as its certified defer (pause, next question). "…help me figure it out" holds and helps. Events keeps only its domain dispositions. |
++| Board meeting | `applyBoardMemberAnswers` | The asking **Director** replies through the existing `memberAskedYou` seam | The Board's local clarification/correction detection is replaced (legacy only with the switch off). OB-2R: a HIGH "I don't know" / "help me figure that out" **holds with `help_with_pending`**, and the asking Director helps. A factual unknown stated as the answer ("No revenue yet") still proceeds. Questions embedded beside a real answer still travel with the answer (3F-5B); One Brain judges the statement part. |
++| Events | `applyEventConversationalAnswer` (entrance, chat and Current Focus all call it) | Per foundation section (event type, purpose, audience, …), with a section-label fallback | A hold writes **nothing** to the event record. OB-2R: every HIGH `unsure` ("I don't know.", "I'm not sure.", "help me figure that out") **holds and helps**; there is no automatic defer. An explicit decline of the optional question ("skip it", "not now") is still Events' skip. Events keeps only its domain dispositions. |
+ | Strategy Apply | `processStrategyApplyTurn` | Per question (problem / better / constraints), with a strategy fallback | The local `isWorkflowConceptQuestion` is replaced |
+ | Strategy Chamber | `applyGuidedJourneyAnswer` | Opening vs. later questions | A hold changes only Shari's reflection. A held opening is no longer handed to chat. |
+ | Day Designer (Plan My Day) | `dayDesignerTurn` / `processDayDesignerMessage` | Per step (time / energy / environment / priorities) | The chat shows the hold reply; a hold never builds a plan |
+@@ -170,9 +172,9 @@ room: proceed → its own domain validation, then store / advance exactly as bef
+ | OB-2, plus "I don't know. Help me…", "No, that's not what I meant." and distress | 165 | **4** |
+ | OB-2 with `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0` | 120 | **Every observed room behavior identical to OB-1, cell for cell** (asserted) |
+ 
+-**One documented room expectation.** Board meeting declares `acceptsUnknown`. For the two unsure situations, its expected outcome is therefore "stored as a settled unknown and moved on", not a hold (R3F-5B, Founder-certified). In the drivers this is declared as data (`acceptsUnknown: true`), not inferred.
++**No room exceptions (OB-2R).** The Board meeting `acceptsUnknown` expectation has been removed. Every room is now judged against the same contract.
+ 
+-The OB-2 matrix, with One Brain on:
++The matrix, with One Brain on, after OB-2R (Board meeting "unsure" cells are now true holds, not exceptions):
+ 
+ | Room | clarify | ask | unsure | don't-know+help | correct | not-what-I-meant | bare yes | decline | frustrated+clarify | distress | real answer |
+ |---|---|---|---|---|---|---|---|---|---|---|---|
+@@ -216,9 +218,9 @@ The OB-2 matrix, with One Brain on:
+ | Board meeting | `detectConversationalMove`, `detectHelpRequest` | **REPLACED** | Used only when the kill switch is `0` |
+ | Board meeting | `extractMemberQuestion` (which Director is named) | **KEEP** | Specialist referent resolution; One Brain judges the remainder |
+ | Board meeting | `classifyMemberBoardResponseKind` (factual unknown: "no revenue yet") | **KEEP** | Runs only on `proceed`; a factual unknown is a real answer |
+-| Board meeting | Treating "I don't know" as a settled unknown | **KEEP (affordance), meaning REPLACED** | One Brain decides the member doesn't know (`unknown` verdict); the Board decides what an unknown means for the Directors |
++| Board meeting | Treating "I don't know" as a settled unknown | **REMOVED (OB-2R)** | HIGH `unsure` holds with `help_with_pending`; a factual unknown given as the answer still proceeds through `classifyMemberBoardResponseKind` |
+ | Board meeting | Sentence-punctuation split (embedded question beside an answer) | **KEEP** | 3F-5B structure; no vocabulary; One Brain judges the statement part |
+-| Events | "I don't know (yet)" → defer | **Meaning REPLACED, semantics KEPT** | One Brain's `unknown` verdict; Events applies its certified defer |
++| Events | "I don't know (yet)" → defer | **REMOVED (OB-2R)** | HIGH `unsure` holds with `help_with_pending`; defer stays reachable only through the kill switch (legacy `detectDisposition`) |
+ | Events | `detectDisposition` "I don't know" → defer, "later/not now" → skip | **REPLACED** | Used only when the kill switch is `0` |
+ | Events | organizer-holds-info / not-my-responsibility / redirect-to-work | **KEEP** | Event-domain meanings, run only on `proceed` |
+ | Events | `applyCorrections` (duration/headcount/"moved from X to Y") | **KEEP** | Domain correction of values inside an answer |
+@@ -227,7 +229,8 @@ The OB-2 matrix, with One Brain on:
+ | Day Designer | `parseMinutes/Energy/Environment` | **KEEP** | Domain value parsing |
+ | Create entrance | `SOP_TEXT_RE`, `signalPatterns` | **KEEP** | Domain routing / owner affordances |
+ | Work Recognition | `isSimpleAffirmation` (typed ready-line yes), `isExplicitNavigationIntent` | **DEFER → OB-3** | Binding and navigation |
+-| **Current Focus — non-event Create path** | `applyAnswerToRuntimeCreationRecord` stores any reply | **DEFER — gap** | Not in OB-2 scope and not in the OB-1 baseline. **It still stores a clarification as an answer.** Recommended for OB-3 or an OB-2.1 add-on (the same one-call gate). |
++| **Current Focus — non-event Create path** | `applyAnswerToRuntimeCreationRecord` stored any reply | **REPLACED (OB-2R)** | `submitCurrentFocusResponse` now calls the same gate before the discovery and section writes (§18) |
++| Board meeting / Events | `acceptsUnknown` room exception ("I don't know" = answer) | **REMOVED (OB-2R)** | Founder decision; HIGH `unsure` holds with `help_with_pending` |
+ 
+ `oneBrainConsumers.test.ts` enforces the structure:
+ - only the room gate calls `permitsFor` or reads the meaning fields;
+@@ -298,7 +301,7 @@ Pending context as noted. "Room verdict" is what a converged room does.
+ |---|---|---|
+ | 1–3 | OB-1 corpus, holdout, HIGH-precision gate | **Green** (plus OB-2 additions) |
+ | 4 | False executions | **0** |
+-| 5 | Real-room divergence baseline | **Updated deliberately:** 61/120 → 8/120 (4/165 with extras); OB-1 reproduced exactly with the switch off |
++| 5 | Real-room divergence baseline | **Updated deliberately (OB-2R):** 61/120 → 2/120 (4/165 with the OB-2 extras; 4/285 with OB-2R); OB-1 reproduced exactly with the switch off |
+ | 6 | Boundary snapshot purity (`conversationBoundaryPreTurnSnapshot`) | **Green** (full suite) |
+ | 7 | Existing Boundary suites | **Green** (full suite) |
+ | 8 | Directly affected room suites | Board, Events, Strategy, Day Designer, Create entrance, Work Recognition, Claire, continuity, executable intent — see the full-suite row |
+@@ -341,12 +344,8 @@ Also try "I'm falling apart. I can't do this.": the pause is kept and the place
+ - **No live browser or preview run.** Not pushed (§2). The React surfaces were changed minimally (a hold message and early returns), but they were not rendered in a browser this round.
+ - The main-chat `handleSend` ordering was not replayed end to end. Its seams are covered by unit tests and the Boundary differential.
+ - Deterministic rooms (Board intake, Day Designer, Strategy, Events, Create) **cannot answer arbitrary factual questions**. For `answer_question` they answer from their own "why this question" copy and hold. Main chat and Board meeting answer through the model and the Directors.
+-- **Current Focus non-event Create path** still stores any reply (§9 gap).
+-- **A design tension resolved in favor of Founder-certified behavior (Founder may wish to confirm):**
+-  - The brief's generic rule is "unsure → help, don't store".
+-  - Two rooms have certified designs where "I don't know" *is* meaningful information: the Board (settled unknown, R3F-5B) and Events (pause and come back).
+-  - One Brain still decides that the member doesn't know. Those two rooms declare `acceptsUnknown` and apply their own semantics.
+-  - Every other room holds and helps.
++- ~~Current Focus non-event Create path still stores any reply~~ — **fixed in OB-2R** (§18).
++- ~~Board and Events accept "I don't know"~~ — **the Founder decided NO; fixed in OB-2R** (§18).
+ - **The first full-suite run found 17 new failures,** all in converged rooms (Board R3F-5/5B/5C, Events defer/skip, Strategy Chamber opening, Board intake fixture). All 17 were resolved:
+   - by the affordance options above;
+   - by the two structural reader refinements (pseudo-cleft, weak correction yields to decline);
+@@ -382,7 +381,7 @@ Also try "I'm falling apart. I can't do this.": the pause is kept and the place
+ 4. **Fold in:**
+    - Claire's subject-change check and the Decision Ledger B-10 case (reproduce it first);
+    - the remaining legacy confirmation clear;
+-   - the Current Focus non-event Create gap, which is the same one-call gate if it stays in OB-2.x.
++   - (the Current Focus non-event Create gap is closed by OB-2R).
+ 
+ **Not in OB-3:** the Rhythm Tuesday correction and receipts (OB-4), capabilities (OB-5), the KNOW lens (OB-6).
+ 
+@@ -394,4 +393,116 @@ Also try "I'm falling apart. I can't do this.": the pause is kept and the place
+ 
+ ---
+ 
+-*OB-2 complete. Certified locally. Not pushed. Not merged. Not deployed. OB-3 not started.*
++## 18. OB-2R — Final hold-and-answer repair
++
++**Base.** Verified `ob2/one-brain-hold-answer` @ `6b48a4bc9b755233f4568d2bca7855ce2cb0e3d8`. The working tree held only the OB-2R edits, and the OB-2 work was recovered, not recreated.
++
++### Repairs made
++
++1. **Board and Events: uncertainty is not an answer (Founder decision).**
++   - The gate's `acceptsUnknown` / `unknownWithHelp` options and its `unknown` verdict are **removed** (`lib/conversationBoundaryRoomGate.ts`).
++   - Board meeting and Events no longer declare them.
++   - A HIGH `unsure` ("I don't know.", "I'm not sure.", "Can you help me figure that out?", "I really don't know how to answer that.") now results in:
++     - **hold** with `help_with_pending`;
++     - nothing stored and nothing settled;
++     - no automatic advance or defer;
++     - the same question kept.
++   - Board then flags the asking Director to help (`helpRequested`). Events explains its own question and writes nothing.
++   - No phrases were added to either room.
++2. **Current Focus, non-event Create path.** The path was:
++
++   `submitCurrentFocusResponse` → `handleDiscoverySubmission` → `applyDiscoveryAnswerToRuntimeCreationRecord` (discovery), and → `applyAnswerToRuntimeCreationRecord` (sections).
++
++   - Both stored any reply.
++   - Both now call `roomTurnVerdict` first (`lib/currentFocus/submitCurrentFocusResponse.ts`).
++   - A hold returns the same Focus, with `advanced:false` and `realityUpdated:false`.
++   - Create explains its own question. Discovery questions use Create's slot copy (`createDiscoveryQuestionCopy`, now exported from `entranceUnderstanding.ts`). Sections use the Focus's authored `purpose` and the existing "Give me ideas" guidance. No new copy source was added.
++   - A declined question uses Current Focus's existing Skip path.
++   - The kill switch restores the previous store.
++3. **A reader refinement the Founder decision exposed: `unsure_with_content` (structural).**
++   - Before OB-2R, Board's `acceptsUnknown` hid the fact that the reader read *any* turn with an uncertainty marker as HIGH `unsure`, including the Founder-tested turns that carry real information:
++     - "I don't know off the top of my head — **there's no revenue yet**."
++     - "I still don't know — **but I'm spending about 15 hours a week on it**."
++   - Holding those would discard what the member told the Board.
++   - An `unsure` with a companion clause of real content is now LOW `unsure_with_content`. "Real content" means a clause that is not:
++     - itself uncertainty (intensifiers ignored);
++     - a help request;
++     - a question;
++     - a feeling.
++
++     It must also have three or more words.
++   - The rule mirrors OB-2's `decline_with_content`. In a room's answer box it proceeds to the room's own specialist; for example, the Board's `classifyMemberBoardResponseKind` still marks "no revenue yet" as a factual unknown.
++   - **Pure uncertainty stays HIGH and holds.**
++   - The change only lowers confidence and never raises it, so it cannot create a false HIGH reading.
++   - The OB-2 `tentative_answer_inside_unsure` rule ("…, but I think maybe …") is unchanged: it is still a check.
++
++### Tests updated (Founder decision supersedes; rationale inline in each)
++
++| Test | Change |
++|---|---|
++| `round3f5cConversationalMoveUnderstanding` | A pure unknown+help turn now **holds open with help** and is never settled |
++| `eventQaLoop` "skip phrases" | Uses an explicit skip; a new test asserts that "I don't know yet." holds and writes nothing |
++| `eventConversationControl` | An explicit deferral moves past the question; a bare "I don't know yet." no longer does |
++| `round3f3MemberQuestionContinuation` (pause-once guard) and `round3f5bConversationalMoveConsequence` (drain loop) | The bare "I'm not sure." / "I don't know yet." replaced by an explicit domain answer; the tests' intent (pause once; meeting completes) is unchanged |
++
++The R3F-5B Founder transcripts (`round3f5bConversationContinuity`, `…MeetingTruthContinuity`, `…FounderRetest3`, `round3f5ConversationalTurns` 5/6/22) are **not edited**. Their information-bearing turns proceed through `unsure_with_content`.
++
++### Divergence: exact before and after
++
++| Matrix | Before OB-2R (OB-2 committed baseline) | After OB-2R |
++|---|---|---|
++| The 8 OB-1 situations × 15 rooms | 2/120 reported green, but Board "unsure" was green **only by exception**; under the Founder's rule it was **3/120** | **2/120** |
++| + the OB-2 extras (11 situations) | 4/165 reported; **6/165** without the exception | **4/165** |
++| + the OB-2R phrasings (19 situations) | — (not measured) | **4/285** |
++| Current Focus non-event Create (async; `roomHold.ob2.test.ts`) | Stored every clarification (not in the matrix) | **12/12 hold rows green**; genuine answer stores; kill switch restores |
++
++**Board and Events unsure rows:** Board meeting S3, S3b and R1–R4, and Events S3, S3b and R1–R4, are all green, as holds.
++
++**Remaining divergences, exactly:** 4 cells, all Rhythm (OB-4):
++- Rhythm owner (offer pending) × S4-correct;
++- Rhythm owner (offer pending) × S4b-not-what-i-meant;
++- Rhythm owner (just executed) × S4-correct;
++- Rhythm owner (just executed) × S4b-not-what-i-meant.
++
++The Remember owner's own decline rule reads a correction as a decline, so the offer is released and the executed Rhythm is not corrected. Nothing else diverges. The OB-2 summary's two contradictory statements are both resolved: the Current Focus gap is closed, and only Rhythm remains.
++
++### Defect found during OB-2R (reported, not fixed — needs new lexicon vocabulary)
++
++**Longer deferral phrasings are stored as answers in Events.**
++- **Examples:** "Let's come back to that one later." and "Let's skip that one for now." Both were probed with One Brain on.
++- **Cause:**
++  - OB-2 correctly retired Events' own deferral regex (duplicate authority).
++  - Boundary's decline vocabulary (`CONFIRMATION_DECLINE_RE`, `DEFERRAL_SUPPLEMENT_RE` in `lib/conversationBoundaryLexicon.ts`) is anchored to the start of the message and does not cover these forms.
++  - So the reader returns `relation none`, and the room stores the words.
++- **Not in the matrix:** the matrix's decline situation is "Not now.", which works.
++- **Smallest repair:** widen Boundary's deferral vocabulary as one certified paraphrase family, with negative controls. It belongs in One Brain's lexicon, never in a room.
++- **Why it wasn't fixed here:** the OB-2R brief forbids new interpretation phrases, so it is left for the Founder to schedule, as OB-3 or a one-item OB-2.1.
++
++### Tests
++
++| Check | Result |
++|---|---|
++| Targeted OB-2R: `roomHold.ob2` (49), `oneBrainConsumers` (6) | **Green** |
++| OB-1 corpus / holdout / OB-2 additions; HIGH-precision gate (`bakeoff.ob1`) | **Green (100% HIGH precision)** |
++| False execution authorizations | **0** |
++| Kill switch `=0` reproduces the OB-1 room behavior cell for cell | **Green** |
++| Board unsure rows (S3, S3b, R1–R4) · Events unsure rows · Current Focus clarify/ask rows | **All green (holds)** |
++| Genuine answers store and advance (every room's S8 control plus the Current Focus answer test) | **Green** |
++| **Full suite vs OB-1 and vs the final OB-2** | OB-1: 20,665 tests, 464 failing. OB-2R: **20,720 tests, 464 failing. Identical failing-id set: 0 new, 0 fixed.** (The first OB-2R full run found 12 new failures, all tests that encode the behavior the Founder rejected, or information-bearing turns. They were resolved by the structural `unsure_with_content` refinement, plus 5 test updates with an inline rationale, as listed above.) |
++| `tsc --noEmit` | **353 vs 353; identical (file, code) multiset, 0 new** |
++| ESLint, changed files | **0 new.** 4 pre-existing findings (unused imports / `prefer-const`), identical at `6b48a4bc` |
++
++### Branch state
++
++- **Branch:** `ob2/one-brain-hold-answer`, a single OB-2R commit on top of `6b48a4bc`.
++- **Ending SHA:** given in the chat reply and in the delivery copy of this report. A commit cannot contain its own SHA.
++- **Committed locally. Not pushed, not merged, not deployed. `main` untouched.**
++- A Founder preview requires pushing this isolated branch, which triggers a Vercel preview. **That needs Founder authorization. Stopped before push.**
++
++### Recommended OB-3 scope
++
++Unchanged from §17: one pending authority (binding unification). The capability audit (`BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md`) confirms it as the next step. It counts 24 local "yes" detectors and 30 local pending-state holders, and those are exactly OB-3's work. The capability CONNECT gap (the catalog is not visible to One Brain) is recommended as **OB-5**, after OB-4 receipts and corrections.
++
++---
++
++*OB-2 + OB-2R. Certified locally. Not pushed. Not merged. Not deployed. OB-3 not started.*
+diff --git a/docs/reviews/ob2/divergence_baseline.json b/docs/reviews/ob2/divergence_baseline.json
+index e378f383..16601768 100644
+--- a/docs/reviews/ob2/divergence_baseline.json
++++ b/docs/reviews/ob2/divergence_baseline.json
+@@ -142,6 +142,110 @@
+    "note": "interrupt_and_suspend"
+   }
+  },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
+  {
+   "room": "Claire (conversation)",
+   "situation": "S1-clarify",
+@@ -285,6 +389,110 @@
+    "note": "no_write"
+   }
+  },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
+  {
+   "room": "Claire (confirmation pending)",
+   "situation": "S1-clarify",
+@@ -429,112 +637,112 @@
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S1-clarify",
++  "room": "Claire (confirmation pending)",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": false,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "importance"
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S2-ask",
++  "room": "Claire (confirmation pending)",
++  "situation": "R2-not-sure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": false,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "importance"
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S3-unsure",
++  "room": "Claire (confirmation pending)",
++  "situation": "R3-help-figure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": false,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "importance"
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S4-correct",
++  "room": "Claire (confirmation pending)",
++  "situation": "R4-really-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": false,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "importance"
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S5-bare-yes",
++  "room": "Claire (confirmation pending)",
++  "situation": "R5-what-mean",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": false,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "importance"
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S6-decline",
++  "room": "Claire (confirmation pending)",
++  "situation": "R6-explain",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": false,
++   "advanced": false,
++   "storedAsAnswer": null,
+    "executed": false,
+-   "pendingPreserved": false,
+-   "note": "review"
++   "pendingPreserved": true,
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S7-strained-clarify",
++  "room": "Claire (confirmation pending)",
++  "situation": "R7-dont-understand",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": false,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "importance"
++   "note": "held"
+   }
+  },
+  {
+-  "room": "Board intake",
+-  "situation": "S8-answer",
++  "room": "Claire (confirmation pending)",
++  "situation": "R8-why-asking",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
++   "advanced": false,
++   "storedAsAnswer": null,
+    "executed": false,
+-   "pendingPreserved": false,
+-   "note": "options"
++   "pendingPreserved": true,
++   "note": "held"
+   }
+  },
+  {
+   "room": "Board intake",
+-  "situation": "S3b-dont-know-help",
++  "situation": "S1-clarify",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -547,7 +755,7 @@
+  },
+  {
+   "room": "Board intake",
+-  "situation": "S4b-not-what-i-meant",
++  "situation": "S2-ask",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -560,7 +768,7 @@
+  },
+  {
+   "room": "Board intake",
+-  "situation": "S9-distress",
++  "situation": "S3-unsure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -572,46 +780,7 @@
+   }
+  },
+  {
+-  "room": "Board meeting",
+-  "situation": "S1-clarify",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": false,
+-   "storedAsAnswer": false,
+-   "executed": false,
+-   "pendingPreserved": true,
+-   "note": "asked"
+-  }
+- },
+- {
+-  "room": "Board meeting",
+-  "situation": "S2-ask",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": false,
+-   "storedAsAnswer": false,
+-   "executed": false,
+-   "pendingPreserved": true,
+-   "note": "asked"
+-  }
+- },
+- {
+-  "room": "Board meeting",
+-  "situation": "S3-unsure",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
+-   "executed": false,
+-   "pendingPreserved": false,
+-   "note": "answered/unknown"
+-  }
+- },
+- {
+-  "room": "Board meeting",
++  "room": "Board intake",
+   "situation": "S4-correct",
+   "diverges": false,
+   "divergentFields": [],
+@@ -620,11 +789,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "asked"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Board meeting",
++  "room": "Board intake",
+   "situation": "S5-bare-yes",
+   "diverges": false,
+   "divergentFields": [],
+@@ -633,24 +802,24 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "asked"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Board meeting",
++  "room": "Board intake",
+   "situation": "S6-decline",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": false,
++   "advanced": true,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true,
+-   "note": "asked"
++   "pendingPreserved": false,
++   "note": "review"
+   }
+  },
+  {
+-  "room": "Board meeting",
++  "room": "Board intake",
+   "situation": "S7-strained-clarify",
+   "diverges": false,
+   "divergentFields": [],
+@@ -659,11 +828,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "asked"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Board meeting",
++  "room": "Board intake",
+   "situation": "S8-answer",
+   "diverges": false,
+   "divergentFields": [],
+@@ -672,38 +841,25 @@
+    "storedAsAnswer": true,
+    "executed": false,
+    "pendingPreserved": false,
+-   "note": "answered/information"
++   "note": "options"
+   }
+  },
+  {
+-  "room": "Board meeting",
++  "room": "Board intake",
+   "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+-  "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
+-   "executed": false,
+-   "pendingPreserved": false,
+-   "note": "answered/unknown"
+-  }
+- },
+- {
+-  "room": "Board meeting",
+-  "situation": "S4b-not-what-i-meant",
+-  "diverges": false,
+-  "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "asked"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Board meeting",
+-  "situation": "S9-distress",
++  "room": "Board intake",
++  "situation": "S4b-not-what-i-meant",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -711,12 +867,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "asked"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S1-clarify",
++  "room": "Board intake",
++  "situation": "S9-distress",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -724,12 +880,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S2-ask",
++  "room": "Board intake",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -737,12 +893,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S3-unsure",
++  "room": "Board intake",
++  "situation": "R2-not-sure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -750,12 +906,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S4-correct",
++  "room": "Board intake",
++  "situation": "R3-help-figure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -763,12 +919,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S5-bare-yes",
++  "room": "Board intake",
++  "situation": "R4-really-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -776,25 +932,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
+-  }
+- },
+- {
+-  "room": "Events",
+-  "situation": "S6-decline",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": false,
+-   "executed": false,
+-   "pendingPreserved": false,
+-   "note": "skip"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S7-strained-clarify",
++  "room": "Board intake",
++  "situation": "R5-what-mean",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -802,25 +945,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
+-  }
+- },
+- {
+-  "room": "Events",
+-  "situation": "S8-answer",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
+-   "executed": true,
+-   "pendingPreserved": false,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S3b-dont-know-help",
++  "room": "Board intake",
++  "situation": "R6-explain",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -828,12 +958,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S4b-not-what-i-meant",
++  "room": "Board intake",
++  "situation": "R7-dont-understand",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -841,12 +971,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Events",
+-  "situation": "S9-distress",
++  "room": "Board intake",
++  "situation": "R8-why-asking",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -854,11 +984,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "answered"
++   "note": "importance"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S1-clarify",
+   "diverges": false,
+   "divergentFields": [],
+@@ -867,11 +997,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S2-ask",
+   "diverges": false,
+   "divergentFields": [],
+@@ -880,11 +1010,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S3-unsure",
+   "diverges": false,
+   "divergentFields": [],
+@@ -893,11 +1023,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S4-correct",
+   "diverges": false,
+   "divergentFields": [],
+@@ -906,11 +1036,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S5-bare-yes",
+   "diverges": false,
+   "divergentFields": [],
+@@ -919,11 +1049,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S6-decline",
+   "diverges": false,
+   "divergentFields": [],
+@@ -932,11 +1062,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S7-strained-clarify",
+   "diverges": false,
+   "divergentFields": [],
+@@ -945,11 +1075,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S8-answer",
+   "diverges": false,
+   "divergentFields": [],
+@@ -958,11 +1088,11 @@
+    "storedAsAnswer": true,
+    "executed": false,
+    "pendingPreserved": false,
+-   "note": "q1"
++   "note": "answered/information"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+@@ -971,11 +1101,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S4b-not-what-i-meant",
+   "diverges": false,
+   "divergentFields": [],
+@@ -984,11 +1114,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Apply",
++  "room": "Board meeting",
+   "situation": "S9-distress",
+   "diverges": false,
+   "divergentFields": [],
+@@ -997,143 +1127,115 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "q0"
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S1-clarify",
++  "room": "Board meeting",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S2-ask",
++  "room": "Board meeting",
++  "situation": "R2-not-sure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S3-unsure",
++  "room": "Board meeting",
++  "situation": "R3-help-figure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S4-correct",
++  "room": "Board meeting",
++  "situation": "R4-really-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S5-bare-yes",
++  "room": "Board meeting",
++  "situation": "R5-what-mean",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S6-decline",
++  "room": "Board meeting",
++  "situation": "R6-explain",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S7-strained-clarify",
++  "room": "Board meeting",
++  "situation": "R7-dont-understand",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Strategy Chamber",
+-  "situation": "S8-answer",
++  "room": "Board meeting",
++  "situation": "R8-why-asking",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false
+-  }
+- },
+- {
+-  "room": "Strategy Chamber",
+-  "situation": "S3b-dont-know-help",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": false,
+-   "storedAsAnswer": false,
+-   "executed": false,
+-   "pendingPreserved": true
+-  }
+- },
+- {
+-  "room": "Strategy Chamber",
+-  "situation": "S4b-not-what-i-meant",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": false,
+-   "storedAsAnswer": false,
+-   "executed": false,
+-   "pendingPreserved": true
+-  }
+- },
+- {
+-  "room": "Strategy Chamber",
+-  "situation": "S9-distress",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": false,
+-   "storedAsAnswer": false,
+-   "executed": false,
+-   "pendingPreserved": true
++   "pendingPreserved": true,
++   "note": "asked"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S1-clarify",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1142,11 +1244,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S2-ask",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1155,11 +1257,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S3-unsure",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1168,11 +1270,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S4-correct",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1181,11 +1283,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S5-bare-yes",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1194,11 +1296,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S6-decline",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1207,11 +1309,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": false,
+-   "note": "complete"
++   "note": "skip"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S7-strained-clarify",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1220,24 +1322,24 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S8-answer",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": true,
+    "storedAsAnswer": true,
+-   "executed": false,
++   "executed": true,
+    "pendingPreserved": false,
+-   "note": "complete"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1246,11 +1348,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S4b-not-what-i-meant",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1259,11 +1361,11 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Day Designer (Plan My Day)",
++  "room": "Events",
+   "situation": "S9-distress",
+   "diverges": false,
+   "divergentFields": [],
+@@ -1272,12 +1374,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "priorities"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S1-clarify",
++  "room": "Events",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1285,12 +1387,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S2-ask",
++  "room": "Events",
++  "situation": "R2-not-sure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1298,12 +1400,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S3-unsure",
++  "room": "Events",
++  "situation": "R3-help-figure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1311,12 +1413,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S4-correct",
++  "room": "Events",
++  "situation": "R4-really-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1324,12 +1426,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S5-bare-yes",
++  "room": "Events",
++  "situation": "R5-what-mean",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1337,12 +1439,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S6-decline",
++  "room": "Events",
++  "situation": "R6-explain",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1350,12 +1452,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S7-strained-clarify",
++  "room": "Events",
++  "situation": "R7-dont-understand",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1363,25 +1465,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
+-  }
+- },
+- {
+-  "room": "Reminder intake",
+-  "situation": "S8-answer",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
+-   "executed": true,
+-   "pendingPreserved": false,
+-   "note": "confirm"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S3b-dont-know-help",
++  "room": "Events",
++  "situation": "R8-why-asking",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1389,12 +1478,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "answered"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S4b-not-what-i-meant",
++  "room": "Strategy Apply",
++  "situation": "S1-clarify",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1402,12 +1491,12 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Reminder intake",
+-  "situation": "S9-distress",
++  "room": "Strategy Apply",
++  "situation": "S2-ask",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1415,164 +1504,1266 @@
+    "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "ask"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
+-  "situation": "S1-clarify",
++  "room": "Strategy Apply",
++  "situation": "S3-unsure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
+-  "situation": "S2-ask",
++  "room": "Strategy Apply",
++  "situation": "S4-correct",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
+-  "situation": "S3-unsure",
++  "room": "Strategy Apply",
++  "situation": "S5-bare-yes",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
+-  }
+- },
+- {
+-  "room": "Rhythm owner (offer pending)",
+-  "situation": "S4-correct",
+-  "diverges": true,
+-  "divergentFields": [
+-   "pendingPreserved"
+-  ],
+-  "observed": {
+-   "advanced": false,
+-   "storedAsAnswer": null,
+-   "executed": false,
+-   "pendingPreserved": false,
+-   "note": "frictionless:reminder"
+-  }
+- },
+- {
+-  "room": "Rhythm owner (offer pending)",
+-  "situation": "S5-bare-yes",
+-  "diverges": false,
+-  "divergentFields": [],
+-  "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": null,
+-   "executed": true,
+-   "pendingPreserved": false,
+-   "note": "frictionless:reminder"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
++  "room": "Strategy Apply",
+   "situation": "S6-decline",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
+-   "note": "frictionless:reminder"
++   "pendingPreserved": true,
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
++  "room": "Strategy Apply",
+   "situation": "S7-strained-clarify",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "frictionless:estate_concierge"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
++  "room": "Strategy Apply",
+   "situation": "S8-answer",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": true,
+-   "storedAsAnswer": null,
+-   "executed": true,
++   "storedAsAnswer": true,
++   "executed": false,
+    "pendingPreserved": false,
+-   "note": "frictionless:reminder"
++   "note": "q1"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
++  "room": "Strategy Apply",
+   "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
++  "room": "Strategy Apply",
+   "situation": "S4b-not-what-i-meant",
+-  "diverges": true,
+-  "divergentFields": [
+-   "pendingPreserved"
+-  ],
++  "diverges": false,
++  "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
+-   "note": "frictionless:reminder"
++   "pendingPreserved": true,
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (offer pending)",
++  "room": "Strategy Apply",
+   "situation": "S9-distress",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+    "advanced": false,
+-   "storedAsAnswer": null,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "q0"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S1-clarify",
++  "room": "Strategy Apply",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "complete"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "complete"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "confirm"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S4-correct",
++  "diverges": true,
++  "divergentFields": [
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": true,
++  "divergentFields": [
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S4-correct",
++  "diverges": true,
++  "divergentFields": [
++   "executed",
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
+    "executed": false,
+    "pendingPreserved": true,
+    "note": "chat_api"
+@@ -1580,7 +2771,33 @@
+  },
+  {
+   "room": "Rhythm owner (just executed)",
+-  "situation": "S2-ask",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S8-answer",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1593,7 +2810,7 @@
+  },
+  {
+   "room": "Rhythm owner (just executed)",
+-  "situation": "S3-unsure",
++  "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1606,7 +2823,7 @@
+  },
+  {
+   "room": "Rhythm owner (just executed)",
+-  "situation": "S4-correct",
++  "situation": "S4b-not-what-i-meant",
+   "diverges": true,
+   "divergentFields": [
+    "executed",
+@@ -1621,102 +2838,320 @@
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S5-bare-yes",
++  "room": "Rhythm owner (just executed)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "question"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S6-decline",
++  "room": "Create entrance",
++  "situation": "S4b-not-what-i-meant",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
+-   "note": "frictionless:reminder"
++   "pendingPreserved": true,
++   "note": "question"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S7-strained-clarify",
++  "room": "Create entrance",
++  "situation": "S9-distress",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "frictionless:estate_concierge"
++   "note": "question"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S8-answer",
++  "room": "Create entrance",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "question"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S3b-dont-know-help",
++  "room": "Create entrance",
++  "situation": "R2-not-sure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "question"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S4b-not-what-i-meant",
+-  "diverges": true,
+-  "divergentFields": [
+-   "executed",
+-   "pendingPreserved"
+-  ],
++  "room": "Create entrance",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
+-   "note": "frictionless:reminder"
++   "pendingPreserved": true,
++   "note": "question"
+   }
+  },
+  {
+-  "room": "Rhythm owner (just executed)",
+-  "situation": "S9-distress",
++  "room": "Create entrance",
++  "situation": "R4-really-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": null,
+-   "storedAsAnswer": null,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+    "pendingPreserved": true,
+-   "note": "chat_api"
++   "note": "question"
+   }
+  },
+  {
+   "room": "Create entrance",
+-  "situation": "S1-clarify",
++  "situation": "R5-what-mean",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1729,7 +3164,7 @@
+  },
+  {
+   "room": "Create entrance",
+-  "situation": "S2-ask",
++  "situation": "R6-explain",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1742,7 +3177,7 @@
+  },
+  {
+   "room": "Create entrance",
+-  "situation": "S3-unsure",
++  "situation": "R7-dont-understand",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1755,7 +3190,7 @@
+  },
+  {
+   "room": "Create entrance",
+-  "situation": "S4-correct",
++  "situation": "R8-why-asking",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1767,8 +3202,8 @@
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S5-bare-yes",
++  "room": "Work Recognition",
++  "situation": "S1-clarify",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1780,21 +3215,21 @@
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S6-decline",
++  "room": "Work Recognition",
++  "situation": "S2-ask",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
++   "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
++   "pendingPreserved": true,
+    "note": "question"
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S7-strained-clarify",
++  "room": "Work Recognition",
++  "situation": "S3-unsure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1806,21 +3241,21 @@
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S8-answer",
++  "room": "Work Recognition",
++  "situation": "S4-correct",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
++   "pendingPreserved": true,
+    "note": "question"
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S3b-dont-know-help",
++  "room": "Work Recognition",
++  "situation": "S5-bare-yes",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1832,21 +3267,21 @@
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S4b-not-what-i-meant",
++  "room": "Work Recognition",
++  "situation": "S6-decline",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": false,
++   "advanced": true,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": true,
++   "pendingPreserved": false,
+    "note": "question"
+   }
+  },
+  {
+-  "room": "Create entrance",
+-  "situation": "S9-distress",
++  "room": "Work Recognition",
++  "situation": "S7-strained-clarify",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1859,7 +3294,20 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S1-clarify",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S3b-dont-know-help",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1872,7 +3320,7 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S2-ask",
++  "situation": "S4b-not-what-i-meant",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1885,7 +3333,7 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S3-unsure",
++  "situation": "S9-distress",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1898,7 +3346,7 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S4-correct",
++  "situation": "R1-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1911,7 +3359,7 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S5-bare-yes",
++  "situation": "R2-not-sure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1924,20 +3372,20 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S6-decline",
++  "situation": "R3-help-figure",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
++   "advanced": false,
+    "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
++   "pendingPreserved": true,
+    "note": "question"
+   }
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S7-strained-clarify",
++  "situation": "R4-really-dont-know",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1950,20 +3398,20 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S8-answer",
++  "situation": "R5-what-mean",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+-   "advanced": true,
+-   "storedAsAnswer": true,
++   "advanced": false,
++   "storedAsAnswer": false,
+    "executed": false,
+-   "pendingPreserved": false,
++   "pendingPreserved": true,
+    "note": "question"
+   }
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S3b-dont-know-help",
++  "situation": "R6-explain",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1976,7 +3424,7 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S4b-not-what-i-meant",
++  "situation": "R7-dont-understand",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -1989,7 +3437,7 @@
+  },
+  {
+   "room": "Work Recognition",
+-  "situation": "S9-distress",
++  "situation": "R8-why-asking",
+   "diverges": false,
+   "divergentFields": [],
+   "observed": {
+@@ -2142,5 +3590,109 @@
+    "pendingPreserved": null,
+    "note": "unresolved"
+   }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
+  }
+ ]
+\ No newline at end of file
+diff --git a/lib/board/reconstructed/orchestration/boardMemberQuestions.ts b/lib/board/reconstructed/orchestration/boardMemberQuestions.ts
+index 7ec6e7a5..1a717ef1 100644
+--- a/lib/board/reconstructed/orchestration/boardMemberQuestions.ts
++++ b/lib/board/reconstructed/orchestration/boardMemberQuestions.ts
+@@ -494,8 +494,10 @@ export function applyBoardMemberAnswers(
+         };
+       }
+     }
+-    // Board's affordance: "I don't know" is information (a settled unknown the
+-    // Directors reason with), and a help request rides along with it.
++    // OB-2R: a HIGH `unsure` ("I don't know.", "Can you help me figure that
++    // out?") holds with `help_with_pending` — the asking Director helps the
++    // member work out an answer; nothing is settled. A factual unknown stated
++    // as an answer ("No revenue yet") is relation none and proceeds below.
+     // 3F-5B: questions embedded alongside a real answer travel WITH the answer to
+     // the Directors. One Brain therefore judges the statement part when there is
+     // one (sentence punctuation only); a turn that is only a question is judged whole.
+@@ -507,21 +509,8 @@ export function applyBoardMemberAnswers(
+       .trim();
+     const verdict = roomTurnVerdict({
+       userText: statementPart.split(/\s+/).length >= 3 ? statementPart : judged,
+-      question: { text: q.question, acceptsUnknown: true, unknownWithHelp: true },
++      question: { text: q.question },
+     });
+-    if (verdict.kind === "unknown") {
+-      return {
+-        ...q,
+-        status: "answered" as const,
+-        answer: raw,
+-        responseKind: "unknown" as const,
+-        settledAsUnknown: true,
+-        ...(verdict.helpRequested ? { helpRequested: true as const } : {}),
+-        ...(extracted
+-          ? { memberQuestion: extracted.memberQuestion, memberQuestionAddressedTo: extracted.addressedDirectorId }
+-          : {}),
+-      };
+-    }
+     if (verdict.kind !== "proceed") {
+       heldOpenIds.add(q.id);
+       const obligation = verdict.kind === "hold" ? verdict.obligation : "acknowledge_and_release";
+diff --git a/lib/board/round3f3MemberQuestionContinuation.test.tsx b/lib/board/round3f3MemberQuestionContinuation.test.tsx
+index 0cb7465f..dd12e34d 100644
+--- a/lib/board/round3f3MemberQuestionContinuation.test.tsx
++++ b/lib/board/round3f3MemberQuestionContinuation.test.tsx
+@@ -766,7 +766,11 @@ describe("Continuation guards", () => {
+       { memberMessage: SCENARIO_A, seatedDirectorIds: [...SEATED] },
+       {
+         boardSessionId: "bdd-once11-eeeee",
+-        continuation: { artifacts: paused.sessionArtifacts!, answers: [{ questionId: "bdd-once11-eeeee:q:1", answer: "I'm not sure." }] },
++        // OB-2R (Founder decision): a bare "I'm not sure." is uncertainty in
++        // conversation — One Brain holds it with help and never settles it as
++        // the answer. This guard is about the Board pausing at most once, so
++        // the member gives an explicit answer that establishes the domain state.
++        continuation: { artifacts: paused.sessionArtifacts!, answers: [{ questionId: "bdd-once11-eeeee:q:1", answer: "We haven't tracked that yet." }] },
+       },
+     );
+     expect(resumed.ok).toBe(true);
+diff --git a/lib/board/round3f5bConversationalMoveConsequence.test.ts b/lib/board/round3f5bConversationalMoveConsequence.test.ts
+index 0fa92b75..3742eb7b 100644
+--- a/lib/board/round3f5bConversationalMoveConsequence.test.ts
++++ b/lib/board/round3f5bConversationalMoveConsequence.test.ts
+@@ -361,7 +361,9 @@ describe("3F-5B correction — conversational move, shared understanding, conseq
+       artifacts = outcome.json.sessionArtifacts!;
+       const next = artifacts.boardQuestions!.find((bq) => bq.status === "asked");
+       if (!next) break;
+-      outcome = await answer(seated, sessionId, artifacts, next.id, "I don't know yet.");
++      // OB-2R (Founder decision): a bare "I don't know yet." now holds with help
++      // instead of settling; draining needs an explicit domain answer.
++      outcome = await answer(seated, sessionId, artifacts, next.id, "We haven't worked that number out yet.");
+     }
+     if (!outcome.json.ok) throw new Error(`expected the meeting to complete: ${JSON.stringify(outcome.json)}`);
+     const delivery = outcome.json.delivery;
+diff --git a/lib/board/round3f5cConversationalMoveUnderstanding.test.ts b/lib/board/round3f5cConversationalMoveUnderstanding.test.ts
+index c1b475da..8a91beec 100644
+--- a/lib/board/round3f5cConversationalMoveUnderstanding.test.ts
++++ b/lib/board/round3f5cConversationalMoveUnderstanding.test.ts
+@@ -196,7 +196,11 @@ describe("5 & 7. help request — preserves BOTH the settled unknown and the req
+     expect(detectHelpRequest(text)).toBe(true);
+   });
+ 
+-  it("a mixed unknown+help turn is answered, settled as unknown, AND flagged as a help request", () => {
++  // OB-2R (Founder decision, supersedes the R3F-5C settle-as-unknown rule):
++  // uncertainty plus a request for help is NOT an answer. One Brain holds it
++  // (`help_with_pending`): the question stays open, nothing is settled, and
++  // the asking Director is flagged to help the member work it out.
++  it("a pure unknown+help turn holds open with help — never settled as unknown", () => {
+     const q = question({ id: "q1" });
+     const result = applyBoardMemberAnswers(
+       [q],
+@@ -205,8 +209,8 @@ describe("5 & 7. help request — preserves BOTH the settled unknown and the req
+     expect(result.ok).toBe(true);
+     if (result.ok) {
+       const updated = result.questions[0]!;
+-      expect(updated.status).toBe("answered");
+-      expect(updated.settledAsUnknown).toBe(true);
++      expect(updated.status).toBe("asked");
++      expect(updated.settledAsUnknown).toBeUndefined();
+       expect(updated.helpRequested).toBe(true);
+     }
+   });
+diff --git a/lib/conversationBoundaryMeaning.ts b/lib/conversationBoundaryMeaning.ts
+index c6e02323..c17499db 100644
+--- a/lib/conversationBoundaryMeaning.ts
++++ b/lib/conversationBoundaryMeaning.ts
+@@ -485,6 +485,27 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+     // "I don't know, but I think maybe women over 50." — uncertainty wrapped
+     // around a real candidate answer. Neither discard it nor store it: check.
+     lowWhy.push("tentative_answer_inside_unsure");
++  } else if (
++    relation === "unsure" &&
++    cls.some(
++      (c) =>
++        // intensifiers never turn an uncertainty clause into content
++        !UNSURE_RE.test(c.replace(/\b(?:really|honestly|actually|just|truly)\s+/gi, "")) &&
++        !MEMBER_HELP_REQUEST_RE.test(c) &&
++        !WH_OPEN_RE.test(c) &&
++        !QUESTION_TO_SPARK_OPEN_RE.test(c) &&
++        !AFFECT_STRAIN_RE.test(c) &&
++        !AFFECT_DISTRESS_RE.test(c) &&
++        c.trim().split(/\s+/).length >= 3,
++    )
++  ) {
++    // OB-2R — "I don't know off the top of my head — there's no revenue yet."
++    // An uncertainty marker beside a clause of real content (not the
++    // uncertainty itself, a help request, a question, or a feeling): the
++    // member is not ONLY unsure. Never a HIGH unsure (which would discard the
++    // content); the room's own specialist judges the content. Mirrors
++    // `decline_with_content`.
++    lowWhy.push("unsure_with_content");
+   }
+   if (relation === "none" && CONFUSION_SHAPE_RE.test(t) && hasSparkContribution) {
+     // Confusion-shaped words no clarify rule matched ("I don't get what you
+diff --git a/lib/conversationBoundaryRoomGate.ts b/lib/conversationBoundaryRoomGate.ts
+index 8acbed90..9a288bfe 100644
+--- a/lib/conversationBoundaryRoomGate.ts
++++ b/lib/conversationBoundaryRoomGate.ts
+@@ -19,7 +19,6 @@ import {
+   type ConversationBoundaryDecision,
+ } from "./conversationBoundary";
+ import {
+-  HELP_REQUESTED_EVIDENCE,
+   isBoundaryMeaningHoldEnabled,
+   permitsFor,
+   type BoundaryObligation,
+@@ -43,15 +42,6 @@ export type RoomPendingQuestion = {
+    * request to explain the room's own question still holds.
+    */
+   acceptsQuestions?: boolean;
+-  /**
+-   * The room's own answer affordance accepts "I don't know" as information
+-   * (Board: a settled unknown the Directors reason with; Events: pause this
+-   * question and come back). One Brain returns an `unknown` verdict and the
+-   * room applies its own semantics. With `unknownWithHelp`, a help request
+-   * rides on the unknown (Board); without it, a help request still holds.
+-   */
+-  acceptsUnknown?: boolean;
+-  unknownWithHelp?: boolean;
+   /**
+    * An opening invitation ("What's on your mind?", "What would you like to
+    * bring to the Board?") accepts anything the member offers; it holds only for
+@@ -67,16 +57,6 @@ export type RoomTurnVerdict =
+   | { kind: "proceed"; decision: ConversationBoundaryDecision | null; permits: BoundaryPermits | null }
+   /** The member declined an optional question: advance without storing. */
+   | { kind: "skip"; decision: ConversationBoundaryDecision; permits: BoundaryPermits }
+-  /**
+-   * The member does not know the answer and the room accepts that as
+-   * information (`acceptsUnknown`). The room applies its own unknown semantics.
+-   */
+-  | {
+-      kind: "unknown";
+-      helpRequested: boolean;
+-      decision: ConversationBoundaryDecision;
+-      permits: BoundaryPermits;
+-    }
+   /** Do not store, do not advance; perform the obligation; the question stays pending. */
+   | { kind: "hold"; obligation: RoomHoldObligation; decision: ConversationBoundaryDecision; permits: BoundaryPermits };
+ 
+@@ -131,12 +111,21 @@ export function roomTurnVerdict(input: {
+   ) {
+     return { kind: "proceed", decision, permits };
+   }
+-  if (input.question.acceptsUnknown && decision.relation === "unsure") {
+-    const helpRequested = decision.evidence.includes(`meaning:${HELP_REQUESTED_EVIDENCE}`);
+-    if (!helpRequested || input.question.unknownWithHelp) {
+-      return { kind: "unknown", helpRequested, decision, permits };
+-    }
++  // OB-2R — the same for uncertainty beside real content ("I don't know off the
++  // top of my head — there's no revenue yet."): the member gave the room
++  // information, so the room's specialist judges it. Pure uncertainty (HIGH
++  // `unsure`) never reaches here — it holds with `help_with_pending` below.
++  if (
++    decision.relation === "unsure" &&
++    decision.evidence.includes("meaning:low:unsure_with_content")
++  ) {
++    return { kind: "proceed", decision, permits };
+   }
++  // OB-2R (Founder decision): uncertainty during conversation is never stored
++  // as a domain answer. A HIGH `unsure` holds with `help_with_pending` in every
++  // room — no room may declare "I don't know" an answer affordance here. A
++  // room's deliberate unknown/undecided state is set only by a genuine answer
++  // (relation none) or the room's own explicit choice, never by this gate.
+   // A yes/no question's own answers: a clear yes or no IS the answer.
+   if (
+     high &&
+diff --git a/lib/createEstate/entranceUnderstanding.ts b/lib/createEstate/entranceUnderstanding.ts
+index ebd79d1d..3b3bd31b 100644
+--- a/lib/createEstate/entranceUnderstanding.ts
++++ b/lib/createEstate/entranceUnderstanding.ts
+@@ -315,6 +315,19 @@ const CREATE_DISCOVERY_SLOT_COPY: Record<DiscoverySlot, { meaning: string; help:
+   },
+ };
+ 
++/**
++ * OB-2R — Create's own slot copy for a discovery question asked anywhere
++ * (entrance or Current Focus `discovery:<id>`), so both surfaces explain the
++ * same question in the same Create words. Null for an unknown id.
++ */
++export function createDiscoveryQuestionCopy(questionId: string): { meaning: string; help: string } | null {
++  for (const questions of Object.values(DISCOVERY_QUESTIONS)) {
++    const q = questions.find((x) => x.id === questionId);
++    if (q) return CREATE_DISCOVERY_SLOT_COPY[q.slot];
++  }
++  return null;
++}
++
+ /**
+  * Record the member's reply (or an explicit skip) to the current question.
+  * An empty reply is treated as a skip — never store blank answers.
+diff --git a/lib/currentFocus/submitCurrentFocusResponse.ts b/lib/currentFocus/submitCurrentFocusResponse.ts
+index 67d18b4a..47ac1102 100644
+--- a/lib/currentFocus/submitCurrentFocusResponse.ts
++++ b/lib/currentFocus/submitCurrentFocusResponse.ts
+@@ -20,6 +20,12 @@ import {
+ import { nextFoundationQuestionForRecord } from "@/lib/eventsIntelligence/eventMemberQuestionPaths";
+ import { appendEventConversationTurn } from "@/lib/eventsIntelligence/eventConversationTurns";
+ import type { CreateWorkflowState } from "@/lib/createWorkflow";
++import {
++  renderRoomHoldReply,
++  roomTurnVerdict,
++  type RoomQuestionCopy,
++} from "@/lib/conversationBoundaryRoomGate";
++import { createDiscoveryQuestionCopy } from "@/lib/createEstate/entranceUnderstanding";
+ import {
+   authorizeCreationEgress,
+   emptyCreationEvidence,
+@@ -60,6 +66,22 @@ const IDEAS_BY_SECTION: Record<string, string> = {
+   troubleshooting: "Think of the last time this went wrong — what happened right before?",
+ };
+ 
++/**
++ * OB-2R — Create's own words about the Focus question: the Focus's authored
++ * purpose (section `why`) or Create's discovery slot copy, and the same ideas
++ * guidance the "Give me ideas" button already shows. No new copy source.
++ */
++export function currentFocusQuestionCopy(focus: CanonicalCurrentFocus): RoomQuestionCopy {
++  const discovery = focus.focusId.startsWith("discovery:")
++    ? createDiscoveryQuestionCopy(focus.focusId.slice("discovery:".length))
++    : null;
++  return {
++    question: focus.prompt,
++    meaning: discovery?.meaning ?? `I'm asking because this shapes the “${focus.title}” part of your work. ${focus.purpose}`.trim(),
++    help: discovery?.help ?? ideasGuidanceForFocus(focus),
++  };
++}
++
+ export function ideasGuidanceForFocus(focus: CanonicalCurrentFocus): string {
+   const key = focus.sectionId || focus.assetTypeId || "";
+   return (
+@@ -421,6 +443,38 @@ export async function submitCurrentFocusResponse(
+     );
+   }
+ 
++  const eventRecord = getEventRecord(input.creationId);
++
++  // OB-2R — non-event Create (discovery + section answers): One Brain decides
++  // whether this reply answers the Focus question. Events run the same gate
++  // inside applyEventConversationalAnswer. A held turn stores nothing, keeps
++  // the same Focus, and Create explains its own question.
++  if (!eventRecord) {
++    const verdict = roomTurnVerdict({
++      userText: trimmed,
++      // Current Focus offers Skip on every question, so a decline is its skip.
++      question: { text: focus.prompt, choices: focus.choices, optional: true },
++    });
++    if (verdict.kind === "skip") {
++      return submitCurrentFocusResponse({ ...input, response: "", responseType: "skip" }, opts);
++    }
++    if (verdict.kind === "hold") {
++      return {
++        ok: true,
++        preservedResponse: preserved,
++        confirmationGuidance: renderRoomHoldReply(verdict, currentFocusQuestionCopy(focus), { reask: false }),
++        failureMessage: null,
++        retryAvailable: false,
++        nextFocus: focus,
++        realityUpdated: false,
++        trustAuthorized: true,
++        advanced: false,
++        durable: true,
++        updatedWorkflow: opts?.workflow ?? null,
++      };
++    }
++  }
++
+   if (focus.focusId.startsWith("discovery:")) {
+     return handleDiscoverySubmission({
+       creationId: input.creationId,
+@@ -434,8 +488,6 @@ export async function submitCurrentFocusResponse(
+     });
+   }
+ 
+-  const eventRecord = getEventRecord(input.creationId);
+-
+   // —— Event Record path (cache) + authoritative durable ——
+   if (eventRecord) {
+     try {
+diff --git a/lib/eventsIntelligence/applyEventConversationalAnswer.ts b/lib/eventsIntelligence/applyEventConversationalAnswer.ts
+index b6d877b4..5cea2b69 100644
+--- a/lib/eventsIntelligence/applyEventConversationalAnswer.ts
++++ b/lib/eventsIntelligence/applyEventConversationalAnswer.ts
+@@ -380,9 +380,10 @@ export function applyEventConversationalAnswer(
+   if (activeQuestion && userText.trim()) {
+     const verdict = roomTurnVerdict({
+       userText,
+-      // Events' affordance: "I don't know (yet)" pauses this question and comes
+-      // back later; a request for help still holds and helps.
+-      question: { text: activeQuestion.prompt, optional: true, acceptsUnknown: true },
++      // OB-2R: a HIGH `unsure` holds with `help_with_pending` (Events helps the
++      // member work it out; nothing is written). Declining this optional
++      // question ("skip it", "not now") is still Events' skip.
++      question: { text: activeQuestion.prompt, optional: true },
+     });
+     if (verdict.kind === "hold") {
+       return {
+@@ -393,7 +394,6 @@ export function applyEventConversationalAnswer(
+       };
+     }
+     if (verdict.kind === "skip") verdictDisposition = "skip";
+-    if (verdict.kind === "unknown") verdictDisposition = "defer";
+   }
+   const disposition =
+     verdictDisposition ?? detectDisposition(userText, isBoundaryMeaningHoldEnabled());
+diff --git a/lib/eventsIntelligence/eventConversationControl.test.ts b/lib/eventsIntelligence/eventConversationControl.test.ts
+index fe4e9ee6..2a69d97d 100644
+--- a/lib/eventsIntelligence/eventConversationControl.test.ts
++++ b/lib/eventsIntelligence/eventConversationControl.test.ts
+@@ -35,7 +35,11 @@ describe("event conversation control + adaptive map", () => {
+     expect(first).toBeTruthy();
+     const firstId = first!.id;
+ 
+-    record = applyEventConversationalAnswer(record, "I don't know yet.", first)
++    // OB-2R (Founder decision): a bare "I don't know yet." holds with help and
++    // keeps the question; an explicit decline of this optional question is what
++    // moves past it. ("Not now." — the contract's certified decline. Longer
++    // deferral phrasings are a known Boundary lexicon gap: see the OB-2R report.)
++    record = applyEventConversationalAnswer(record, "Not now.", first)
+       .record;
+     const second = nextFoundationQuestionForRecord(record);
+     expect(second?.id).not.toBe(firstId);
+diff --git a/lib/eventsIntelligence/eventQaLoop.test.ts b/lib/eventsIntelligence/eventQaLoop.test.ts
+index 26ea40a4..b317d894 100644
+--- a/lib/eventsIntelligence/eventQaLoop.test.ts
++++ b/lib/eventsIntelligence/eventQaLoop.test.ts
+@@ -139,14 +139,24 @@ describe("Events conversational Q&A loop", () => {
+     expect(next.kind === "question" ? next.question.prompt : "").toBeTruthy();
+   });
+ 
++  // OB-2R (Founder decision): "I don't know yet." is uncertainty, not a skip —
++  // it holds with help and keeps the question. An explicit skip still skips.
+   it("skip phrases preserve progress", () => {
+     const record = bootstrapEventsEntranceRecord("I'm hosting an online event.");
+     const result = applyEventConversationalAnswer(
+       record,
+-      "I don't know yet.",
++      "Not now.",
+       nextFoundationQuestionForRecord(record),
+     );
+-    expect(result.disposition).toBe("defer");
++    expect(result.disposition).toBe("skip");
+     expect(nextFoundationQuestionForRecord(result.record)?.prompt).toBeTruthy();
+   });
++
++  it("OB-2R — 'I don't know yet.' holds with help; nothing deferred or written", () => {
++    const record = bootstrapEventsEntranceRecord("I'm hosting an online event.");
++    const q = nextFoundationQuestionForRecord(record);
++    const result = applyEventConversationalAnswer(record, "I don't know yet.", q);
++    expect(result.held).toBe(true);
++    expect(nextFoundationQuestionForRecord(result.record)?.id).toBe(q?.id);
++  });
+ });
+diff --git a/lib/oneBrainCertification/oneBrainConsumers.test.ts b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+index 865753a0..05f0646f 100644
+--- a/lib/oneBrainCertification/oneBrainConsumers.test.ts
++++ b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+@@ -89,7 +89,14 @@ describe("OB-2 One Brain consumers", () => {
+       "lib/day-designer/dayMessages.ts",
+       "lib/createEstate/entranceUnderstanding.ts",
+       "lib/businessProfileFounder/claireConfirmationTurn.ts",
++      "lib/currentFocus/submitCurrentFocusResponse.ts", // OB-2R
+     ];
+     for (const f of entries) expect(read(f), f).toMatch(/\broomTurnVerdict\s*\(/);
+   });
++
++  it("OB-2R: no room may declare uncertainty an answer (no `unknown` gate verdict)", () => {
++    expect(read(GATE)).not.toMatch(/acceptsUnknown|kind:\s*"unknown"/);
++    const declarers = files.filter((f) => f !== GATE && /\bacceptsUnknown\b/.test(read(f)));
++    expect(declarers).toEqual([]);
++  });
+ });
+diff --git a/lib/oneBrainCertification/roomDivergence.ob1.test.ts b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+index b064e4fa..5a6390d8 100644
+--- a/lib/oneBrainCertification/roomDivergence.ob1.test.ts
++++ b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+@@ -15,7 +15,7 @@
+ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+ import path from "node:path";
+ import { afterEach, beforeEach, describe, expect, it } from "vitest";
+-import { OB2_SITUATIONS, SITUATIONS, runDivergenceMatrix, type DivergenceCell } from "./roomDrivers";
++import { OB2R_SITUATIONS, OB2_SITUATIONS, SITUATIONS, runDivergenceMatrix, type DivergenceCell } from "./roomDrivers";
+ 
+ const OB1_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob1/divergence_baseline.json");
+ const OB2_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob2/divergence_baseline.json");
+@@ -51,9 +51,8 @@ describe("real-room divergence baselines", () => {
+ 
+   it("kill switch OFF reproduces the OB-1 room behavior exactly (every observed cell)", () => {
+     process.env[HOLD_FLAG] = "0";
+-    // Compare what each room DID (the observation), cell by cell. The
+-    // divergence flags are derived from expectations, which OB-2 refined for
+-    // one documented room affordance (Board accepts "I don't know").
++    // Compare what each room DID (the observation), cell by cell — observations
++    // only, so the proof is independent of how expectations are declared.
+     const observed = rows(runDivergenceMatrix(SITUATIONS)).map(({ room, situation, observed }) => ({ room, situation, observed }));
+     const baseline = (JSON.parse(readFileSync(OB1_BASELINE, "utf8")) as Row[]).map(({ room, situation, observed }) => ({
+       room,
+@@ -65,7 +64,7 @@ describe("real-room divergence baselines", () => {
+ 
+   it("One Brain hold ON matches the committed OB-2 baseline", () => {
+     delete process.env[HOLD_FLAG];
+-    const observed = rows(runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS]));
++    const observed = rows(runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS, ...OB2R_SITUATIONS]));
+     if (process.env.OB2_WRITE_BASELINE === "1" || !existsSync(OB2_BASELINE)) {
+       mkdirSync(path.dirname(OB2_BASELINE), { recursive: true });
+       writeFileSync(OB2_BASELINE, JSON.stringify(observed, null, 1));
+@@ -76,7 +75,7 @@ describe("real-room divergence baselines", () => {
+ 
+   it("the drivers observe production — every room produced an observation", () => {
+     delete process.env[HOLD_FLAG];
+-    const cells = runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS]);
++    const cells = runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS, ...OB2R_SITUATIONS]);
+     const threw = cells.filter((c) => c.observed.note?.startsWith("threw:") || c.observed.note === "no_fixture");
+     expect(threw.map((c) => `${c.room}/${c.situation}: ${c.observed.note}`)).toEqual([]);
+   });
+diff --git a/lib/oneBrainCertification/roomDrivers.ts b/lib/oneBrainCertification/roomDrivers.ts
+index 9a0cabc9..f1cb554d 100644
+--- a/lib/oneBrainCertification/roomDrivers.ts
++++ b/lib/oneBrainCertification/roomDrivers.ts
+@@ -98,7 +98,16 @@ export type SituationId =
+   // OB-2 — the brief's exact phrasings + distress alone
+   | "S3b-dont-know-help"
+   | "S4b-not-what-i-meant"
+-  | "S9-distress";
++  | "S9-distress"
++  // OB-2R — the Founder decision's exact uncertainty and clarification phrasings
++  | "R1-dont-know"
++  | "R2-not-sure"
++  | "R3-help-figure"
++  | "R4-really-dont-know"
++  | "R5-what-mean"
++  | "R6-explain"
++  | "R7-dont-understand"
++  | "R8-why-asking";
+ 
+ export const SITUATIONS: { id: SituationId; text: string | null }[] = [
+   { id: "S1-clarify", text: "I don't know what you mean. Can you explain that before we keep going?" },
+@@ -118,6 +127,18 @@ export const OB2_SITUATIONS: { id: SituationId; text: string | null }[] = [
+   { id: "S9-distress", text: "I'm falling apart. I can't do this." },
+ ];
+ 
++/** OB-2R situations — the Founder decision's phrasings (every one must hold). */
++export const OB2R_SITUATIONS: { id: SituationId; text: string | null }[] = [
++  { id: "R1-dont-know", text: "I don't know." },
++  { id: "R2-not-sure", text: "I'm not sure." },
++  { id: "R3-help-figure", text: "Can you help me figure that out?" },
++  { id: "R4-really-dont-know", text: "I really don't know how to answer that." },
++  { id: "R5-what-mean", text: "What do you mean?" },
++  { id: "R6-explain", text: "Can you explain that?" },
++  { id: "R7-dont-understand", text: "I don't understand." },
++  { id: "R8-why-asking", text: "Why are you asking me that?" },
++];
++
+ /**
+  * HUMAN-DEFINED expected outcome per situation, from the OB-0.5 contract.
+  * `null` = no expectation for that field in that room shape.
+@@ -137,6 +158,14 @@ export function expectedOutcome(shape: RoomShape, s: SituationId): Observation {
+       case "S3b-dont-know-help":
+       case "S4b-not-what-i-meant":
+       case "S9-distress":
++      case "R1-dont-know":
++      case "R2-not-sure":
++      case "R3-help-figure":
++      case "R4-really-dont-know":
++      case "R5-what-mean":
++      case "R6-explain":
++      case "R7-dont-understand":
++      case "R8-why-asking":
+         return hold;
+       case "S6-decline":
+         return { advanced: null, storedAsAnswer: false, executed: false, pendingPreserved: null };
+@@ -173,12 +202,6 @@ export type RoomDriver = {
+   shape: RoomShape;
+   /** Fields a room cannot expose structurally for its control answer (documented, not guessed). */
+   controlUnobservable?: (keyof Observation)[];
+-  /**
+-   * OB-2: the room's own answer affordance accepts "I don't know" as information
+-   * (Board: a settled unknown). For the unsure situations the expected outcome is
+-   * then "stored (as unknown) and moved on", not a hold — documented, not guessed.
+-   */
+-  acceptsUnknown?: boolean;
+   entry: string;
+   controlAnswer: string;
+   run: (text: string) => Observation;
+@@ -221,7 +244,6 @@ const boardIntake: RoomDriver = {
+ const boardMeeting: RoomDriver = {
+   room: "Board meeting",
+   shape: "question",
+-  acceptsUnknown: true,
+   entry: "applyBoardMemberAnswers",
+   controlAnswer: "About $12,000 a month right now.",
+   run: (text) => {
+@@ -548,9 +570,6 @@ export function runDivergenceMatrix(situations = SITUATIONS): DivergenceCell[] {
+       }
+       const expected = { ...expectedOutcome(d.shape, s.id) };
+       if (s.id === "S8-answer") for (const f of d.controlUnobservable ?? []) (expected as Record<string, unknown>)[f] = null;
+-      if (d.acceptsUnknown && (s.id === "S3-unsure" || s.id === "S3b-dont-know-help")) {
+-        Object.assign(expected, { advanced: true, storedAsAnswer: true, executed: null, pendingPreserved: false });
+-      }
+       const divergentFields = FIELDS.filter(
+         (f) => expected[f] !== null && observed[f] !== null && expected[f] !== observed[f],
+       );
+diff --git a/lib/oneBrainCertification/roomHold.ob2.test.ts b/lib/oneBrainCertification/roomHold.ob2.test.ts
+index d143f4f5..7c408aaf 100644
+--- a/lib/oneBrainCertification/roomHold.ob2.test.ts
++++ b/lib/oneBrainCertification/roomHold.ob2.test.ts
+@@ -41,8 +41,30 @@ import { resolveClaireConfirmationTurn } from "@/lib/businessProfileFounder/clai
+ import { buildWriteCandidate } from "@/lib/businessProfileFounder/writeCandidateContract";
+ import { classifyCreateTurnRelationship } from "@/lib/universalCreation/createTurnRelationship";
+ import type { UniversalCreationSession } from "@/lib/universalCreation/types";
++import { roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
++import {
++  clearAuthoritativeDurableMarksForTests,
++  createMemoryCreationDurableBackend,
++  setCreationDurableBackendForTests,
++} from "@/lib/creationDurable";
++import { submitCurrentFocusResponse } from "@/lib/currentFocus/submitCurrentFocusResponse";
++import {
++  clearRuntimeCreationRecordsForTests,
++  getRuntimeCreationRecord,
++} from "@/lib/currentFocus/creationRecord";
++import { resolveCanonicalCurrentFocus } from "@/lib/currentFocus/resolveCanonicalFocus";
++import { defaultTemplateFor } from "@/lib/createTemplates";
++import type { CreateWorkflowState } from "@/lib/createWorkflowState";
+ 
+ const CLARIFY = "I don't know what you mean. Can you explain that before we keep going?";
++/** OB-2R — the Founder decision's exact phrasings. */
++const UNSURE = [
++  "I don't know.",
++  "I'm not sure.",
++  "Can you help me figure that out?",
++  "I really don't know how to answer that.",
++];
++const CLARIFY_OR_ASK = ["What do you mean?", "Can you explain that?", "I don't understand.", "Why are you asking me that?"];
+ const HOLD = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
+ let saved: string | undefined;
+ beforeEach(() => {
+@@ -88,15 +110,22 @@ describe("Board meeting", () => {
+     expect(after?.status).toBe("asked");
+     expect(after?.memberQuestionAddressedTo).toBe("economic-survivability");
+   });
+-  it("Board's affordance: 'I don't know' settles as unknown (help rides along); a factual unknown settles too", () => {
+-    // R3F-5B (Founder-certified): the Board accepts an unknown as information the
+-    // Directors reason with — One Brain returns `unknown`, the Board applies it.
+-    const help = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: "I don't know. Help me figure that out." }]);
+-    expect(help.ok && help.questions[0]!.status).toBe("answered");
+-    expect(help.ok && help.questions[0]!.settledAsUnknown).toBe(true);
+-    expect(help.ok && help.questions[0]!.helpRequested).toBe(true);
++  it.each(UNSURE)("OB-2R: %s holds with help — nothing settled, the asking Director helps", (text) => {
++    // Founder decision (OB-2R): uncertainty in conversation is not an answer.
++    const r = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: text }]);
++    expect(r.ok).toBe(true);
++    const after = r.ok ? r.questions[0]! : null;
++    expect(after?.status).toBe("asked");
++    expect(after?.answer).toBeUndefined();
++    expect(after?.settledAsUnknown).toBeUndefined();
++    expect(after?.helpRequested).toBe(true);
++    expect(after?.memberQuestionAddressedTo).toBe("economic-survivability");
++  });
++  it("a factual unknown stated AS the answer is still the answer (specialist semantics)", () => {
+     const unknown = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: "No revenue yet — we launch in March." }]);
+     expect(unknown.ok && unknown.questions[0]!.status).toBe("answered");
++    const real = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: "About $12,000 a month right now." }]);
++    expect(real.ok && real.questions[0]!.status).toBe("answered");
+   });
+ });
+ 
+@@ -127,6 +156,87 @@ describe("Events", () => {
+     expect(answer.held).toBeUndefined();
+     expect(answer.record.activeQuestionId).not.toBe(rec.activeQuestionId);
+   });
++  it.each(UNSURE)("OB-2R: %s holds with help — no write, no defer, same question", (text) => {
++    const start = startEventsEntranceUnderstanding("I'm hosting an online event.")!;
++    const id = start.session.answers["events-record-id"]!;
++    const rec = getEventRecord(id)!;
++    const q = nextFoundationQuestionForRecord(rec);
++    const before = JSON.stringify(getEventRecord(id));
++    const res = applyEventConversationalAnswer(rec, text, q);
++    expect(res.held).toBe(true);
++    expect(res.disposition).not.toBe("defer");
++    expect(res.record.activeQuestionId).toBe(rec.activeQuestionId);
++    expect(JSON.stringify(getEventRecord(id))).toBe(before);
++    expect(res.assistantLead).toMatch(/^That's (completely )?okay/);
++  });
++});
++
++describe("Current Focus — non-event Create (OB-2R)", () => {
++  beforeEach(() => {
++    sessionStorage.clear();
++    clearRuntimeCreationRecordsForTests();
++    clearAuthoritativeDurableMarksForTests();
++    setCreationDurableBackendForTests(createMemoryCreationDurableBackend());
++  });
++  const sopWorkflow = (sessionId: string) => {
++    const template = defaultTemplateFor("SOP");
++    return {
++      sessionId,
++      selectedTypeLabel: "SOP",
++      useTemplate: true,
++      selectedTemplateId: template.id,
++      templateSections: template.sections,
++      sectionContent: {},
++      skippedSectionIds: [],
++      workspaceFirst: true,
++      questionMode: "current_focus",
++    } as CreateWorkflowState;
++  };
++  const submit = (id: string, workflow: CreateWorkflowState, response: string) => {
++    const focus = resolveCanonicalCurrentFocus({ creationId: id, workflow })!;
++    return submitCurrentFocusResponse(
++      { creationId: id, focusId: focus.focusId, response, responseType: "multiline", requestId: `r-${response}`, contextVersion: focus.contextVersion },
++      { workflow },
++    ).then((result) => ({ focus, result }));
++  };
++
++  it.each([...CLARIFY_OR_ASK, ...UNSURE])("discovery question: %s is held, not saved; Create explains its own question", async (text) => {
++    const wf = sopWorkflow("cf-disc");
++    const { focus, result } = await submit("cf-disc", wf, text);
++    expect(focus.focusId).toBe("discovery:sop-audience-type");
++    expect(result.ok).toBe(true);
++    expect(result.advanced).toBe(false);
++    expect(result.realityUpdated).toBe(false);
++    expect(result.nextFocus?.focusId).toBe(focus.focusId);
++    expect(result.confirmationGuidance).toMatch(/I'm asking|okay/);
++    expect(getRuntimeCreationRecord("cf-disc")?.discoveryAnswers ?? null).toBeNull();
++  });
++
++  it.each(CLARIFY_OR_ASK)("section question: %s is held, not saved", async (text) => {
++    const wf = sopWorkflow("cf-sec");
++    let { focus } = await submit("cf-sec", wf, "my own business");
++    for (const a of ["starting from scratch", "just me"]) ({ focus } = await submit("cf-sec", wf, a));
++    focus = resolveCanonicalCurrentFocus({ creationId: "cf-sec", workflow: wf })!;
++    expect(focus.sectionId).toBe("purpose");
++    const { result } = await submit("cf-sec", wf, text);
++    expect(result.advanced).toBe(false);
++    expect(result.nextFocus?.focusId).toBe(focus.focusId);
++    expect(JSON.stringify(getRuntimeCreationRecord("cf-sec")?.sectionContent ?? {})).not.toContain(text.replace(/[.?]$/, ""));
++  });
++
++  it("a genuine answer still saves and advances", async () => {
++    const wf = sopWorkflow("cf-real");
++    const { result } = await submit("cf-real", wf, "my own business");
++    expect(result.advanced).toBe(true);
++    expect(getRuntimeCreationRecord("cf-real")?.discoveryAnswers?.["sop-audience-type"]).toBe("my own business");
++  });
++
++  it("kill switch restores storing the reply", async () => {
++    process.env[HOLD] = "0";
++    const wf = sopWorkflow("cf-ks");
++    const { result } = await submit("cf-ks", wf, "What do you mean?");
++    expect(result.advanced).toBe(true);
++  });
+ });
+ 
+ describe("Strategy Apply", () => {
+@@ -189,6 +299,34 @@ describe("Claire confirmation", () => {
+   });
+ });
+ 
++describe("OB-2R — uncertainty with content vs pure uncertainty (room gate)", () => {
++  const question = { text: "What is your monthly revenue right now?" };
++  // Paraphrase family: an uncertainty marker beside a clause of real content —
++  // the room's specialist receives it (never discarded as a HIGH unsure).
++  it.each([
++    "I don't know off the top of my head — there's no revenue yet.",
++    "I still don't know — but I'm spending about 15 hours a week on it.",
++    "Not sure exactly, we made roughly four thousand last month.",
++    "No idea yet — the business isn't generating revenue.",
++    "I don't really know, and we only launched two weeks ago.",
++  ])("%s → proceeds to the room's specialist", (userText) => {
++    expect(roomTurnVerdict({ userText, question }).kind).toBe("proceed");
++  });
++  // Negative controls: pure uncertainty, uncertainty + help, + a question, +
++  // a feeling — all still HIGH unsure → hold with help.
++  it.each([
++    ...UNSURE,
++    "I don't really know yet but would welcome the help to figure it out.",
++    "I'm not sure. Can you walk me through it?",
++    "I don't know — I'm so overwhelmed right now.",
++    "Honestly I really don't know.",
++  ])("%s → holds with help", (userText) => {
++    const v = roomTurnVerdict({ userText, question });
++    expect(v.kind).toBe("hold");
++    expect(v.kind === "hold" && v.obligation).toBe("help_with_pending");
++  });
++});
++
+ describe("Main chat — Boundary reconciliation", () => {
+   const pendingQuestion: BoundaryPendingQuestion = {
+     kind: "open",
+-- 
+2.43.0
+
