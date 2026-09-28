@@ -1,0 +1,5917 @@
+From ddf8e966e522d9fd0bfc09b37e8992d9b44e1922 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 16:25:25 +0000
+Subject: [PATCH] feat(boundary): OB-3 one pending authority + binding
+ convergence
+
+- One pending-response record: the spine's ownership.expectedReply, extended
+  with bindKey / offeredAtTurn / heldThroughTurn / optional / items /
+  authority. Thin accessors (arm / held / release / read), no new store.
+- Boundary reads it as plain pre-turn data (pendingOwnerSnapshot); one
+  resolvePendingBinding per turn (Boundary meaning + permitsFor) decides
+  what a reply binds to: bind / release / preserve / ask_which / none.
+- Freshness by provenance: offer or a later person-before-process hold on
+  the previous turn; a newer arm replaces the older offer.
+- 19 bind sites converged (invites, Compass, acceptance dispatch, Create
+  consent, frictionless/Strategy/avatar/Collection/VTS/handoff/survey,
+  Decision Ledger, both Remember binders, frictionless yes-continuation).
+- Model text can no longer arm executable authority.
+- Decision Ledger B-10 reproduced and routed through the shared binding.
+- Structural deferral family in the Boundary lexicon (OB-2R Events gap).
+- Reconciliation rule 3: a HIGH acceptance bound to the live offer is not
+  a topic switch. Divergence 4/285 -> 2/285 (only OB-4 receipt cells).
+- Certification: pendingBinding.ob3 (85 production-path cases), OB3 corpus
+  additions, OB-3 divergence baseline, consumer structure rules.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0162D2EyVC24X9wVgoMdDuJm
+---
+ app/companion/CompanionPageClient.tsx         |  241 +-
+ .../BRAIN_SPARK_ESTATE_OB3_RETURN_REPORT.md   |  360 ++
+ docs/reviews/ob3/divergence_baseline.json     | 3694 +++++++++++++++++
+ lib/conversationBoundary.ts                   |   30 +
+ lib/conversationBoundaryInputs.ts             |   43 +
+ lib/conversationBoundaryLexicon.ts            |   28 +
+ lib/conversationBoundaryMeaning.ts            |   15 +-
+ lib/conversationBoundaryRoomGate.ts           |  127 +
+ .../ownership/pendingReply.ts                 |  123 +
+ lib/conversationSession/ownership/types.ts    |   21 +
+ lib/frictionlessActionLayer.ts                |   83 +-
+ lib/oneBrainCertification/bakeoff.ob1.test.ts |   20 +-
+ lib/oneBrainCertification/corpus.ts           |   26 +
+ .../oneBrainConsumers.test.ts                 |   32 +
+ .../pendingBinding.ob3.test.ts                |  379 ++
+ .../roomDivergence.ob1.test.ts                |    8 +-
+ lib/oneBrainCertification/roomDrivers.ts      |   23 +-
+ lib/remindersVsRhythms/conversationPending.ts |   12 +
+ 18 files changed, 5228 insertions(+), 37 deletions(-)
+ create mode 100644 docs/reviews/BRAIN_SPARK_ESTATE_OB3_RETURN_REPORT.md
+ create mode 100644 docs/reviews/ob3/divergence_baseline.json
+ create mode 100644 lib/conversationSession/ownership/pendingReply.ts
+ create mode 100644 lib/oneBrainCertification/pendingBinding.ob3.test.ts
+
+diff --git a/app/companion/CompanionPageClient.tsx b/app/companion/CompanionPageClient.tsx
+index 0ed78b46..03a909ed 100644
+--- a/app/companion/CompanionPageClient.tsx
++++ b/app/companion/CompanionPageClient.tsx
+@@ -1532,6 +1532,18 @@ import {
+   resolveTurnBoundaryDecision,
+ } from "@/lib/conversationBoundaryInputs";
+ import { isMeaningHold } from "@/lib/conversationBoundary";
++import {
++  acceptanceUnboundFor,
++  pendingBindingAllows,
++  pendingBindingOwnedBy,
++  resolvePendingBinding,
++  type PendingBinding,
++} from "@/lib/conversationBoundaryRoomGate";
++import {
++  armPendingReply,
++  notePendingReplyHeld,
++  releasePendingReply,
++} from "@/lib/conversationSession/ownership/pendingReply";
+ import { applyConversationBoundaryToActiveWork } from "@/lib/conversationBoundaryApplyActiveWork";
+ import {
+   conversationScope,
+@@ -3198,8 +3210,13 @@ export default function CompanionPageClient() {
+     useState<PredictiveSupportOffer | null>(null);
+   const [stressReliefOffer, setStressReliefOffer] =
+     useState<StressReliefOffer | null>(null);
+-  const [decisionCompassOffer, setDecisionCompassOffer] =
++  const [decisionCompassOffer, setDecisionCompassOfferState] =
+     useState<DecisionCompassOffer | null>(null);
++  /** OB-3 — the Decision Compass offer is armed on the ONE pending record. */
++  function setDecisionCompassOffer(offer: DecisionCompassOffer | null) {
++    setDecisionCompassOfferState(offer);
++    if (offer) armPendingReply({ bindKey: "decision_compass_offer", offeredAtTurn: chatTurnRef.current });
++  }
+   const [decisionCompassPrefill, setDecisionCompassPrefill] =
+     useState<DecisionCompassPrefill | null>(null);
+   const [decisionCompassSession, setDecisionCompassSession] =
+@@ -4783,10 +4800,33 @@ export default function CompanionPageClient() {
+ 
+   const [pendingCreateOpen, setPendingCreateOpen] =
+     useState<PendingCreateOpenPayload | null>(null);
+-  const [pendingConversationHandoff, setPendingConversationHandoff] =
++  const [pendingConversationHandoff, setPendingConversationHandoffState] =
+     useState<ConversationArtifact | null>(null);
+-  const [pendingAcceptanceRecord, setPendingAcceptanceRecord] =
++  /** OB-3 — the assembly confirmation is armed on the ONE pending record. */
++  function setPendingConversationHandoff(artifact: ConversationArtifact | null) {
++    setPendingConversationHandoffState(artifact);
++    if (artifact) {
++      armPendingReply({ bindKey: "conversation_handoff", offeredAtTurn: chatTurnRef.current });
++    }
++  }
++  const [pendingAcceptanceRecord, setPendingAcceptanceRecordState] =
+     useState<PendingAcceptanceRecord | null>(null);
++  /** OB-3 — arming a pending acceptance also arms the ONE pending record. */
++  function setPendingAcceptanceRecord(
++    next:
++      | PendingAcceptanceRecord
++      | null
++      | ((prev: PendingAcceptanceRecord | null) => PendingAcceptanceRecord | null),
++  ) {
++    setPendingAcceptanceRecordState((prev) => {
++      const record = typeof next === "function" ? next(prev) : next;
++      // Idempotent arm (safe if React re-invokes the updater).
++      if (record && record !== prev) {
++        armPendingReply({ bindKey: `acceptance:${record.kind}`, offeredAtTurn: record.offeredAtTurn });
++      }
++      return record;
++    });
++  }
+   const chatTurnRef = useRef(0);
+   const activePrimaryTurnRef = useRef<PrimaryTurnDecision | null>(null);
+   const awaitingUserConfirmationRef = useRef<AwaitingUserConfirmationState | null>(
+@@ -14845,6 +14885,8 @@ export default function CompanionPageClient() {
+     trimmed: string,
+     lastAssistantText: string,
+     _fresh: boolean,
++    /** OB-3 — the turn's One Brain pending binding (null = kill switch / legacy). */
++    binding: PendingBinding | null = null,
+   ): boolean {
+     // MA-04 Phase 2d — whole-message acceptance only. `isShortAcceptanceOfArmedOwner`
+     // replaces the start-anchored `isConfirmationAcceptance` so "yes, but first I
+@@ -14859,7 +14901,11 @@ export default function CompanionPageClient() {
+         lastAssistantText,
+         currentTurn: chatTurnRef.current,
+       });
+-      if (frictionlessPending) {
++      if (
++        frictionlessPending &&
++        // OB-3 — only the offer One Brain bound this reply to.
++        pendingBindingAllows(binding, { offeredAtTurn: frictionlessPending.offeredAtTurn })
++      ) {
+         const continuation = resolveFrictionlessContinuation(
+           trimmed,
+           frictionlessPending,
+@@ -14933,7 +14979,13 @@ export default function CompanionPageClient() {
+     }
+ 
+     const surveyOfferType = inferSurveyTypeFromAssistantOffer(lastAssistantText);
+-    if (surveyOfferType && isAcceptanceAttempt(trimmed)) {
++    if (
++      surveyOfferType &&
++      isAcceptanceAttempt(trimmed) &&
++      // OB-3 — this offer is inferred from ASSISTANT TEXT only (no owner arms
++      // it), so under One Brain it can never authorize creating anything.
++      pendingBindingAllows(binding, { bindKey: "survey_offer" })
++    ) {
+       const template = SURVEY_TEMPLATES[surveyOfferType];
+       recordSurveyCreated(surveyOfferType, { influencedDecision: true });
+       registerPendingOffer({
+@@ -15085,7 +15137,11 @@ export default function CompanionPageClient() {
+         finishEarlyChatTurn();
+         return true;
+       }
+-      if (dispatchResolvedAcceptance(pending, pendingNow)) {
++      if (
++        (!pendingAcceptanceRecord ||
++          pendingBindingAllows(binding, { offeredAtTurn: pendingAcceptanceRecord.offeredAtTurn })) &&
++        dispatchResolvedAcceptance(pending, pendingNow)
++      ) {
+         setInput("");
+         voiceUsedRef.current = false;
+         finishEarlyChatTurn();
+@@ -15944,9 +16000,20 @@ export default function CompanionPageClient() {
+ 
+   function setAwaitingUserConfirmation(
+     state: AwaitingUserConfirmationState | null,
++    opts?: { authority?: "owner" | "model_text" },
+   ) {
+     awaitingUserConfirmationRef.current = state;
+     setChatAwaitingConfirmation(Boolean(state?.active));
++    // OB-3 — every awaiting-confirmation offer is armed on the ONE pending
++    // record. Only an owner may arm executable authority (default); a reply
++    // merely detected in assistant/model text arms `model_text` authority.
++    if (state?.active) {
++      armPendingReply({
++        bindKey: `confirmation:${state.kind}`,
++        offeredAtTurn: state.offeredAtTurn,
++        authority: opts?.authority ?? "owner",
++      });
++    }
+   }
+ 
+   function recordPrimaryTurnResponse(content: string) {
+@@ -16613,6 +16680,24 @@ export default function CompanionPageClient() {
+       turnBoundaryDecision.decision === "answer_pending_question" ||
+       turnBoundaryDecision.decision === "return_to_suspended_topic";
+ 
++    // OB-3 — ONE pending authority. What this reply binds to is decided ONCE,
++    // here, from Boundary meaning + the spine's pending record (pendingOwner)
++    // + permitsFor. Bind sites below consult `pendingBinding` instead of
++    // deciding on their own what a "yes" belongs to; specialists still decide
++    // what the bound acceptance means. Kill switch: `null` → legacy binders.
++    // `chatTurnRef` advances later in this handler, so THIS turn — the one
++    // offers made now will carry as `offeredAtTurn` — is `chatTurnRef + 1`.
++    const pendingBindingTurn = chatTurnRef.current + 1;
++    const pendingBinding = resolvePendingBinding({
++      decision: turnBoundaryDecision,
++      pending: preTurnBoundarySnapshot.pendingOwner,
++      currentTurn: pendingBindingTurn,
++    });
++    // A person-before-process hold keeps the pending item alive (freshness is
++    // measured from the hold); a decline/deferral releases exactly that item.
++    if (pendingBinding?.kind === "preserve") notePendingReplyHeld(pendingBindingTurn);
++    if (pendingBinding?.kind === "release") releasePendingReply("member_declined");
++
+     // Cognitive pipeline / answer-first: help in chat before destination routers.
+     // Bind every Companion turn to the active ConversationSession spine id.
+     const spine = getOrCreateConversationSpine();
+@@ -16867,6 +16952,9 @@ export default function CompanionPageClient() {
+     if (
+       pendingClientAvatarOffer &&
+       !boundaryClaimedTurn &&
++      pendingBindingAllows(pendingBinding, {
++        offeredAtTurn: awaitingUserConfirmationRef.current?.offeredAtTurn ?? -1,
++      }) &&
+       isShortAcceptanceOfArmedOwner(trimmed, Boolean(pendingClientAvatarOffer)) &&
+       !isConfirmationDecline(trimmed)
+     ) {
+@@ -17131,8 +17219,39 @@ export default function CompanionPageClient() {
+     // existing sticky-Board continuation (continuityGate.action ===
+     // "route_to_owner" + routed.kind === "board_intake", below) already
+     // relies on — no new generalized ownership architecture.
++    // OB-3 — FAIL SAFE: a partial acceptance that names items the pending offer
++    // never enumerated ("do the first two" when nothing was itemized) is never
++    // guessed. Ask which, keep the offer alive, execute nothing.
++    if (pendingBinding?.kind === "ask_which") {
++      notePendingReplyHeld(pendingBindingTurn);
++      lastUserTextRef.current = trimmed;
++      const userMessage: Message = { role: "user", content: trimmed };
++      if (fresh) clearConversation();
++      const whichReply = finalizeMemberFacingAssistantText(
++        "Which of those would you like me to do? Tell me by name or number, and I'll do exactly those — nothing else.",
++        "companion_chat",
++        { deliveryKind: "system" },
++      );
++      setMessages((prev) => [
++        ...(fresh ? [] : prev),
++        userMessage,
++        { role: "assistant", content: whichReply },
++      ]);
++      setInput("");
++      voiceUsedRef.current = false;
++      finishEarlyChatTurn();
++      finishLatencyTurn({ localReply: true });
++      return;
++    }
++
++    // OB-3 — an invite is accepted only when One Brain bound THIS reply to it
++    // (legacy predicate only with the kill switch); a One Brain hold keeps it.
++    const inviteAccepted = (offeredAtTurn: number, legacy: boolean) =>
++      pendingBinding !== null ? pendingBindingAllows(pendingBinding, { offeredAtTurn }) : legacy;
++    const inviteHeld = (offeredAtTurn: number) =>
++      pendingBinding?.kind === "preserve" && pendingBinding.offeredAtTurn === offeredAtTurn;
+     if (pendingBoardInvite) {
+-      if (isBareGenericAcceptance(trimmed)) {
++      if (inviteAccepted(pendingBoardInvite.offeredAtTurn, isBareGenericAcceptance(trimmed))) {
+         const draft = createEmptyBoardIntakeDraft(
+           pendingBoardInvite.directorId
+             ? [pendingBoardInvite.directorId as BoardDirectorId]
+@@ -17187,7 +17306,7 @@ export default function CompanionPageClient() {
+       // Not an acceptance — the offer lapses; continue normal processing
+       // for whatever the member actually said (never swallow real content
+       // as though it answered the invite).
+-      setPendingBoardInvite(null);
++      if (!inviteHeld(pendingBoardInvite.offeredAtTurn)) setPendingBoardInvite(null);
+     }
+ 
+     // Conversation-spine wedge (2026-08-20) — Chamber invite consumption,
+@@ -17206,7 +17325,7 @@ export default function CompanionPageClient() {
+     // fallback (chamber_specialist is already in that list) — the same
+     // path Board's board_intake owner already relies on.
+     if (pendingChamberInvite) {
+-      if (isBareGenericAcceptance(trimmed)) {
++      if (inviteAccepted(pendingChamberInvite.offeredAtTurn, isBareGenericAcceptance(trimmed))) {
+         const memberId = pendingChamberInvite.memberId;
+         setPendingChamberInvite(null);
+         lastUserTextRef.current = trimmed;
+@@ -17239,7 +17358,7 @@ export default function CompanionPageClient() {
+       // Not an acceptance — the offer lapses; continue normal processing
+       // for whatever the member actually said (never swallow real content
+       // as though it answered the invite).
+-      setPendingChamberInvite(null);
++      if (!inviteHeld(pendingChamberInvite.offeredAtTurn)) setPendingChamberInvite(null);
+     }
+ 
+     // Boundary Decision (turnBoundaryDecision) was computed once at the top of the
+@@ -17660,6 +17779,8 @@ export default function CompanionPageClient() {
+       // inviting sentence forward (see pendingBoardInvite's doc comment),
+       // so acceptance can seed Board's decision field via the existing
+       // callTheBoard.ts decisionSeed pattern instead of re-asking.
++      // OB-3 — the Board invite is armed on the ONE pending record.
++      armPendingReply({ bindKey: "board_invite", offeredAtTurn: chatTurnRef.current });
+       setPendingBoardInvite({
+         directorId: continuityGate.directorId,
+         offeredAtTurn: chatTurnRef.current,
+@@ -17696,6 +17817,8 @@ export default function CompanionPageClient() {
+         userMessage,
+         { role: "assistant", content: invitePrompt },
+       ]);
++      // OB-3 — the Chamber invite is armed on the ONE pending record.
++      armPendingReply({ bindKey: "chamber_invite", offeredAtTurn: chatTurnRef.current });
+       setPendingChamberInvite({
+         memberId: continuityGate.memberId,
+         offeredAtTurn: chatTurnRef.current,
+@@ -18121,6 +18244,9 @@ export default function CompanionPageClient() {
+       (turnAuthority.owner === "create_consent_accept" || pendingCreateOpen) &&
+       pendingCreateOpen &&
+       !boundaryClaimedTurn && // MA-04 Phase 2c — Boundary owns interrupts/answers first
++      // OB-3 — the consent binds only to its own fresh, armed offer.
++      (!pendingAcceptanceRecord ||
++        pendingBindingAllows(pendingBinding, { offeredAtTurn: pendingAcceptanceRecord.offeredAtTurn })) &&
+       userAcceptedCreateConsent(trimmed, lastAssistantForPrimary)
+     ) {
+       const acceptance = resolvePendingAcceptance({
+@@ -18475,6 +18601,7 @@ export default function CompanionPageClient() {
+               // S4 — honor the single Boundary authority inside the Create
+               // fast-path's internal relationship check (frictionlessActionLayer).
+               boundaryDecision: turnBoundaryDecision,
++              pendingBinding,
+             },
+             createRouting,
+           ),
+@@ -18551,7 +18678,12 @@ export default function CompanionPageClient() {
+     // Slice 6 — narrow explicit-commit decision confirmation. Runs before
+     // frictionless bare-"yes" stealers so Ledger writes require pending
+     // confirmation + strict affirmation only.
+-    if (!boundaryClaimedTurn) {
++    // OB-3 (B-10) — Boundary answers the Ledger's own pending confirmation
++    // ("Yes." → answer_pending_question), which used to skip this, the only
++    // consumer. The shared binding routes the reply to its owner instead.
++    const decisionLedgerOwnsReply =
++      pendingBindingOwnedBy(pendingBinding, "decision_ledger") && pendingBinding?.kind !== "preserve";
++    if (!boundaryClaimedTurn || decisionLedgerOwnsReply) {
+       const decisionTurn = processConversationDecisionTurn({
+         userText: trimmed,
+         turn: chatTurnRef.current,
+@@ -18563,6 +18695,8 @@ export default function CompanionPageClient() {
+         ),
+       });
+       if (decisionTurn.action === "awaiting_confirmation") {
++        // OB-3 — the Ledger arms its yes/no confirmation on the ONE pending record.
++        armPendingReply({ bindKey: "decision_ledger", offeredAtTurn: chatTurnRef.current });
+         lastUserTextRef.current = trimmed;
+         const userMessage: Message = { role: "user", content: trimmed };
+         if (fresh) clearConversation();
+@@ -18723,7 +18857,14 @@ export default function CompanionPageClient() {
+         reason: "recovered_collection_pending_guarded",
+         status: "awaiting_user",
+         destinationId: recoveredCollectionPending.suggestedRoomId,
+-        expectedReply: { kind: "confirmation" },
++        // OB-3 — recovered from assistant text, so it can never authorize
++        // execution on its own (model text is not an owner).
++        expectedReply: {
++          kind: "confirmation",
++          bindKey: "collection_offer",
++          offeredAtTurn: recoveredCollectionPending.offeredAtTurn,
++          authority: "model_text",
++        },
+         continuation: {
+           kind: "collection_offer",
+           roomId: recoveredCollectionPending.suggestedRoomId,
+@@ -18768,7 +18909,13 @@ export default function CompanionPageClient() {
+         : null);
+     if (visualMenuPendingEarly) {
+       const menuPick = resolveVisualMenuSelection(trimmed, visualMenuPendingEarly);
+-      if (menuPick) {
++      // OB-3 — naming an option is VTS's own domain choice; a bare acceptance
++      // binds only through One Brain (an owner-armed, fresh menu — never one
++      // recovered from assistant text).
++      const menuAcceptanceUnbound = acceptanceUnboundFor(turnBoundaryDecision, pendingBinding, {
++        offeredAtTurn: visualMenuPendingEarly.offeredAtTurn,
++      });
++      if (menuPick && !menuAcceptanceUnbound) {
+         const userMessage: Message = { role: "user", content: trimmed };
+         setMessages((prev) => [...prev, userMessage]);
+         setInput("");
+@@ -18806,7 +18953,17 @@ export default function CompanionPageClient() {
+         : null);
+ 
+     // MA-04 Phase 2d — Boundary owns interrupts/switches/answers first.
+-    if (!boundaryClaimedTurn && strategyPendingForYes && strategyOfferOnLastTurn) {
++    if (
++      !boundaryClaimedTurn &&
++      strategyPendingForYes &&
++      strategyOfferOnLastTurn &&
++      // OB-3 — only an owner-armed strategy offer (never one recovered from
++      // assistant text) may be accepted, and only when One Brain bound the yes.
++      pendingBindingAllows(pendingBinding, {
++        offeredAtTurn:
++          frictionlessPending?.type === "strategy_offer" ? frictionlessPending.offeredAtTurn : -1,
++      })
++    ) {
+       const continuation = resolveFrictionlessContinuation(
+         trimmed,
+         strategyPendingForYes,
+@@ -18839,6 +18996,9 @@ export default function CompanionPageClient() {
+       !isDirectEstateNavPhrase &&
+       frictionlessPendingForYes &&
+       !boundaryClaimedTurn &&
++      // OB-3 — a text-recovered estate offer never binds; an armed one only
++      // when One Brain bound the reply to it.
++      pendingBindingAllows(pendingBinding, { offeredAtTurn: frictionlessPending?.offeredAtTurn ?? -1 }) &&
+       // Whole-message acceptance only. `isShortAcceptanceOfArmedOwner` (Phase 2a)
+       // replaces the previous start-anchored `isConfirmationAcceptance`, which
+       // consumed "okay, I'm overwhelmed" by locking onto the first word. NOTE:
+@@ -19316,7 +19476,11 @@ export default function CompanionPageClient() {
+       }
+     }
+ 
+-    if (pendingConversationHandoff && userAcceptedAssemblyConfirmation(trimmed)) {
++    if (
++      pendingConversationHandoff &&
++      userAcceptedAssemblyConfirmation(trimmed) &&
++      pendingBindingAllows(pendingBinding, { bindKey: "conversation_handoff" })
++    ) {
+       const userMessage: Message = { role: "user", content: trimmed };
+       const nextMsgs = [...messages, userMessage];
+       setMessages(nextMsgs);
+@@ -19920,7 +20084,15 @@ export default function CompanionPageClient() {
+     }
+ 
+     const collectionPendingNow = loadCollectionPendingOffer();
+-    if (collectionPendingNow) {
++    // OB-3 — an acceptance reaches the Collection owner only when One Brain
++    // bound it to THIS offer (fresh, owner-armed); room names / declines are
++    // Collection's own domain replies and still go straight to it.
++    const collectionAcceptanceUnbound =
++      Boolean(collectionPendingNow) &&
++      acceptanceUnboundFor(turnBoundaryDecision, pendingBinding, {
++        offeredAtTurn: collectionPendingNow?.offeredAtTurn ?? -1,
++      });
++    if (collectionPendingNow && !collectionAcceptanceUnbound) {
+       const collectionReply = resolveCollectionOfferReply(
+         trimmed,
+         collectionPendingNow,
+@@ -21457,6 +21629,10 @@ export default function CompanionPageClient() {
+           // frictionless layer consumes it and may not open Create when the
+           // shared authority says exploratory.
+           createEnvelope: createTurnEnvelopeRef.current,
++          // OB-3 — the single Boundary decision and pending binding; the
++          // frictionless layer's own binders obey them instead of re-deciding.
++          boundaryDecision: turnBoundaryDecision,
++          pendingBinding,
+         }),
+       {
+         category: "none",
+@@ -21651,7 +21827,13 @@ export default function CompanionPageClient() {
+     }
+ 
+     // MA-04 Phase 2d — Boundary owns interrupts/switches/answers first.
+-    if (decisionCompassOffer && !boundaryClaimedTurn && isAcceptanceAttempt(trimmed)) {
++    if (
++      decisionCompassOffer &&
++      !boundaryClaimedTurn &&
++      isAcceptanceAttempt(trimmed) &&
++      // OB-3 — only when One Brain bound the yes to this offer.
++      pendingBindingAllows(pendingBinding, { bindKey: "decision_compass_offer" })
++    ) {
+       const snap = decisionCompassOffer;
+       setDecisionCompassOffer(null);
+       clearAllPendingOffers();
+@@ -21685,7 +21867,7 @@ export default function CompanionPageClient() {
+     // workflow-continuation acceptance path may run only when Boundary is unclaimed.
+     if (
+       !boundaryClaimedTurn &&
+-      tryContinueConversationWorkflow(trimmed, lastAssistantText, fresh)
++      tryContinueConversationWorkflow(trimmed, lastAssistantText, fresh, pendingBinding)
+     ) {
+       return;
+     }
+@@ -21756,6 +21938,9 @@ export default function CompanionPageClient() {
+     if (
+       pendingCreateOpen &&
+       !boundaryClaimedTurn && // MA-04 Phase 2c — Boundary owns interrupts/answers first
++      // OB-3 — the consent binds only to its own fresh, armed offer.
++      (!pendingAcceptanceRecord ||
++        pendingBindingAllows(pendingBinding, { offeredAtTurn: pendingAcceptanceRecord.offeredAtTurn })) &&
+       userAcceptedCreateConsent(trimmed, lastAssistantText)
+     ) {
+       const acceptance = resolvePendingAcceptance({
+@@ -21923,7 +22108,14 @@ export default function CompanionPageClient() {
+     // MA-04 Phase 2c — do not launch an accepted/auto-launch pending action when
+     // Boundary has claimed the turn for another owner. resolvePendingAcceptance
+     // still runs (pure); only the launch is gated.
+-    if (!boundaryClaimedTurn && dispatchResolvedAcceptance(acceptanceResolution, pendingNow)) {
++    if (
++      !boundaryClaimedTurn &&
++      // OB-3 — an accepted pending acceptance record launches only when One
++      // Brain bound the reply to that record's offer (fresh, not replaced).
++      (!pendingAcceptanceRecord ||
++        pendingBindingAllows(pendingBinding, { offeredAtTurn: pendingAcceptanceRecord.offeredAtTurn })) &&
++      dispatchResolvedAcceptance(acceptanceResolution, pendingNow)
++    ) {
+       finishEarlyChatTurn();
+       return;
+     }
+@@ -24479,18 +24671,27 @@ export default function CompanionPageClient() {
+               // confirmation state plus a `confirmation` spine claim — so the
+               // confirming reply next turn lands owned instead of being
+               // captured by an unrelated system.
++              // OB-3 — MODEL TEXT IS NOT AN OWNER: this pending item keeps the
++              // member's reply in the conversation, but it can never become
++              // executable authority (only an owner/capability arms that).
+               setAwaitingUserConfirmation(
+                 createAwaitingConfirmationState({
+                   assistantPrompt: assistantMsg,
+                   offeredAtTurn: chatTurnRef.current,
+                   kind: "general",
+                 }),
++                { authority: "model_text" },
+               );
+               beginSpineOwnership({
+                 owner: "confirmation",
+                 reason: "free_form_assistant_offer",
+                 status: "awaiting_user",
+-                expectedReply: { kind: "confirmation" },
++                expectedReply: {
++                  kind: "confirmation",
++                  bindKey: "confirmation:model_text_offer",
++                  offeredAtTurn: chatTurnRef.current,
++                  authority: "model_text",
++                },
+               });
+             }
+           }
+diff --git a/docs/reviews/BRAIN_SPARK_ESTATE_OB3_RETURN_REPORT.md b/docs/reviews/BRAIN_SPARK_ESTATE_OB3_RETURN_REPORT.md
+new file mode 100644
+index 00000000..022fc922
+--- /dev/null
++++ b/docs/reviews/BRAIN_SPARK_ESTATE_OB3_RETURN_REPORT.md
+@@ -0,0 +1,360 @@
++# BRAIN SPARK ESTATE™ — OB-3 Return Report
++## One Pending Authority + Binding Convergence
++
++**Status:** Complete and certified locally. **Not pushed, not merged, not deployed.** `main` is untouched. OB-4 has not been started.
++
++**Outcome.** A member's "yes / no / not now / the first two / yes, but make it 4:00" now binds through **one** pending record: the spine's existing `ownership.expectedReply`. Boundary reads it as plain pre-turn data (`pendingOwnerSnapshot`). One function, `resolvePendingBinding` (Boundary meaning + `permitsFor`), decides once per turn what the reply belongs to. Every converged bind site obeys that decision instead of deciding on its own. Specialists still decide what an accepted offer *means* in their domain.
++
++**Divergence:** 2/120 → **1/120** in the 8 OB-1 situations, and 4/285 → **2/285** with every phrasing. The two remaining cells are both the *just-executed* Rhythm correction, which is exactly OB-4's receipt scope.
++
++---
++
++## 1. Verified starting point
++
++| Check | Result |
++|---|---|
++| Accepted OB-2R SHA `3a30dc26a0791a395e88d249dce11da635c7a59d` | **Exists** (commit), on `ob2/one-brain-hold-answer`. Parents: `6b48a4bc` (OB-2) → `c1110a89` (OB-1). |
++| Contains the OB-1 meaning contract, `permitsFor`, the OB-2 room gate, the OB-2R Board/Events uncertainty repair and the OB-2R Current Focus repair | **Yes** (`lib/conversationBoundaryMeaning.ts`, `lib/conversationBoundaryRoomGate.ts`, `lib/currentFocus/submitCurrentFocusResponse.ts`) |
++| Certification baseline shows only the four Rhythm correction cells | **Yes:** 4/285, all `Rhythm owner × {S4-correct, S4b-not-what-i-meant}` |
++| Base used | **Exactly `3a30dc26`.** Not `main`. |
++
++## 2. Branch and ending SHA
++
++| | |
++|---|---|
++| Branch | `ob3/one-pending-authority`, created from `3a30dc26` (isolated worktree) |
++| Ending SHA | *Given in the chat reply and in the delivery copy of this report. A commit cannot contain its own SHA.* |
++| Pushed | **No.** A push triggers a Vercel preview, which needs Founder authorization. |
++
++## 3. Files changed
++
++**One Brain**
++
++| File | Change |
++|---|---|
++| `lib/conversationBoundaryLexicon.ts` | `DEFERRAL_INSTRUCTION_RE`: the structural deferral family (§ First) |
++| `lib/conversationBoundaryMeaning.ts` | The decline clause includes deferral instructions. A deferral put as a question ("Can we come back to this one?") is a decline, not an `ask`. |
++| `lib/conversationBoundary.ts` | `BoundaryPendingOwner` type. Reconciliation rule 3: a HIGH acceptance bound to the live pending offer is not a topic switch (evidence `meaning_binds_pending`). |
++| `lib/conversationBoundaryInputs.ts` | `pendingOwnerSnapshot()` (generalized pending snapshot), `pendingLastRelevantTurn()`. The pre-turn snapshot carries `pendingOwner`. Boundary is fed `pendingOffer`/`armedItems` from it (not with the kill switch). |
++| `lib/conversationBoundaryRoomGate.ts` | `resolvePendingBinding`, `pendingBindingAllows`, `pendingBindingOwnedBy`, `acceptanceUnboundFor` |
++| `lib/conversationSession/ownership/types.ts` | `OwnershipExpectedReply` extension (§5) |
++| `lib/conversationSession/ownership/pendingReply.ts` | **New**, thin spine accessors (not a store): `armPendingReply`, `notePendingReplyHeld`, `releasePendingReply`, `readPendingReply` |
++
++**Owners, arming their own offers**
++- `lib/frictionlessActionLayer.ts`: `saveFrictionlessPending` arms (this covers frictionless, VTS and Strategy offers). The Remember binders (legacy and Round 1 `continueActiveRemember`) and `tryFrictionlessYesContinuation` obey the binding. The layer accepts `pendingBinding`.
++- `lib/remindersVsRhythms/conversationPending.ts`: a Remember *offer* (confirm phase) arms, with its requested capabilities as `items[]`.
++
++**Main chat:** `app/companion/CompanionPageClient.tsx`
++- one binding per turn, plus the hold/release lifecycle;
++- arm choke points: `setAwaitingUserConfirmation` (38 call sites), `setPendingAcceptanceRecord` (7), Board invite, Chamber invite, Decision Compass, conversation handoff, the Decision Ledger;
++- converged bind sites (§6);
++- a fail-safe "which ones?" reply;
++- model-text arms marked non-executable.
++
++**Certification**
++
++| File | Change |
++|---|---|
++| `lib/oneBrainCertification/pendingBinding.ob3.test.ts` | **New**, 85 cases on the real production chain (§13) |
++| `corpus.ts` / `bakeoff.ob1.test.ts` | `OB3_ADDITIONS`: the deferral family, 10 paraphrases + 6 negative controls, in the HIGH-precision and false-execution gates |
++| `roomDrivers.ts` | The Rhythm drivers run the page's binding step before the frictionless layer, as production now does |
++| `roomDivergence.ob1.test.ts` | One Brain ON is certified against `docs/reviews/ob3/divergence_baseline.json`. The OB-2R baseline stays committed as history. |
++| `oneBrainConsumers.test.ts` | OB-3 structural rules (§12) |
++
++## First — the OB-2 language gap is closed (in One Brain only)
++
++**Structural rule.** A clause is a deferral instruction when it has three parts:
++1. an optional softener ("let's", "can we", "maybe we can", "I'd rather", …);
++2. a deferral verb:
++   - an inherent deferral: come back to, circle back to, revisit, skip, park, pass on;
++   - a placement verb plus a setting-aside complement: put / set / leave … aside, on hold, for now;
++   - an ordinary verb plus an explicit time tail: do / handle / look at … later, for now, another time;
++3. a **deictic object** (this / that / it, optionally + one / question / part), then an optional time tail.
++
++The deictic object is what separates an instruction about Spark's pending item from domain content. Events was **not** touched.
++
++| Positive (all HIGH `decline`) | Negative control (never `decline`) |
++|---|---|
++| Let's come back to that later. · Let's come back to that one later. · Can we come back to this one? · Let's skip this one for now. · Let's skip that one for now. · Maybe we can do this later. · Put this aside for now. · Can we circle back to that? · I'd rather leave that for later. · Could we revisit that later? | We usually skip the networking hour. · Guests come back later for the awards dinner. · I'll come back to coaching later in my career. · We can do that later in the agenda. · Can we come back to the budget question? (`ask`) · Do it. (`accept`) |
++
++**Checks on the new family:**
++- HIGH precision is still **100%** on corpus, holdout, OB-2 additions and OB-3 additions.
++- False execution authorizations: **0**.
++- In Events, "Let's come back to that one later." and "Let's skip that one for now." are now Events' own **skip**. They are no longer stored as answers.
++
++## 4. Final `pendingOwnerSnapshot`
++
++Plain pre-turn data, read from the ONE pending record. It carries no domain content.
++
++```ts
++type BoundaryPendingOwner = {
++  bindKey: string;                          // which owner armed it ("remember_offer", "board_invite", …)
++  expects: "yes_no" | "choice" | "free";    // from expectedReply.kind
++  offeredAtTurn: number;                    // when the owner made the offer / asked
++  heldThroughTurn?: number | null;          // last person-before-process hold that kept it alive
++  optional?: boolean;
++  items?: { id: string; label: string }[];  // enumerated items, only when needed
++  authority: "owner" | "model_text";        // who armed it
++};
++```
++
++- `captureBoundaryPreTurnSnapshot()` now includes `pendingOwner`.
++- The Create discovery question and the Decision Ledger confirmation remain the `pendingQuestion` shape, as before.
++- `resolveTurnBoundaryDecision` feeds Boundary:
++  - `pendingOffer = { summary: bindKey, offeredAtTurn: lastRelevantTurn }`;
++  - `armedItems`, but only for owner-armed items.
++
++## 5. Exact spine `expectedReply` extension
++
++`OwnershipExpectedReply` (`lib/conversationSession/ownership/types.ts`) keeps `kind` and `allowedValues`. It adds these fields, all optional:
++
++```ts
++bindKey?: string;
++offeredAtTurn?: number;
++heldThroughTurn?: number;
++optional?: boolean;
++items?: { id: string; label: string }[];
++authority?: "owner" | "model_text";
++```
++
++**Legacy records:**
++- a record without `offeredAtTurn` falls back to `continuation.offeredAtTurn` or `continuation.sourceTurn` (collection and win-save offers already carry these);
++- a record with no offer turn **cannot bind**.
++
++**Arming never changes who owns the conversation.** An active owner gets the pending reply attached. Only when nobody owns the conversation is a `confirmation` owner created (the existing free-form pending shape). A newer arm **replaces** the previous pending item, which is what makes "only the newest offer may bind" hold.
++
++**No new store, registry, acceptance authority or router.** `pendingReply.ts` is four accessors over the existing ownership record.
++
++## 6. Bind sites converged
++
++"Converged" means the site acts on an acceptance **only** when `pendingBindingAllows(pendingBinding, its own offer)` is true. That requires the binding to be `bind` and executable, and the offer made on the bound turn, or under the bound key.
++
++| # | Bind site | Where | Was |
++|---|---|---|---|
++| 1 | Board invite acceptance | page | `isBareGenericAcceptance`, **no Boundary gate at all** |
++| 2 | Chamber invite acceptance | page | same (ungated) |
++| 3 | Decision Compass offer | page | `isAcceptanceAttempt` + `!boundaryClaimedTurn` |
++| 4–5 | `pendingAcceptanceAuthority` dispatch (main path + workflow-continuation path) | page | `resolvePendingAcceptance` record + turn limit 2 |
++| 6–7 | Create consent (two sites) | page | `userAcceptedCreateConsent` |
++| 8 | Frictionless pending "yes" | page | `isShortAcceptanceOfArmedOwner` / `isFrictionlessAffirmation` |
++| 9 | Frictionless confirmation in `tryContinueConversationWorkflow` | page | same |
++| 10 | Strategy offer "yes" | page | `strategyOfferOnLastTurn` (text-detected) |
++| 11 | Client-avatar offer | page | `isShortAcceptanceOfArmedOwner` |
++| 12 | Collection offer acceptance (save to Hall / Vault / Garden) | page | `resolveCollectionOfferReply`, **no Boundary gate** |
++| 13 | VTS menu bare acceptance | page | `resolveVisualMenuSelection`, **no Boundary gate** |
++| 14 | Conversation-handoff (assembly) confirmation | page | `userAcceptedAssemblyConfirmation`, **no gate** |
++| 15 | Survey offer | page | inferred from assistant text + `isAcceptanceAttempt` |
++| 16 | Decision Ledger confirmation (B-10) | page | skipped whenever Boundary claimed the turn (§10) |
++| 17 | Remember offer, Round 1 `continueActiveRemember` (the live Rhythm path) | frictionless | `interpretRememberReply` + `isOfferAnswerTurn` |
++| 18 | Remember offer, legacy block | frictionless | `isBareShortAcceptanceText` + `isOfferAnswerTurn` |
++| 19 | `tryFrictionlessYesContinuation` | frictionless | `isFrictionlessAffirmation` / `isConfirmationAcceptance` |
++
++The main `resolveFrictionlessAction` call now receives the **Boundary decision** (it previously got none) and the **pending binding**. The 6,000-line layer was not rewritten: three binders take one extra check.
++
++**Lifecycle, once per turn:**
++- `preserve` → `notePendingReplyHeld(turn)`;
++- `release` → `releasePendingReply`;
++- `ask_which` → a deterministic "Which of those would you like me to do? …" reply that keeps the offer alive and executes nothing.
++
++The Board and Chamber invites no longer lapse on a clarification (a hold keeps them).
++
++## 7. Binders retired, bypassed or kept
++
++| Class | Site | Note |
++|---|---|---|
++| **REPLACED** | The 19 sites in §6 | One Brain owns the binding; the legacy predicate runs only with the kill switch `0` |
++| **REPLACED** | Remember's own decline/deferral reading (offer phase) | Release comes from One Brain. This fixed 2 matrix cells: a correction of a *pending* Rhythm offer used to be read as a decline. |
++| **REPLACED** | The `PENDING_ACCEPTANCE_TURN_LIMIT` (2 turns) and `isOfferAnswerTurn` freshness rules at converged sites | One provenance-based freshness rule (§8) |
++| **KEEP** (domain, after binding) | Collection room choice / menu, VTS *named* option ("the mind map"), Remember modifier parsing ("make it weekly"), Claire's `parseMemberConfirmationResponse`, Board/Events/Create room gates (OB-2) | What an accepted item means |
++| **KEEP** (choice, not yes/no) | Win-save `1–4` choice (`resolveWinSaveReply`) | Numbered choice of a destination; its own freshness. A bare "yes" is not a choice. |
++| **KEEP** (vocabulary only) | `isShortAcceptanceOfArmedOwner`, `isBareGenericAcceptance`, `isAcceptanceAttempt` … | Still used as *negative* guards ("this is not an acceptance") and inside converged sites. They are no longer an authority on what a yes binds to. |
++| **DEFER → OB-4** | Rhythm *just-executed* correction; receipts / `lastExecuted` | The 2 remaining cells |
++| **DEFER** | Work Recognition ready-line (`isSimpleAffirmation`), Create `bareContinue`, Claire subject-change check, the late spine resolver's `confirmation_acceptance` (B3), `speedProfile.isYesContinuation` (latency hint only) | Not reachable as a stale-yes executor in the certified paths. Each needs its own owner arm, and is listed for OB-4/OB-5. |
++| **Not individually traced** | The ~40 offer kinds armed through `setAwaitingUserConfirmation` / `pendingAcceptanceRecord` | Now armed on the one record automatically; their launches go through converged sites 4–9 |
++
++## 8. Freshness rule
++
++A bare acceptance binds only when the pending item's **last relevant turn** is the **immediately previous turn**. The last relevant turn is the later of:
++- the owner's offer turn;
++- the turn of a later person-before-process hold that kept the item alive.
++
++It must also be:
++- not released (a decline, or a newer owner claim that dropped `expectedReply`);
++- not replaced by a newer arm (the single record keeps only the newest).
++
++This is the Round 1 rule, generalized by provenance rather than raw array position. It is implemented in `resolvePendingBinding` and passed to `permitsFor` as `armedOfferedAtTurn`.
++
++**Turn arithmetic.** The page advances `chatTurnRef` *after* Boundary runs, so the binding uses `chatTurnRef + 1`. That is the same number offers made on this turn carry as `offeredAtTurn`.
++
++## 9. Clarification-preserve rule
++
++A HIGH `clarify`, `ask`, `unsure` or `correct` on a **fresh** pending item returns `preserve`, and the page records `heldThroughTurn = this turn`. The next turn's "Yes." is therefore fresh and binds to the **same** offer. The Founder example is certified end to end for five clarification paraphrases:
++
++> Rhythm offer → "What do you mean?" → Spark explains → "Yes." → the original Rhythm is created.
++
++**A hold does not revive a stale offer** (negative control).
++
++## 10. Decision Ledger B-10
++
++**Reproduced.**
++1. With the Ledger's pending confirmation (`{kind:"confirmation", expects:"yes_no", role:"decision"}`), "Yes." makes Boundary return `answer_pending_question`.
++2. `boundaryClaimedTurn` is then true.
++3. The only consumer (`if (!boundaryClaimedTurn) processConversationDecisionTurn(...)`) was skipped, so the "yes" fell through to other paths and the decision was never recorded.
++
++**Fixed through the shared authority** (no Ledger special case):
++- the Ledger arms its yes/no on the one record (`bindKey: "decision_ledger"`);
++- the consumer runs when `!boundaryClaimedTurn || decisionLedgerOwnsReply`, where `decisionLedgerOwnsReply` means the binding is `bind` or `release` for `decision_ledger`.
++
++Certified with 5 replies ("Yes." · "Yep" · "Yes please." · "No." · "Not now."). A source check pins the gate.
++
++## 11. Model-text arming
++
++**Ended as an execution authority.**
++- The free-form "Would you like me to…?" arm (`shouldArmPendingQuestion`) now arms `authority: "model_text"`. A "yes" to it binds to the conversation (`bind`, `executable: false`), and **no executing bind site accepts it**.
++- The Collection offer recovered from assistant text is `model_text`.
++- The Strategy, estate and VTS offers recovered from assistant text never arm, so they cannot bind an acceptance. VTS *named* options remain a domain choice.
++- The survey offer (only ever inferred from assistant text) no longer launches under One Brain.
++
++**Certified:** model-text-armed offers are never executable (5 paraphrases); model-text items are never selectable.
++
++## 12. Duplicate pending / binder count, before → after
++
++The same measure on both commits: yes-predicate call sites in the page and the frictionless layer, and whether a One Brain binding check guards them.
++
++| | OB-2R (`3a30dc26`) | OB-3 |
++|---|---|---|
++| Page: yes-predicate call sites | 28, **0** guarded | 28, **14 guarded** |
++| Page: remaining unguarded | 28 | 14. Of these, 9 are *negative* guards ("not an acceptance"); 1 is a latency hint; 2 are the client-avatar confirmation-reply flag (feeds only the OB-2 hold guard); 1 is win-save choice (KEEP); 1 is the "offer may have passed" message (no execution). **0 unguarded executing binders.** |
++| Frictionless: yes-predicate call sites | 7, 0 guarded | 7, **2 guarded** + `tryFrictionlessYesContinuation` guarded by pending identity. The remaining 4 are negative guards. |
++| Places that decide freshness for a main-chat offer | 5 (turn limit 2; `isOfferAnswerTurn`; `strategyOfferOnLastTurn`; `isFrictionlessPendingExpired`; the awaiting-confirmation age) | **1** at every converged site (`resolvePendingBinding`); the others remain only behind the kill switch or as domain expiry |
++| Pending records a "yes" could bind to at once | Parallel: awaiting-confirmation ref, the acceptance record, frictionless pending, Remember pending, invites, Compass, handoff, and the spine | **One authoritative record** (spine `expectedReply`); the domain records are owner detail |
++
++**Structural rules now enforced by `oneBrainConsumers.test.ts`:**
++- exactly **one** `resolvePendingBinding` call in the page;
++- the only production callers are the page and the gate;
++- `heldThroughTurn` is written only by the spine accessors;
++- model-text arms carry `authority: "model_text"`;
++- the frictionless binders obey the binding.
++
++## 13. Certification results
++
++| Gate | Result |
++|---|---|
++| 1. OB-1 corpus / holdout | **Green** |
++| 2. OB-2 / OB-2R hold certification (`roomHold.ob2`, 49) | **Green** |
++| 3. New deferral family (10 + 6) | **Green** |
++| 4. HIGH precision | **100%** (corpus, holdout, OB-2 and OB-3 additions) |
++| 5. False execution authorizations | **0** |
++| 6. Pending/binding suite (`pendingBinding.ob3`, 85) | **Green** |
++
++The binding families in `pendingBinding.ob3` run on the real production chain: an owner arms through its production save path → snapshot → Boundary → binding → Remember's real bind path. The observer is language-free: was a Rhythm actually created?
++
++| Family | Paraphrases / negative controls | Result |
++|---|---|---|
++| Fresh acceptance | 6 / 3 | bound executably; Rhythm created only for the positives |
++| Stale acceptance | 5 / 1 control | `none(stale)`; nothing created |
++| Modified acceptance | 5 / 3 | bound `amended`; the **unmodified (monthly)** Rhythm is never created ("make it weekly" → Remember applies weekly) |
++| Partial acceptance (3 items) | 6 / 4 | exactly items 1+2; unarmed items → **ask which**; no-items offer → ask which; model-text items unselectable |
++| Named partial | 5 / 3 | Susan included, David excluded; the 3 phrasings the contract does not read ("Add Susan, not David.", "Only Susan for now.", "Susan yes, David no.") **fail safe**, with nothing authorized |
++| Decline / defer | 6 | released; spine record cleared; nothing created |
++| Clarification-preserved | 5 + 1 negative | offer survives; the next "Yes." binds the original |
++| Question-preserved | 5 | answered first; offer survives; `heldThroughTurn` recorded; nothing executes |
++| Replaced offer | 1 scenario | only the newer offer binds; the older owner does not execute |
++| Open-question bare yes | 5 | `none(not_yes_no)` |
++| Reload / missing pending | 5 | `none`; nothing created |
++| Model text | 5 | `bind` with `executable: false`; no bind site allows it |
++| Compound | 3 | never executes a guess (amended / check / answer-first) |
++| B-10 | 1 reproduction + 5 + source gate | reproduced, then routed |
++| Kill switch | 1 | binding `null`; Boundary transition identical to legacy; the legacy Remember binder still works |
++
++| 7. Stale yes never executes | **Proven** (5 paraphrases, production path) |
++| 8. Partial acceptance cannot select an unarmed item | **Proven** (unarmed ids → ask which; itemless → ask which; model-text items never) |
++| 9. Clarification preserves pending | **Proven** |
++| 10. Model text cannot arm execution | **Proven** |
++| 11. Kill switch | §14 |
++
++**Real-room divergence** (`docs/reviews/ob3/divergence_baseline.json`):
++
++| Matrix | OB-2R | OB-3 |
++|---|---|---|
++| 8 OB-1 situations × 15 rooms | 2/120 | **1/120** |
++| All 19 situations | 4/285 | **2/285** |
++| Kill switch `0` | = OB-1 exactly | **= OB-1 exactly** (asserted) |
++
++The two cells that changed: `Rhythm owner (offer pending) × {S4-correct, S4b-not-what-i-meant}`. "No, that's wrong. I said Tuesday." used to release the pending offer through Remember's own decline rule. It is now a One Brain hold that preserves the offer.
++
++## 14. Kill switch
++
++The same single switch as OB-2, `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0`, bypasses all of OB-3:
++- `resolvePendingBinding` returns `null`, so every converged bind site takes its legacy predicate (`pendingBindingAllows(null, …) === true`);
++- `resolveTurnBoundaryDecision` does not feed the pending owner to Boundary, so the transition is OB-2R-identical;
++- reconciliation rule 3 is off (it sits inside the gated reconciliation).
++
++**Not bypassed:**
++- arming the record: it's harmless data;
++- the lexicon deferral family: a meaning-only change, and meaning is consumed only by the gated layers.
++
++**Proof:** the kill-switch matrix still equals OB-1 exactly, and `pendingBinding.ob3` asserts that the legacy Remember binder still executes with the switch at `0`.
++
++## 15. Full-suite, typecheck and lint comparison
++
++| Check | Result |
++|---|---|
++| **Full suite, OB-2R (`3a30dc26`) vs OB-3** | OB-2R: 20,720 tests, 464 failing. OB-3: **20,812 tests, 465 failing.** |
++| New failing ids | **1, not caused by OB-3.** `numberedChoiceResolution > nested menu replacement` asserts that two menu registrations made back-to-back get different ids, but the id is `type-${Date.now()}`, so it fails whenever both land in the same millisecond. Measured on unchanged code: **OB-2R base fails 1/12 runs, OB-3 fails 1/12 runs.** It is a pre-existing timing flake, not fixed here (out of scope; the fix is a monotonic counter in `createPendingChoiceId`). |
++| Fixed | 0 |
++| Earlier OB-3 full run | Found 5 new failures, all **source-layout tests** that read `CompanionPageClient.tsx` by character windows (Board/Chamber invite state declarations and blocks). They were resolved by keeping the original declarations and compacting the invite gates into two small helpers (`inviteAccepted` / `inviteHeld`); behavior is unchanged and the tests were not edited. |
++| `tsc --noEmit` | **353 vs 353; identical (file, code) multiset, 0 new** |
++| ESLint on every changed/new file | **0 new findings** (159 → 158 on those files, measured against the same files at `3a30dc26`) |
++| One Brain certification (`lib/oneBrainCertification`) | **160 / 160 green** (corpus, holdout, OB-2 + OB-3 additions, room holds, consumers, divergence, pending binding) |
++
++## 16. Founder preview script (after you authorize a push)
++
++| Step | Say / do | Expect |
++|---|---|---|
++| 1 | Say something that makes Spark *offer* a Rhythm (for example, describe a recurring task where Spark asks whether it should be a Reminder or a Rhythm, then pick Rhythm) → Spark asks "Want me to set it up?" | An offer (nothing created yet) |
++| 2 | "What do you mean?" | Spark explains; **nothing is created**; the offer stays |
++| 3 | "Yes." | **The original offer is accepted.** The Rhythm appears (Rhythms room) |
++| 4 | Ask for a new Rhythm offer, then "Yes, but make it 4:00." | The same offer, bound with the amendment. **No unmodified Rhythm.** Remember applies the time it can parse, or asks. |
++| 5 | Get an offer, then talk about something unrelated, then "Yes." | **Nothing happens** from the stale offer |
++| 6 | Get an offer, then "Do the first two, not the third." | The offer has no enumerated items, so Spark asks **"Which of those would you like me to do?"** and executes nothing |
++| 7 | "Help me write an email to my client" → at "Who is receiving this email?" say "Yes." | Spark checks; "yes" is **not** stored as the answer |
++| 8 | Get the Board invite, then "What would that involve?", then "Yes." | The invite survives the question; "Yes." starts the Board intake |
++
++**Not browser-verified.** Steps 1–8 are certified on the production functions (`pendingBinding.ob3`, the room drivers and source gates), not in a live browser. The exact wording that makes Spark *offer* (rather than directly create) a Rhythm, and the Board-invite hold in step 8, should be confirmed in the preview.
++
++**Honest limit on the multi-item step.** No production owner *today* makes an offer with several independently selectable actions. The Remember offer arms `items[]` only when a request carries more than one executable capability. So "Do the first two, not the third" is certified end to end on the binding chain with armed items (`pendingBinding.ob3`). In the live preview it demonstrates the **fail-safe**: ask which, execute nothing.
++
++## 17. Remaining divergences
++
++Exactly 2 of 285 cells:
++- `Rhythm owner (just executed) × S4-correct`;
++- `Rhythm owner (just executed) × S4b-not-what-i-meant`.
++
++A correction of an **already executed** Rhythm is not applied. That needs the receipt (`lastExecuted`) fed from the spine, and the owner's correction path: **OB-4.**
++
++**Known, documented, fail-safe (nothing executes wrongly):**
++- digit-only item references ("Do 1 and 2 but skip 3");
++- "Just Susan for now, not David."-style phrasings.
++
++Neither is read as a HIGH scoped acceptance.
++
++## 18. Recommended OB-4 scope — not implemented
++
++**OB-4 — Receipts and corrections through One Brain.**
++1. **Arm a receipt on the spine when an owner executes.** Reuse the existing Remember `phase: "executed"` / `executedItemId` and the spine record: `lastExecuted {id, label, executedAtTurn}`. Feed it to Boundary's existing `lastExecuted` input.
++2. **Route a HIGH `correct` bound to `executed` through `permitsFor.mayModifyExecuted`** to the owner's correction path. For Remember, that is the existing Round 1 modification (`applyRhythmRecord` with modifiers). **This closes the last 2 cells** ("No, I said Tuesday").
++3. **Receipt history on the spine**: the last N executions, so "undo that" and "change the one from earlier" bind correctly.
++4. **Fold in the OB-3 DEFER list:**
++   - Work Recognition ready-line;
++   - Create `bareContinue`;
++   - Claire's subject-change check;
++   - the late resolver's `confirmation_acceptance`.
++
++   Each needs an owner arm on the one record plus a binding check.
++
++**Not in OB-4:** the capability catalog connection (OB-5), the KNOW lens (OB-6).
++
++---
++
++*OB-3 complete. Certified locally. Not pushed. Not merged. Not deployed. OB-4 not started.*
+diff --git a/docs/reviews/ob3/divergence_baseline.json b/docs/reviews/ob3/divergence_baseline.json
+new file mode 100644
+index 00000000..eebffbf8
+--- /dev/null
++++ b/docs/reviews/ob3/divergence_baseline.json
+@@ -0,0 +1,3694 @@
++[
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "unclear"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "unclear"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "answer_pending_question"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "interrupt_and_suspend"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "modified"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "confirmed"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "unrecognized"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "modified"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "review"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "options"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "answered/information"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "skip"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "q1"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "complete"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "complete"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "confirm"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S4-correct",
++  "diverges": true,
++  "divergentFields": [
++   "executed",
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": true,
++  "divergentFields": [
++   "executed",
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "open:decision-tree"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "open:mind-map"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R1-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R2-not-sure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R3-help-figure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R4-really-dont-know",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R5-what-mean",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R6-explain",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R7-dont-understand",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "R8-why-asking",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ }
++]
+\ No newline at end of file
+diff --git a/lib/conversationBoundary.ts b/lib/conversationBoundary.ts
+index 0d6720e0..7b79e26d 100644
+--- a/lib/conversationBoundary.ts
++++ b/lib/conversationBoundary.ts
+@@ -159,6 +159,22 @@ export type BoundarySuspendedItem = {
+   suspendedAtTurn: number;
+ };
+ 
++/**
++ * OB-3 — the pending owner, as plain pre-turn data read from the ONE pending
++ * record (the spine's `ownership.expectedReply`). No domain content: which
++ * owner armed it, what reply shape it takes, when it was offered/held, whether
++ * it is optional, its enumerated item ids, and who armed it.
++ */
++export type BoundaryPendingOwner = {
++  bindKey: string;
++  expects: "yes_no" | "choice" | "free";
++  offeredAtTurn: number;
++  heldThroughTurn?: number | null;
++  optional?: boolean;
++  items?: BoundaryArmedItem[];
++  authority: "owner" | "model_text";
++};
++
+ export type BoundaryTurnInput = {
+   userText: string;
+   turn: number;
+@@ -457,6 +473,8 @@ export function resolveConversationBoundary(
+ export const MEANING_HOLD_EVIDENCE = "meaning_hold";
+ /** Evidence marker for a yes/no that is not an answer to an open question (OB-2). */
+ export const MEANING_NOT_AN_ANSWER_EVIDENCE = "meaning_not_an_answer";
++/** OB-3: a HIGH acceptance bound to the live pending offer is not a topic switch. */
++export const MEANING_BINDS_PENDING_EVIDENCE = "meaning_binds_pending";
+ 
+ /** True when Boundary held this turn on the current thread because of what the member is doing. */
+ export function isMeaningHold(decision: ConversationBoundaryDecision | null | undefined): boolean {
+@@ -512,6 +530,18 @@ function reconcileTransitionWithMeaning(
+   ) {
+     return decide("unclear", "low", [...transition.evidence, MEANING_NOT_AN_ANSWER_EVIDENCE]);
+   }
++  // OB-3 — a HIGH acceptance bound to the live pending offer ("Do the first
++  // two, not the third.") answers that offer; it is not a switch to a new
++  // subject, whatever its surface words look like to the transition reader.
++  if (
++    (input.pendingOffer || input.armedItems?.length) &&
++    meaning.meaningConfidence === "high" &&
++    meaning.relation === "accept" &&
++    meaning.binding?.target === "pending" &&
++    transition.decision === "switch_topic"
++  ) {
++    return decide("continue_current_topic", "high", [...transition.evidence, MEANING_BINDS_PENDING_EVIDENCE]);
++  }
+   return transition;
+ }
+ 
+diff --git a/lib/conversationBoundaryInputs.ts b/lib/conversationBoundaryInputs.ts
+index a850c7de..f4ca78c3 100644
+--- a/lib/conversationBoundaryInputs.ts
++++ b/lib/conversationBoundaryInputs.ts
+@@ -42,6 +42,9 @@ import type {
+   UniversalDiscoverySlot,
+ } from "./universalCreation/types";
+ import { decisionConfirmationBoundarySnapshot } from "@/lib/decisionLedger/conversationDecisionTurn";
++import { readPendingReply } from "./conversationSession/ownership/pendingReply";
++import { isBoundaryMeaningHoldEnabled } from "./conversationBoundaryMeaning";
++import type { BoundaryPendingOwner } from "./conversationBoundary";
+ 
+ /**
+  * S4.1 — map the workflow-agnostic discovery slot to a general answer role. The
+@@ -208,12 +211,41 @@ export function recordMainConversationPendingQuestion(
+   patchConversationSpine({ pendingQuestion: question ?? undefined });
+ }
+ 
++/**
++ * OB-3 — the generalized pending-owner snapshot: the ONE pending record (spine
++ * `ownership.expectedReply`) as plain pre-turn data, for every owner that arms
++ * a reply (offers, invites, confirmations, menus, the Decision Ledger). The
++ * Create discovery question remains the `pendingQuestion` above.
++ */
++export function pendingOwnerSnapshot(): BoundaryPendingOwner | null {
++  const reply = readPendingReply();
++  if (!reply) return null;
++  const expects: BoundaryPendingOwner["expects"] =
++    reply.kind === "confirmation" ? "yes_no" : reply.kind === "choice" ? "choice" : "free";
++  return {
++    bindKey: reply.bindKey ?? reply.ownerKind,
++    expects,
++    offeredAtTurn: reply.offeredAtTurn,
++    heldThroughTurn: reply.heldThroughTurn ?? null,
++    optional: reply.optional === true,
++    items: reply.items?.map((i) => ({ id: i.id, label: i.label })) ?? [],
++    authority: reply.authority ?? "owner",
++  };
++}
++
++/** The last turn that kept the pending item alive (offer, or a later hold). */
++export function pendingLastRelevantTurn(owner: BoundaryPendingOwner): number {
++  return Math.max(owner.offeredAtTurn, owner.heldThroughTurn ?? owner.offeredAtTurn);
++}
++
+ /** The full set of prior-turn inputs the Boundary Decision reads. */
+ export type BoundaryPreTurnSnapshot = {
+   activeTopic: BoundaryActiveTopic | null;
+   activeWork: BoundaryActiveWork | null;
+   pendingQuestion: BoundaryPendingQuestion | null;
+   suspended: BoundarySuspendedItem[];
++  /** OB-3 — the one pending-response owner (null when nothing is pending). */
++  pendingOwner?: BoundaryPendingOwner | null;
+ };
+ 
+ /**
+@@ -231,6 +263,7 @@ export function captureBoundaryPreTurnSnapshot(): BoundaryPreTurnSnapshot {
+       toBoundarySuspendedItems(loadSuspensionState()),
+       activeWorkSuspendedSnapshot(),
+     ),
++    pendingOwner: pendingOwnerSnapshot(),
+   };
+ }
+ 
+@@ -246,6 +279,9 @@ export function resolveTurnBoundaryDecision(input: {
+   lastAssistantText?: string | null;
+   snapshot: BoundaryPreTurnSnapshot;
+ }): ConversationBoundaryDecision {
++  // OB-3 — Boundary reads the one pending owner (kill switch `0`: not fed, so
++  // the transition and meaning are the OB-2R ones).
++  const owner = isBoundaryMeaningHoldEnabled() ? input.snapshot.pendingOwner ?? null : null;
+   return resolveConversationBoundary({
+     userText: input.userText,
+     turn: input.turn,
+@@ -254,5 +290,12 @@ export function resolveTurnBoundaryDecision(input: {
+     pendingQuestion: input.snapshot.pendingQuestion,
+     suspended: input.snapshot.suspended,
+     lastAssistantText: input.lastAssistantText ?? undefined,
++    ...(owner
++      ? {
++          pendingOffer: { summary: owner.bindKey, offeredAtTurn: pendingLastRelevantTurn(owner) },
++          // Only an owner-armed offer contributes selectable items.
++          armedItems: owner.authority === "owner" ? owner.items ?? [] : [],
++        }
++      : {}),
+   });
+ }
+diff --git a/lib/conversationBoundaryLexicon.ts b/lib/conversationBoundaryLexicon.ts
+index 4e8f7de7..2f9b40e5 100644
+--- a/lib/conversationBoundaryLexicon.ts
++++ b/lib/conversationBoundaryLexicon.ts
+@@ -22,6 +22,34 @@ export const CONFIRMATION_DECLINE_RE =
+ export const DEFERRAL_SUPPLEMENT_RE =
+   /^(?:maybe later|not today|some other time|another time|no thanks?|no thank you|let'?s not|skip it|hold off|never ?mind)\b/i;
+ 
++/**
++ * OB-3 — a deferral INSTRUCTION, structurally: (optional softener) + a deferral
++ * verb + a DEICTIC object (this / that / it [one|question|part]) + an optional
++ * time tail. The deictic object is what separates "Let's skip this one for
++ * now." (an instruction about Spark's pending item) from domain content like
++ * "We usually skip the networking hour." or "Guests come back later for the
++ * awards." Whole-clause anchored.
++ */
++const DEFERRAL_SOFTENER = String.raw`(?:(?:ok(?:ay)?|hmm|actually|honestly|so)[,\s]+)*(?:(?:let'?s|let us|can we|could we|can i|could i|maybe we (?:can|could)|we can|we could|i'?d (?:like|rather) to|i'?d rather|i want to|i'?ll|i will|how about we|why don'?t we|maybe)\s+)?`;
++const DEFERRAL_OBJECT = String.raw`(?:this|that|it)(?:\s+(?:one|question|part|bit|step))?`;
++const DEFERRAL_TAIL = String.raw`(?:later(?:\s+on)?|for now|for later|another time|next time|some other time|down the road|tomorrow|until later)`;
++export const DEFERRAL_INSTRUCTION_RE = new RegExp(
++  "^" +
++    DEFERRAL_SOFTENER +
++    "(?:" +
++    // inherently deferring verbs: the tail is optional
++    String.raw`(?:come back to|circle back to|get back to|return to|revisit|skip|park|pass on)\s+${DEFERRAL_OBJECT}(?:\s+${DEFERRAL_TAIL})?` +
++    "|" +
++    // placement verbs: need a setting-aside complement
++    String.raw`(?:put|set|leave)\s+${DEFERRAL_OBJECT}\s+(?:aside|to one side|on hold|for now|for later)(?:\s+${DEFERRAL_TAIL})?` +
++    "|" +
++    // ordinary verbs: defer only with an explicit time tail ("do it" alone accepts)
++    String.raw`(?:do|handle|tackle|deal with|look at|talk about|answer|finish|pick up)\s+${DEFERRAL_OBJECT}\s+${DEFERRAL_TAIL}` +
++    ")" +
++    String.raw`(?:\s+(?:please|thanks?|thank you))?$`,
++  "i",
++);
++
+ /** Normalize for acceptance matching — case, curly apostrophes, whitespace, trailing punctuation. */
+ export function normalizeAcceptanceText(text: string): string {
+   return text
+diff --git a/lib/conversationBoundaryMeaning.ts b/lib/conversationBoundaryMeaning.ts
+index c17499db..3f8c64d7 100644
+--- a/lib/conversationBoundaryMeaning.ts
++++ b/lib/conversationBoundaryMeaning.ts
+@@ -37,6 +37,7 @@ import {
+   AFFECT_STRAIN_RE,
+   AMENDMENT_RE,
+   CONFIRMATION_DECLINE_RE,
++  DEFERRAL_INSTRUCTION_RE,
+   DEFERRAL_SUPPLEMENT_RE,
+   DIRECT_INSTRUCTION_RE,
+   DONT_ACT_OPEN_RE,
+@@ -132,7 +133,12 @@ function isDeclineClause(c: string): boolean {
+   const looseDecline =
+     CONFIRMATION_DECLINE_RE.test(n) &&
+     DECLINE_COURTESY_TAIL_RE.test(n.replace(CONFIRMATION_DECLINE_RE, "").replace(/^[\s,]+/, "").trim());
+-  return looseDecline || DEFERRAL_SUPPLEMENT_RE.test(n) || DONT_ACT_OPEN_RE.test(n);
++  return (
++    looseDecline ||
++    DEFERRAL_SUPPLEMENT_RE.test(n) ||
++    DONT_ACT_OPEN_RE.test(n) ||
++    DEFERRAL_INSTRUCTION_RE.test(n.replace(/[.!?]+$/, ""))
++  );
+ }
+ 
+ /**
+@@ -321,8 +327,15 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+     const abilityOrOpinion =
+       QUESTION_TO_SPARK_OPEN_RE.test(questionSentence) && !capabilityQuestion && !request;
+     const aboutMeaning = MEANING_QUESTION_RE.test(questionSentence);
++    // OB-3: "Can we come back to this one?" — a deferral instruction put as a
++    // question is the decline clause below, not a question to Spark.
++    const deferralQuestion = DEFERRAL_INSTRUCTION_RE.test(
++      normalizeAcceptanceText(questionSentence).replace(/[.!?]+$/, ""),
++    );
+     if (helpQuestion) {
+       evidence.push("help_question_rides_with_unsure");
++    } else if (deferralQuestion) {
++      evidence.push("deferral_put_as_question");
+     } else if (!politeRequestOnly) {
+       candidates.push({
+         relation: "ask",
+diff --git a/lib/conversationBoundaryRoomGate.ts b/lib/conversationBoundaryRoomGate.ts
+index 9a288bfe..5d18d4dc 100644
+--- a/lib/conversationBoundaryRoomGate.ts
++++ b/lib/conversationBoundaryRoomGate.ts
+@@ -15,6 +15,7 @@
+ 
+ import {
+   resolveConversationBoundary,
++  type BoundaryPendingOwner,
+   type BoundaryPendingQuestion,
+   type ConversationBoundaryDecision,
+ } from "./conversationBoundary";
+@@ -189,3 +190,129 @@ export function renderRoomHoldReply(
+       return `Just so I get this right — is that your answer to "${copy.question}", or would you like me to explain the question first?`;
+   }
+ }
++
++// ── OB-3 — One pending authority: what does this reply bind to? ────────────
++
++/**
++ * The one binding result for a turn, derived from Boundary meaning + the
++ * pending-owner snapshot (spine `ownership.expectedReply`) + `permitsFor`.
++ * Every bind site reads THIS; none decides on its own what a "yes" belongs to.
++ * Specialists still decide what the bound acceptance MEANS in their domain.
++ */
++export type PendingBinding =
++  /** The reply binds to the pending item. `executable` only for an owner-armed item. */
++  | {
++      kind: "bind";
++      bindKey: string;
++      offeredAtTurn: number;
++      scope: string[];
++      amended: boolean;
++      executable: boolean;
++    }
++  /** The member declined / deferred: release exactly this pending item. */
++  | { kind: "release"; bindKey: string; offeredAtTurn: number }
++  /** A person-before-process hold: the pending item survives this turn. */
++  | { kind: "preserve"; bindKey: string; offeredAtTurn: number; obligation: BoundaryObligation }
++  /** A partial acceptance that names items this offer never enumerated: ask which. */
++  | { kind: "ask_which"; bindKey: string; offeredAtTurn: number }
++  /** Nothing binds (and nothing may execute). */
++  | {
++      kind: "none";
++      reason: "no_pending" | "stale" | "not_yes_no" | "check_meaning" | "not_a_reply";
++    };
++
++const PRESERVING: ReadonlySet<string> = new Set(["clarify", "ask", "unsure", "correct"]);
++
++/**
++ * Resolve the turn's pending binding. Returns `null` with the kill switch
++ * (`NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0`) — callers then keep their legacy path.
++ *
++ * Freshness (Round 1 rule, generalized by provenance): a reply binds only when
++ * the pending item's LAST RELEVANT turn — the offer, or a later hold that kept
++ * it alive — is the immediately previous turn. A newer arm replaces an older
++ * one on the single record, so only the newest offer can bind.
++ */
++export function resolvePendingBinding(input: {
++  decision: ConversationBoundaryDecision;
++  pending: BoundaryPendingOwner | null | undefined;
++  currentTurn: number;
++}): PendingBinding | null {
++  if (!isBoundaryMeaningHoldEnabled()) return null;
++  const { decision, pending, currentTurn } = input;
++  const relation = decision.relation;
++  const high = decision.meaningConfidence === "high";
++  if (!pending) {
++    return { kind: "none", reason: relation === "accept" ? "no_pending" : "not_a_reply" };
++  }
++  const lastRelevant = Math.max(pending.offeredAtTurn, pending.heldThroughTurn ?? pending.offeredAtTurn);
++  const fresh = currentTurn - lastRelevant === 1;
++  const key = { bindKey: pending.bindKey, offeredAtTurn: pending.offeredAtTurn };
++
++  if (high && relation === "decline") return { kind: "release", ...key };
++  if (!fresh) return { kind: "none", reason: relation === "accept" ? "stale" : "not_a_reply" };
++  if (high && relation && PRESERVING.has(relation)) {
++    const permits = permitsFor(decision, { currentTurn });
++    return { kind: "preserve", ...key, obligation: permits.obligation };
++  }
++  if (relation !== "accept") return { kind: "none", reason: high ? "not_a_reply" : "check_meaning" };
++
++  const items = pending.authority === "owner" ? pending.items ?? [] : [];
++  // A bare yes to an open question is not its answer (the owner's own yes/no
++  // affordance is `expects: "yes_no"`, or an enumerated offer).
++  if (pending.expects !== "yes_no" && items.length === 0) return { kind: "none", reason: "not_yes_no" };
++  const permits = permitsFor(decision, {
++    currentTurn,
++    armedOfferedAtTurn: lastRelevant,
++    armedItems: items,
++  });
++  if (permits.mayExecute) {
++    return {
++      kind: "bind",
++      ...key,
++      scope: permits.executableScope,
++      amended: permits.requiresAmendmentParse,
++      // Text merely detected in an assistant reply never arms executable authority.
++      executable: pending.authority === "owner",
++    };
++  }
++  const scopeUnresolved = decision.evidence.some(
++    (e) => e.includes("scope_not_in_armed_items") || e.includes("scope_include_exclude_overlap"),
++  );
++  if (scopeUnresolved) return { kind: "ask_which", ...key };
++  return { kind: "none", reason: "check_meaning" };
++}
++
++/**
++ * May the bind site that owns an offer made on `offeredAtTurn` (and/or armed
++ * under `bindKey`) consume this acceptance and act? True only when One Brain
++ * bound the reply, executably, to THAT offer. With the kill switch (`null`
++ * binding) every bind site keeps its legacy behavior.
++ */
++export function pendingBindingAllows(
++  binding: PendingBinding | null,
++  offer: { offeredAtTurn?: number | null; bindKey?: string | null },
++): boolean {
++  if (binding === null) return true;
++  if (binding.kind !== "bind" || !binding.executable) return false;
++  if (offer.offeredAtTurn != null) return offer.offeredAtTurn === binding.offeredAtTurn;
++  return offer.bindKey != null && offer.bindKey === binding.bindKey;
++}
++
++/** The reply is about THIS owner's pending item (bound, released, or held). */
++export function pendingBindingOwnedBy(binding: PendingBinding | null, bindKey: string): boolean {
++  return binding !== null && binding.kind !== "none" && binding.bindKey === bindKey;
++}
++
++/**
++ * The reply is an ACCEPTANCE that One Brain did not bind to this offer (stale,
++ * replaced, text-recovered, unarmed, or ambiguous). Bind sites that also take
++ * domain replies (room names, menu options) use this to refuse only the
++ * acceptance. Kill switch (`null` binding): never unbound.
++ */
++export function acceptanceUnboundFor(
++  decision: ConversationBoundaryDecision,
++  binding: PendingBinding | null,
++  offer: { offeredAtTurn?: number | null; bindKey?: string | null },
++): boolean {
++  return binding !== null && decision.relation === "accept" && !pendingBindingAllows(binding, offer);
++}
+diff --git a/lib/conversationSession/ownership/pendingReply.ts b/lib/conversationSession/ownership/pendingReply.ts
+new file mode 100644
+index 00000000..b965f9b0
+--- /dev/null
++++ b/lib/conversationSession/ownership/pendingReply.ts
+@@ -0,0 +1,123 @@
++/**
++ * OB-3 — the ONE pending-response record: the spine's `ownership.expectedReply`.
++ *
++ * Not a new store. These are thin accessors over the existing ownership record
++ * so every owner arms, refreshes and releases the same record, and Boundary
++ * reads it (as plain pre-turn data) through `pendingOwnerSnapshot`.
++ *
++ * - arm:     an owner/capability made an offer or asked a yes/no question.
++ *            A newer arm REPLACES the previous pending item (only the newest
++ *            offer may bind).
++ * - held:    a person-before-process hold (clarify / ask / unsure / correct)
++ *            kept the item alive — freshness is measured from here.
++ * - release: the member declined, or the owner consumed/cancelled it.
++ *
++ * Arming never changes WHO owns the conversation: when an owner is active the
++ * pending reply is attached to it; only when nobody owns the conversation is a
++ * `confirmation` owner created (the existing free-form pending shape).
++ */
++
++import { getConversationSpine } from "../spine";
++import {
++  beginSpineOwnership,
++  clearSpineOwnership,
++  getSpineOwnership,
++  setSpineOwnership,
++} from "./ownershipStore";
++import type { ExpectedReplyKind, OwnershipExpectedReply } from "./types";
++
++export type ArmPendingReplyInput = {
++  bindKey: string;
++  offeredAtTurn: number;
++  kind?: ExpectedReplyKind;
++  optional?: boolean;
++  items?: { id: string; label: string }[];
++  authority?: "owner" | "model_text";
++  allowedValues?: string[];
++};
++
++function liveOwnership() {
++  // Read without creating a spine: no spine means nothing is pending.
++  if (!getConversationSpine()) return null;
++  const ownership = getSpineOwnership();
++  if (!ownership || ownership.owner === "none" || ownership.status === "completed") return null;
++  return ownership;
++}
++
++export function armPendingReply(input: ArmPendingReplyInput): OwnershipExpectedReply | null {
++  // Only inside a live conversation (the spine exists once a turn has started).
++  if (!getConversationSpine()) return null;
++  const expectedReply: OwnershipExpectedReply = {
++    kind: input.kind ?? "confirmation",
++    ...(input.allowedValues ? { allowedValues: input.allowedValues } : {}),
++    bindKey: input.bindKey,
++    offeredAtTurn: input.offeredAtTurn,
++    ...(input.optional ? { optional: true } : {}),
++    ...(input.items?.length ? { items: input.items } : {}),
++    authority: input.authority ?? "owner",
++  };
++  const current = liveOwnership();
++  if (current) {
++    setSpineOwnership({
++      ...current,
++      status: "awaiting_user",
++      updatedAt: new Date().toISOString(),
++      expectedReply,
++    });
++  } else {
++    beginSpineOwnership({
++      owner: "confirmation",
++      reason: `pending_reply:${input.bindKey}`,
++      status: "awaiting_user",
++      expectedReply,
++    });
++  }
++  return expectedReply;
++}
++
++/** The pending item survived a person-before-process hold on `turn`. */
++export function notePendingReplyHeld(turn: number): void {
++  const current = liveOwnership();
++  const reply = current?.expectedReply;
++  if (!current || !reply || reply.offeredAtTurn == null) return;
++  setSpineOwnership({
++    ...current,
++    updatedAt: new Date().toISOString(),
++    expectedReply: { ...reply, heldThroughTurn: turn },
++  });
++}
++
++/** Release the pending item (declined / consumed / cancelled). */
++export function releasePendingReply(reason: string): void {
++  const current = liveOwnership();
++  if (!current?.expectedReply) return;
++  if (current.owner === "confirmation") {
++    clearSpineOwnership(reason);
++    return;
++  }
++  const { expectedReply: _released, ...rest } = current;
++  void _released;
++  setSpineOwnership({ ...rest, updatedAt: new Date().toISOString(), reason });
++}
++
++/**
++ * The live pending reply, or null. A legacy record may carry its offer turn in
++ * `continuation` (collection `sourceTurn`, win-save / confirmation
++ * `offeredAtTurn`); without any offer turn the record cannot bind.
++ */
++export function readPendingReply(): (OwnershipExpectedReply & { offeredAtTurn: number; ownerKind: string }) | null {
++  const current = liveOwnership();
++  const reply = current?.expectedReply;
++  if (!current || !reply) return null;
++  const continuation = current.continuation as
++    | { sourceTurn?: number; offeredAtTurn?: number; kind?: string }
++    | undefined;
++  const offeredAtTurn = reply.offeredAtTurn ?? continuation?.offeredAtTurn ?? continuation?.sourceTurn;
++  if (offeredAtTurn == null || !Number.isFinite(offeredAtTurn)) return null;
++  return {
++    ...reply,
++    offeredAtTurn,
++    bindKey: reply.bindKey ?? continuation?.kind ?? current.owner,
++    ownerKind: current.owner,
++  };
++}
+diff --git a/lib/conversationSession/ownership/types.ts b/lib/conversationSession/ownership/types.ts
+index 3e75952d..496c0504 100644
+--- a/lib/conversationSession/ownership/types.ts
++++ b/lib/conversationSession/ownership/types.ts
+@@ -39,6 +39,27 @@ export type ExpectedReplyKind =
+ export type OwnershipExpectedReply = {
+   kind: ExpectedReplyKind;
+   allowedValues?: string[];
++  /**
++   * OB-3 — one pending-response authority. The fields below make this record
++   * the single thing a member's "yes / no / not now / the first two" can bind
++   * to (read by Boundary through `pendingOwnerSnapshot`). All optional: a
++   * legacy record without them simply cannot authorize execution.
++   */
++  /** Which owner/capability armed the pending item (e.g. "board_invite"). */
++  bindKey?: string;
++  /** The turn on which the owner made the offer / asked the question. */
++  offeredAtTurn?: number;
++  /** The last turn a person-before-process hold kept this item alive. */
++  heldThroughTurn?: number;
++  /** The member may decline/skip without consequence. */
++  optional?: boolean;
++  /** Enumerated items of a multi-item offer ("do the first two, not the third"). */
++  items?: { id: string; label: string }[];
++  /**
++   * Who armed it. Only an owner/capability may arm executable authority;
++   * text merely detected in an assistant reply ("model_text") never can.
++   */
++  authority?: "owner" | "model_text";
+ };
+ 
+ /** Typed continuation payloads — avoid loose bags where practical. */
+diff --git a/lib/frictionlessActionLayer.ts b/lib/frictionlessActionLayer.ts
+index 78c7ea03..972c371a 100644
+--- a/lib/frictionlessActionLayer.ts
++++ b/lib/frictionlessActionLayer.ts
+@@ -19,6 +19,8 @@ import {
+   buildCanonResponseHint,
+   tryCanonLocalReply,
+ } from "@/lib/canonContext";
++import { armPendingReply } from "@/lib/conversationSession/ownership/pendingReply";
++import { pendingBindingAllows } from "@/lib/conversationBoundaryRoomGate";
+ import { detectAudioRequest } from "./audioSuggestions";
+ import { resolveMyDayAndWorkOpenerFromText } from "@/lib/estate/myDayAndWorkNavigation";
+ import { connectionsChatHintForText } from "./meaningBeforeMatching";
+@@ -556,6 +558,14 @@ export type FrictionlessActionInput = {
+    * callers omit it and keep their prior behavior (no re-computation here).
+    */
+   boundaryDecision?: import("@/lib/conversationBoundary").ConversationBoundaryDecision;
++  /**
++   * OB-3 — the turn's ONE pending binding (Boundary meaning + the spine pending
++   * record + permitsFor), computed once by the page. When supplied, this
++   * layer's own "yes" binders obey it instead of re-deciding what a reply binds
++   * to. `undefined` (legacy / non-page callers) and `null` (kill switch) keep
++   * the previous behavior.
++   */
++  pendingBinding?: import("@/lib/conversationBoundaryRoomGate").PendingBinding | null;
+   isReturning?: boolean;
+   trustEstablished?: boolean;
+   currentRoom?: string | null;
+@@ -683,6 +693,9 @@ export function saveFrictionlessPending(
+     return;
+   }
+   localStorage.setItem(STORAGE_KEY, JSON.stringify(action));
++  // OB-3 — the owner arms its offer on the ONE pending record (spine
++  // ownership.expectedReply); a member reply binds to it through One Brain.
++  armPendingReply({ bindKey: `frictionless:${action.type}`, offeredAtTurn: action.offeredAtTurn });
+ }
+ 
+ export function loadFrictionlessPending(): FrictionlessPendingAction | null {
+@@ -1320,7 +1333,26 @@ function buildReminderDecision(
+     (pendingRemember.phase ?? "confirm") === "confirm" &&
+     !input.reminderDraft
+   ) {
+-    if (isDeclineOrDeferral(userText)) {
++    // OB-3 — One Brain owns WHAT the reply binds to; Remember keeps what the
++    // bound acceptance means (which capability, cadence, …).
++    const oneBrainBinding = input.pendingBinding ?? null;
++    const bindsHere =
++      oneBrainBinding !== null &&
++      pendingBindingAllows(oneBrainBinding, { offeredAtTurn: pendingRemember.offeredAtTurn });
++    const releasedHere =
++      oneBrainBinding?.kind === "release" &&
++      oneBrainBinding.offeredAtTurn === pendingRemember.offeredAtTurn;
++    const accepted =
++      oneBrainBinding !== null
++        ? bindsHere &&
++          // "Yes, but make it 4:00" is bound WITH an amendment: never execute
++          // the unamended offer (the amendment is parsed by the capability).
++          !(oneBrainBinding.kind === "bind" && oneBrainBinding.amended) &&
++          (oneBrainBinding.kind !== "bind" ||
++            oneBrainBinding.scope.length === 0 ||
++            oneBrainBinding.scope.includes(pendingRemember.kind))
++        : isBareShortAcceptanceText(userText) && isOfferAnswerTurn(pendingRemember, currentTurn);
++    if (oneBrainBinding !== null ? releasedHere : isDeclineOrDeferral(userText)) {
+       clearPendingRememberCreate();
+       return {
+         category: "reminder",
+@@ -1337,10 +1369,7 @@ function buildReminderDecision(
+         reminderIntake: null,
+       };
+     }
+-    if (
+-      isBareShortAcceptanceText(userText) &&
+-      isOfferAnswerTurn(pendingRemember, currentTurn)
+-    ) {
++    if (accepted) {
+       if (pendingRemember.kind === "rhythm") {
+         const result = createRhythmFromContent({
+           title: pendingRemember.title,
+@@ -1980,12 +2009,23 @@ function continueActiveRemember(
+   userText: string,
+   request: ExecutableRequest,
+   currentTurn: number,
++  /** OB-3 — the turn's One Brain pending binding (undefined/null = legacy). */
++  binding?: import("@/lib/conversationBoundaryRoomGate").PendingBinding | null,
+ ): FrictionlessActionDecision | null {
+   const phase = active.phase ?? "confirm";
++  // OB-3 — for an OFFER (confirm phase) One Brain owns what the reply binds
++  // to; Remember keeps what an accepted/modified offer means.
++  const oneBrainOffer = binding != null && phase === "confirm";
++  const boundToOffer =
++    oneBrainOffer && pendingBindingAllows(binding, { offeredAtTurn: active.offeredAtTurn });
++  const releasedOffer =
++    oneBrainOffer && binding.kind === "release" && binding.offeredAtTurn === active.offeredAtTurn;
+ 
+   if (
+-    isDeclineOrDeferral(userText) ||
+-    (request.stance === "talk_about" && request.reason === "negated")
++    oneBrainOffer
++      ? releasedOffer
++      : isDeclineOrDeferral(userText) ||
++        (request.stance === "talk_about" && request.reason === "negated")
+   ) {
+     clearPendingRememberCreate();
+     if (phase === "executed") {
+@@ -1998,8 +2038,26 @@ function continueActiveRemember(
+ 
+   const reply = interpretRememberReply(userText, isBareShortAcceptanceText);
+ 
++  // OB-3 — a bound, unamended acceptance of THIS offer is accepted whatever
++  // its words ("Sure, go ahead."); an amended one goes to Remember's own
++  // modifier parse below (never the unmodified offer); an unbound one never
++  // executes the offer.
++  if (oneBrainOffer && binding.kind === "bind" && !binding.amended && boundToOffer && active.kind === "rhythm") {
++    return advanceRhythmRequest(
++      { ...active, cadence: active.cadence ?? parseCadenceFromText(active.sourceText) ?? undefined },
++      currentTurn,
++    );
++  }
++  if (oneBrainOffer && (reply.kind === "acceptance" || reply.kind === "modified_acceptance") && !boundToOffer) {
++    return null;
++  }
++
+   if (reply.kind === "acceptance") {
+-    if (phase === "confirm" && isOfferAnswerTurn(active, currentTurn) && active.kind === "rhythm") {
++    if (
++      phase === "confirm" &&
++      (oneBrainOffer ? boundToOffer : isOfferAnswerTurn(active, currentTurn)) &&
++      active.kind === "rhythm"
++    ) {
+       return advanceRhythmRequest(
+         { ...active, cadence: active.cadence ?? parseCadenceFromText(active.sourceText) ?? undefined },
+         currentTurn,
+@@ -2127,7 +2185,7 @@ function buildExecutableRememberDecision(
+   const request = resolveExecutableRequest(userText);
+   const active = loadActivePendingRemember(currentTurn);
+   if (active) {
+-    const continued = continueActiveRemember(active, userText, request, currentTurn);
++    const continued = continueActiveRemember(active, userText, request, currentTurn, input.pendingBinding);
+     if (continued) return continued;
+   }
+   if (request.stance !== "act" || request.owner !== "remember") return null;
+@@ -3545,6 +3603,13 @@ function tryFrictionlessYesContinuation(
+     currentTurn,
+   });
+   if (!pending) return null;
++  // OB-3 — only the offer One Brain bound this reply to may execute.
++  if (
++    input.pendingBinding !== undefined &&
++    !pendingBindingAllows(input.pendingBinding, { offeredAtTurn: pending.offeredAtTurn })
++  ) {
++    return null;
++  }
+ 
+   const cont = resolveFrictionlessContinuation(
+     userText,
+diff --git a/lib/oneBrainCertification/bakeoff.ob1.test.ts b/lib/oneBrainCertification/bakeoff.ob1.test.ts
+index b4b734be..26ac6716 100644
+--- a/lib/oneBrainCertification/bakeoff.ob1.test.ts
++++ b/lib/oneBrainCertification/bakeoff.ob1.test.ts
+@@ -13,7 +13,7 @@
+ import { existsSync, readFileSync, writeFileSync } from "node:fs";
+ import path from "node:path";
+ import { describe, expect, it } from "vitest";
+-import { CORPUS, HOLDOUT, OB2_ADDITIONS, type CorpusCase, type CorpusFamily } from "./corpus";
++import { CORPUS, HOLDOUT, OB2_ADDITIONS, OB3_ADDITIONS, type CorpusCase, type CorpusFamily } from "./corpus";
+ import { boundaryInputFor, readA, scoreCase, summarize, type CaseResult } from "./evaluate";
+ import { composeHybridMeaning, validateModelMeaningRead } from "./modelMeaningRead";
+ 
+@@ -73,13 +73,13 @@ describe("OB-1 corpus coverage", () => {
+   });
+ 
+   it("case ids are unique", () => {
+-    const ids = [...CORPUS, ...HOLDOUT, ...OB2_ADDITIONS].map((c) => c.id);
++    const ids = [...CORPUS, ...HOLDOUT, ...OB2_ADDITIONS, ...OB3_ADDITIONS].map((c) => c.id);
+     expect(new Set(ids).size).toBe(ids.length);
+   });
+ });
+ 
+ describe("OB-1 bake-off — A (deterministic)", () => {
+-  for (const [name, cases] of [["CORPUS", CORPUS], ["HOLDOUT", HOLDOUT], ["OB2_ADDITIONS", OB2_ADDITIONS]] as const) {
++  for (const [name, cases] of [["CORPUS", CORPUS], ["HOLDOUT", HOLDOUT], ["OB2_ADDITIONS", OB2_ADDITIONS], ["OB3_ADDITIONS", OB3_ADDITIONS]] as const) {
+     it(`${name}: every HIGH-confidence reading matches the human label`, () => {
+       const wrong = runA(cases).filter((r) => r.highButWrong).map((r) => `${r.id}: ${r.text}`);
+       expect(wrong).toEqual([]);
+@@ -142,3 +142,17 @@ describe("OB-1 bake-off — C (hybrid, replayed blind model reads)", () => {
+     );
+   });
+ });
++
++describe("OB-3 deferral family", () => {
++  it("≥5 paraphrases and ≥3 negative controls; every positive reads HIGH decline", () => {
++    const pos = OB3_ADDITIONS.filter((c) => c.kind === "positive");
++    const neg = OB3_ADDITIONS.filter((c) => c.kind === "negative");
++    expect(pos.length).toBeGreaterThanOrEqual(5);
++    expect(neg.length).toBeGreaterThanOrEqual(3);
++    const rs = runA(OB3_ADDITIONS);
++    const missed = rs.filter((r) => pos.some((p) => p.id === r.id) && !(r.relationCorrect && r.confidence === "high"));
++    expect(missed.map((r) => r.text)).toEqual([]);
++    const negAsDecline = rs.filter((r) => neg.some((n) => n.id === r.id) && r.relation === "decline");
++    expect(negAsDecline.map((r) => r.text)).toEqual([]);
++  });
++});
+diff --git a/lib/oneBrainCertification/corpus.ts b/lib/oneBrainCertification/corpus.ts
+index a1f8d68d..3a18a977 100644
+--- a/lib/oneBrainCertification/corpus.ts
++++ b/lib/oneBrainCertification/corpus.ts
+@@ -488,3 +488,29 @@ export const OB2_ADDITIONS: CorpusCase[] = [
+   c("correction", "positive", "executed", "No, I said Thursday, not Tuesday.", correct("executed")),
+   c("correction", "positive", "executed", "No — that's wrong, it's weekly.", correct("executed")),
+ ];
++
++/**
++ * OB-3 additions — structural deferral family (Boundary lexicon
++ * `DEFERRAL_INSTRUCTION_RE`): a deferral verb + a deictic object ("this / that /
++ * it") + an optional time tail declines the pending item. Negative controls use
++ * the same words ("later", "skip", "come back", "put … aside") as domain content.
++ */
++const OB3 = "OB-3 deferral family (OB-2R Events finding)";
++export const OB3_ADDITIONS: CorpusCase[] = [
++  c("decline", "positive", "open_question", "Let's come back to that later.", decline(), OB3),
++  c("decline", "positive", "open_question", "Let’s come back to that one later.", decline(), OB3),
++  c("decline", "positive", "open_question", "Can we come back to this one?", decline(), OB3),
++  c("decline", "positive", "open_question", "Let's skip this one for now.", decline(), OB3),
++  c("decline", "positive", "open_question", "Let’s skip that one for now.", decline(), OB3),
++  c("decline", "positive", "offer_single", "Maybe we can do this later.", decline("talk_about"), OB3),
++  c("decline", "positive", "offer_single", "Put this aside for now.", decline(), OB3),
++  c("decline", "positive", "offer_single", "Can we circle back to that?", decline(), OB3),
++  c("decline", "positive", "offer_single", "I'd rather leave that for later.", decline(), OB3),
++  c("decline", "positive", "open_question", "Could we revisit that later?", decline(), OB3),
++  c("decline", "negative", "open_question", "We usually skip the networking hour.", none(), OB3),
++  c("decline", "negative", "open_question", "Guests come back later for the awards dinner.", none(), OB3),
++  c("decline", "negative", "open_question", "I'll come back to coaching later in my career.", none(), OB3),
++  c("decline", "negative", "open_question", "We can do that later in the agenda.", none(), OB3),
++  c("decline", "negative", "open_question", "Can we come back to the budget question?", ask(), OB3),
++  c("decline", "negative", "offer_single", "Do it.", accept(), OB3),
++];
+diff --git a/lib/oneBrainCertification/oneBrainConsumers.test.ts b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+index 05f0646f..29085aab 100644
+--- a/lib/oneBrainCertification/oneBrainConsumers.test.ts
++++ b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+@@ -94,6 +94,38 @@ describe("OB-2 One Brain consumers", () => {
+     for (const f of entries) expect(read(f), f).toMatch(/\broomTurnVerdict\s*\(/);
+   });
+ 
++  it("OB-3: ONE pending binding per turn — computed once in the page and handed to the frictionless layer", () => {
++    const page = read("app/companion/CompanionPageClient.tsx");
++    expect(page.match(/\bresolvePendingBinding\(/g)?.length).toBe(1);
++    expect(page).toMatch(/pendingBinding,\s*\n\s*\}\),/); // main resolveFrictionlessAction call
++    const production = files.filter((f) => /\bresolvePendingBinding\(/.test(read(f)));
++    expect(production.sort()).toEqual(["app/companion/CompanionPageClient.tsx", GATE].sort());
++  });
++
++  it("OB-3: the pending record is written only through the spine accessors (no other pending store)", () => {
++    const writers = files.filter(
++      (f) =>
++        f !== "lib/conversationSession/ownership/pendingReply.ts" &&
++        f !== "lib/conversationBoundaryInputs.ts" && // the snapshot READER maps it
++        /\bheldThroughTurn\s*:/.test(read(f)),
++    );
++    expect(writers).toEqual([]);
++  });
++
++  it("OB-3: text detected in assistant/model replies arms only non-executable authority", () => {
++    const page = read("app/companion/CompanionPageClient.tsx");
++    expect(page).toMatch(/free_form_assistant_offer[\s\S]{0,400}authority: "model_text"/);
++    expect(page).toMatch(/recovered_collection_pending_guarded[\s\S]{0,500}authority: "model_text"/);
++    expect(page).toMatch(/\{ authority: "model_text" \}/);
++  });
++
++  it("OB-3: the frictionless layer's own yes binders obey the pending binding", () => {
++    const fl = read("lib/frictionlessActionLayer.ts");
++    expect(fl).toMatch(/function continueActiveRemember[\s\S]{0,900}pendingBindingAllows\(binding/);
++    expect(fl).toMatch(/function tryFrictionlessYesContinuation[\s\S]{0,2200}pendingBindingAllows\(input\.pendingBinding/);
++    expect(fl).toMatch(/oneBrainBinding[\s\S]{0,400}pendingBindingAllows\(oneBrainBinding/);
++  });
++
+   it("OB-2R: no room may declare uncertainty an answer (no `unknown` gate verdict)", () => {
+     expect(read(GATE)).not.toMatch(/acceptsUnknown|kind:\s*"unknown"/);
+     const declarers = files.filter((f) => f !== GATE && /\bacceptsUnknown\b/.test(read(f)));
+diff --git a/lib/oneBrainCertification/pendingBinding.ob3.test.ts b/lib/oneBrainCertification/pendingBinding.ob3.test.ts
+new file mode 100644
+index 00000000..4a254750
+--- /dev/null
++++ b/lib/oneBrainCertification/pendingBinding.ob3.test.ts
+@@ -0,0 +1,379 @@
++// @vitest-environment jsdom
++/**
++ * OB-3 — One pending authority + binding convergence.
++ *
++ * Every case runs the REAL production chain:
++ *   owner arms its offer (production save path → spine ownership.expectedReply)
++ *   → captureBoundaryPreTurnSnapshot (pendingOwnerSnapshot)
++ *   → resolveTurnBoundaryDecision (Boundary meaning with the pending owner)
++ *   → resolvePendingBinding (permitsFor)
++ *   → the owner's REAL bind path (Remember offer via resolveFrictionlessAction)
++ * and observes, language-free, whether a Rhythm was actually created.
++ */
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { getOrCreateConversationSpine } from "@/lib/conversationSession/spine";
++import { clearSpineOwnership, getSpineOwnership } from "@/lib/conversationSession/ownership/ownershipStore";
++import {
++  armPendingReply,
++  notePendingReplyHeld,
++  releasePendingReply,
++} from "@/lib/conversationSession/ownership/pendingReply";
++import {
++  captureBoundaryPreTurnSnapshot,
++  resolveTurnBoundaryDecision,
++} from "@/lib/conversationBoundaryInputs";
++import { resolveConversationBoundary } from "@/lib/conversationBoundary";
++import {
++  pendingBindingAllows,
++  pendingBindingOwnedBy,
++  resolvePendingBinding,
++  type PendingBinding,
++} from "@/lib/conversationBoundaryRoomGate";
++import { savePendingRememberCreate, loadPendingRememberCreate } from "@/lib/remindersVsRhythms/conversationPending";
++import { resolveFrictionlessAction, saveFrictionlessPending } from "@/lib/frictionlessActionLayer";
++import { listMemberRhythms } from "@/lib/rhythms/store";
++import { classifyPrimaryConversationTurn } from "@/lib/conversation/primaryTurnClassifier";
++
++const HOLD = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
++const OFFER_TEXT = "Want me to set up a monthly Rhythm to check your ASEA order?";
++let saved: string | undefined;
++
++beforeEach(() => {
++  saved = process.env[HOLD];
++  delete process.env[HOLD];
++  localStorage.clear();
++  sessionStorage.clear();
++  getOrCreateConversationSpine();
++});
++afterEach(() => {
++  if (saved === undefined) delete process.env[HOLD];
++  else process.env[HOLD] = saved;
++});
++
++/** The Rhythm owner makes its offer on `turn` through its production save path. */
++function rhythmOffer(turn: number) {
++  const now = new Date().toISOString();
++  savePendingRememberCreate({
++    kind: "rhythm",
++    title: "Check my ASEA order",
++    sourceText: "check my ASEA order every month",
++    cadence: "monthly",
++    createdAt: now,
++    phase: "confirm",
++    offeredAtTurn: turn,
++    offeredAt: now,
++  });
++}
++
++/** One member turn, exactly as the page runs it (Boundary before the turn counter advances). */
++function memberTurn(text: string, turn: number, lastAssistantText = OFFER_TEXT) {
++  const snapshot = captureBoundaryPreTurnSnapshot();
++  const decision = resolveTurnBoundaryDecision({ userText: text, turn: turn - 1, lastAssistantText, snapshot });
++  const binding = resolvePendingBinding({ decision, pending: snapshot.pendingOwner, currentTurn: turn });
++  if (binding?.kind === "preserve") notePendingReplyHeld(turn);
++  if (binding?.kind === "release") releasePendingReply("member_declined");
++  return { snapshot, decision, binding };
++}
++
++/** The Remember owner's REAL bind path; returns whether a Rhythm was created (language-free). */
++function rememberBindPath(text: string, turn: number, binding: PendingBinding | null, decision = memberTurnDecision) {
++  const before = listMemberRhythms().length;
++  const primaryTurn = classifyPrimaryConversationTurn({ userText: text, lastAssistantText: OFFER_TEXT });
++  resolveFrictionlessAction({
++    userText: text,
++    currentTurn: turn,
++    lastAssistantText: OFFER_TEXT,
++    primaryTurn,
++    pendingBinding: binding,
++    boundaryDecision: decision ?? undefined,
++  });
++  return listMemberRhythms().length > before;
++}
++let memberTurnDecision: ReturnType<typeof memberTurn>["decision"] | undefined;
++
++function fullTurn(text: string, turn: number) {
++  const t = memberTurn(text, turn);
++  memberTurnDecision = t.decision;
++  const executed = rememberBindPath(text, turn, t.binding, t.decision);
++  return { ...t, executed };
++}
++
++const THREE_ITEMS = [
++  { id: "item-susan", label: "Add Susan as a speaker" },
++  { id: "item-david", label: "Add David as a speaker" },
++  { id: "item-invite", label: "Send the invitation email" },
++];
++
++describe("fresh acceptance binds to that offer only", () => {
++  it.each(["Yes.", "Yes please.", "Sure, go ahead.", "Okay, do it.", "Sounds good.", "Yep, let's do it."])(
++    "%s → bound executably; the Rhythm is created",
++    (text) => {
++      rhythmOffer(1);
++      const r = fullTurn(text, 2);
++      expect(r.binding).toMatchObject({ kind: "bind", bindKey: "remember_offer", offeredAtTurn: 1, executable: true });
++      expect(r.executed).toBe(true);
++    },
++  );
++  it.each(["What do you mean?", "No.", "I need to email my client about the invoice."])(
++    "negative control %s → no execution",
++    (text) => {
++      rhythmOffer(1);
++      expect(fullTurn(text, 2).executed).toBe(false);
++    },
++  );
++});
++
++describe("stale acceptance never executes", () => {
++  it.each(["Yes.", "Sure, go ahead.", "Okay, do it.", "Sounds good.", "Yes please."])(
++    "offer → unrelated turn → %s → none(stale), nothing created",
++    (text) => {
++      rhythmOffer(1);
++      fullTurn("I need to email my client about the invoice.", 2);
++      const r = fullTurn(text, 3);
++      expect(r.binding).toEqual({ kind: "none", reason: "stale" });
++      expect(r.executed).toBe(false);
++    },
++  );
++  it("the same yes one turn earlier WOULD bind (control)", () => {
++    rhythmOffer(1);
++    expect(fullTurn("Yes.", 2).executed).toBe(true);
++  });
++});
++
++describe("modified acceptance binds WITH the amendment and never executes the unmodified offer", () => {
++  it.each([
++    "Yes, but make it 4:00.",
++    "Sure, but make it weekly.",
++    "Okay, but move it to Friday.",
++    "Yes, but at 9 instead.",
++    "Yeah, but make it every other week.",
++  ])("%s → bind(amended); the UNMODIFIED (monthly) Rhythm is never created", (text) => {
++    rhythmOffer(1);
++    const r = fullTurn(text, 2);
++    expect(r.binding).toMatchObject({ kind: "bind", offeredAtTurn: 1, amended: true });
++    // Remember may apply the amendment it can parse (e.g. "weekly"); it never
++    // creates the offer as originally worded.
++    expect(listMemberRhythms().filter((x) => x.cadence === "monthly")).toEqual([]);
++  });
++  it.each(["Yes.", "Sounds good.", "Okay, do it."])("control %s → not amended", (text) => {
++    rhythmOffer(1);
++    expect(fullTurn(text, 2).binding).toMatchObject({ kind: "bind", amended: false });
++  });
++});
++
++describe("partial acceptance scopes to armed items only", () => {
++  const armThree = () => armPendingReply({ bindKey: "board_project_actions", offeredAtTurn: 1, items: THREE_ITEMS });
++  it.each([
++    "Do the first two, not the third.",
++    "The first and second, but not the third.",
++    "Just the first two.",
++    "Only the first two, please.",
++    "Yes to the first two, not the third.",
++    "Go ahead with the first and second.",
++  ])("%s → include items 1+2, exclude 3", (text) => {
++    armThree();
++    const r = memberTurn(text, 2, "I can do three things: add Susan, add David, send the invitation. Want me to go ahead?");
++    expect(r.binding).toMatchObject({ kind: "bind", scope: ["item-susan", "item-david"], executable: true });
++  });
++  it.each(["Do the fourth one.", "Yes, the fifth and sixth."])(
++    "negative: %s names an unarmed item → ask which, never selects",
++    (text) => {
++      armThree();
++      const r = memberTurn(text, 2);
++      expect(r.binding?.kind).toBe("ask_which");
++    },
++  );
++  it("negative: a partial acceptance of an offer WITHOUT enumerated items fails safe (ask which)", () => {
++    armPendingReply({ bindKey: "remember_offer", offeredAtTurn: 1 });
++    expect(memberTurn("Do the first two, not the third.", 2).binding?.kind).toBe("ask_which");
++  });
++  it("negative: model-text-armed items are never selectable", () => {
++    armPendingReply({ bindKey: "x", offeredAtTurn: 1, items: THREE_ITEMS, authority: "model_text" });
++    const b = memberTurn("Do the first two, not the third.", 2).binding;
++    expect(b?.kind === "bind" && b.executable).toBeFalsy();
++  });
++});
++
++describe("named partial acceptance", () => {
++  const armNamed = () =>
++    armPendingReply({
++      bindKey: "speakers",
++      offeredAtTurn: 1,
++      items: [
++        { id: "item-susan", label: "Add Susan as a speaker" },
++        { id: "item-david", label: "Add David as a speaker" },
++      ],
++    });
++  it.each([
++    "Yes, Susan, but not David yet.",
++    "Go ahead with Susan only.",
++    "Yes to Susan, not David.",
++    "Just Susan, please.",
++    "Just the first one.",
++  ])("%s → Susan included, David excluded", (text) => {
++    armNamed();
++    const b = memberTurn(text, 2, "Want me to add Susan and David as speakers?").binding;
++    expect(b).toMatchObject({ kind: "bind", scope: ["item-susan"] });
++  });
++  it.each(["Add Susan, not David.", "Only Susan for now.", "Susan yes, David no."])(
++    "fail-safe: %s is not read as a HIGH scoped acceptance → nothing is authorized",
++    (text) => {
++      armNamed();
++      const b = memberTurn(text, 2).binding;
++      expect(b?.kind === "bind" && b.executable).toBeFalsy();
++    },
++  );
++});
++
++describe("decline / defer releases exactly the pending item; nothing executes", () => {
++  it.each(["No.", "Not now.", "Let's come back to that later.", "No thanks.", "Maybe later.", "Let's skip this one for now."])(
++    "%s → release; pending record cleared; no Rhythm",
++    (text) => {
++      rhythmOffer(1);
++      const r = fullTurn(text, 2);
++      expect(r.binding).toMatchObject({ kind: "release", bindKey: "remember_offer", offeredAtTurn: 1 });
++      expect(r.executed).toBe(false);
++      expect(getSpineOwnership()?.expectedReply).toBeUndefined();
++      expect(loadPendingRememberCreate()).toBeNull();
++    },
++  );
++});
++
++describe("clarification / question PRESERVE the pending offer; the next yes binds to it", () => {
++  it.each([
++    "What do you mean?",
++    "What exactly will that do?",
++    "Can you explain that?",
++    "I don't understand.",
++    "Sorry, what would that do?",
++  ])("offer → %s → (Spark explains) → Yes. → the ORIGINAL offer is accepted", (text) => {
++    rhythmOffer(1);
++    const hold = fullTurn(text, 2);
++    expect(hold.binding).toMatchObject({ kind: "preserve", offeredAtTurn: 1 });
++    expect(hold.executed).toBe(false);
++    const yes = fullTurn("Yes.", 3);
++    expect(yes.binding).toMatchObject({ kind: "bind", offeredAtTurn: 1, executable: true });
++    expect(yes.executed).toBe(true);
++  });
++  it.each(["What happens if I say yes?", "What would that remind me about?", "How often would it run?", "Can I change it later?", "Where would I find it?"])(
++    "question %s → answered first, offer survives, nothing executes",
++    (text) => {
++      rhythmOffer(1);
++      const r = fullTurn(text, 2);
++      expect(r.binding?.kind).toBe("preserve");
++      expect(r.executed).toBe(false);
++      expect(getSpineOwnership()?.expectedReply?.heldThroughTurn).toBe(2);
++    },
++  );
++  it("negative: a hold does not revive a STALE offer", () => {
++    rhythmOffer(1);
++    fullTurn("I need to email my client about the invoice.", 2);
++    fullTurn("What do you mean?", 3);
++    expect(fullTurn("Yes.", 4).executed).toBe(false);
++  });
++});
++
++describe("replaced offer: only the newest offer may bind", () => {
++  it("Rhythm offer (A) → a newer offer (B) → Yes. → binds B; A's owner does not execute", () => {
++    rhythmOffer(1);
++    saveFrictionlessPending({
++      type: "open_tool",
++      target: "focus-timer",
++      context: "focus",
++      offeredAtTurn: 2,
++      offerSummary: "Open a focus timer",
++    });
++    const r = fullTurn("Yes.", 3);
++    expect(r.binding).toMatchObject({ kind: "bind", offeredAtTurn: 2, bindKey: "frictionless:open_tool" });
++    expect(pendingBindingAllows(r.binding, { offeredAtTurn: 1 })).toBe(false);
++    expect(r.executed).toBe(false);
++  });
++});
++
++describe("open question: a bare yes is not its answer", () => {
++  it.each(["Yes.", "Yep.", "Sure.", "Okay.", "Sounds good."])("Who are you trying to help? → %s → not bound", (text) => {
++    armPendingReply({ bindKey: "open_question", offeredAtTurn: 1, kind: "free_text" });
++    const b = memberTurn(text, 2, "Who are you trying to help?").binding;
++    expect(b).toEqual({ kind: "none", reason: "not_yes_no" });
++  });
++});
++
++describe("reload / missing pending record: yes executes nothing", () => {
++  it.each(["Yes.", "Sure, go ahead.", "Okay, do it.", "Sounds good.", "Yes please."])("%s with no spine pending → none", (text) => {
++    rhythmOffer(1);
++    clearSpineOwnership("reload");
++    const r = fullTurn(text, 2);
++    expect(r.binding?.kind).toBe("none");
++    expect(r.executed).toBe(false);
++  });
++});
++
++describe("model text cannot independently arm execution", () => {
++  it.each(["Yes.", "Sure, go ahead.", "Okay, do it.", "Sounds good.", "Yes please."])(
++    "model-text-armed offer → %s → bound to the conversation, never executable",
++    (text) => {
++      armPendingReply({ bindKey: "confirmation:model_text_offer", offeredAtTurn: 1, authority: "model_text" });
++      const b = memberTurn(text, 2, "Would you like me to build that for you?").binding;
++      expect(b).toMatchObject({ kind: "bind", executable: false });
++      expect(pendingBindingAllows(b, { offeredAtTurn: 1 })).toBe(false);
++    },
++  );
++});
++
++describe("compound response never executes a guess", () => {
++  it.each([
++    "Yes, and also remind me tomorrow at 9.",
++    "Yes — and add a note to call Susan.",
++    "Sure, and can you also set a reminder?",
++  ])("%s → the unmodified offer is not executed", (text) => {
++    rhythmOffer(1);
++    const r = fullTurn(text, 2);
++    expect(r.executed).toBe(false);
++  });
++});
++
++describe("Decision Ledger B-10 — reproduced, then routed through the shared binding", () => {
++  const ledgerTurn = (text: string) => {
++    armPendingReply({ bindKey: "decision_ledger", offeredAtTurn: 1 });
++    const snapshot = { ...captureBoundaryPreTurnSnapshot() };
++    // The Ledger's pending confirmation, as the production snapshot carries it.
++    snapshot.pendingQuestion = { kind: "confirmation", expects: "yes_no", role: "decision" };
++    const decision = resolveTurnBoundaryDecision({ userText: text, turn: 1, lastAssistantText: "Want me to record that decision?", snapshot });
++    const binding = resolvePendingBinding({ decision, pending: snapshot.pendingOwner, currentTurn: 2 });
++    return { decision, binding };
++  };
++  it("REPRODUCED: Boundary answers the Ledger's own pending ('Yes.' → answer_pending_question), which claims the turn", () => {
++    const d = resolveConversationBoundary({
++      userText: "Yes.",
++      turn: 4,
++      pendingQuestion: { kind: "confirmation", expects: "yes_no", role: "decision" },
++      lastAssistantText: "Want me to record that decision?",
++    });
++    expect(d.decision).toBe("answer_pending_question"); // → boundaryClaimedTurn → only consumer skipped (pre-OB-3)
++  });
++  it.each(["Yes.", "Yep", "Yes please.", "No.", "Not now."])("OB-3: %s now reaches the Ledger (owned by decision_ledger)", (text) => {
++    const { binding } = ledgerTurn(text);
++    expect(pendingBindingOwnedBy(binding, "decision_ledger")).toBe(true);
++    expect(binding?.kind === "bind" || binding?.kind === "release").toBe(true);
++  });
++  it("the page consumer gate uses the shared binding", async () => {
++    const fs = await import("node:fs");
++    const src = fs.readFileSync(`${process.cwd()}/app/companion/CompanionPageClient.tsx`, "utf8");
++    expect(src).toMatch(/if \(!boundaryClaimedTurn \|\| decisionLedgerOwnsReply\)/);
++  });
++});
++
++describe("kill switch NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0", () => {
++  it("binding is null (every bind site keeps its legacy behavior) and Boundary is not fed the pending owner", () => {
++    process.env[HOLD] = "0";
++    rhythmOffer(1);
++    const snapshot = captureBoundaryPreTurnSnapshot();
++    const decision = resolveTurnBoundaryDecision({ userText: "Yes.", turn: 1, lastAssistantText: OFFER_TEXT, snapshot });
++    expect(resolvePendingBinding({ decision, pending: snapshot.pendingOwner, currentTurn: 2 })).toBeNull();
++    expect(pendingBindingAllows(null, { offeredAtTurn: 99 })).toBe(true);
++    const legacy = resolveConversationBoundary({ userText: "Yes.", turn: 1, lastAssistantText: OFFER_TEXT });
++    expect(decision.decision).toBe(legacy.decision);
++    // Legacy Remember binder (its own yes + turn rule) still creates the Rhythm.
++    expect(rememberBindPath("Yes.", 2, null, decision)).toBe(true);
++  });
++});
+diff --git a/lib/oneBrainCertification/roomDivergence.ob1.test.ts b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+index 5a6390d8..d059cac5 100644
+--- a/lib/oneBrainCertification/roomDivergence.ob1.test.ts
++++ b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+@@ -18,7 +18,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
+ import { OB2R_SITUATIONS, OB2_SITUATIONS, SITUATIONS, runDivergenceMatrix, type DivergenceCell } from "./roomDrivers";
+ 
+ const OB1_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob1/divergence_baseline.json");
+-const OB2_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob2/divergence_baseline.json");
++// OB-3: One Brain ON is now certified against the OB-3 baseline (the OB-2R
++// baseline stays committed as the historical record).
++const OB2_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob3/divergence_baseline.json");
+ const PRECEDENCE_FLAG = "NEXT_PUBLIC_EXECUTABLE_REQUEST_PRECEDENCE";
+ const HOLD_FLAG = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
+ 
+@@ -62,10 +64,10 @@ describe("real-room divergence baselines", () => {
+     expect(observed).toEqual(baseline);
+   });
+ 
+-  it("One Brain hold ON matches the committed OB-2 baseline", () => {
++  it("One Brain ON (hold + OB-3 pending authority) matches the committed OB-3 baseline", () => {
+     delete process.env[HOLD_FLAG];
+     const observed = rows(runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS, ...OB2R_SITUATIONS]));
+-    if (process.env.OB2_WRITE_BASELINE === "1" || !existsSync(OB2_BASELINE)) {
++    if ((process.env.OB2_WRITE_BASELINE === "1" || process.env.OB3_WRITE_BASELINE === "1") || !existsSync(OB2_BASELINE)) {
+       mkdirSync(path.dirname(OB2_BASELINE), { recursive: true });
+       writeFileSync(OB2_BASELINE, JSON.stringify(observed, null, 1));
+     }
+diff --git a/lib/oneBrainCertification/roomDrivers.ts b/lib/oneBrainCertification/roomDrivers.ts
+index f1cb554d..7e91161a 100644
+--- a/lib/oneBrainCertification/roomDrivers.ts
++++ b/lib/oneBrainCertification/roomDrivers.ts
+@@ -13,6 +13,10 @@
+  */
+ 
+ import { resolveConversationBoundary } from "@/lib/conversationBoundary";
++import { captureBoundaryPreTurnSnapshot, resolveTurnBoundaryDecision } from "@/lib/conversationBoundaryInputs";
++import { resolvePendingBinding } from "@/lib/conversationBoundaryRoomGate";
++import { getOrCreateConversationSpine } from "@/lib/conversationSession/spine";
++import { notePendingReplyHeld, releasePendingReply } from "@/lib/conversationSession/ownership/pendingReply";
+ import {
+   answerBoardIntakeStep,
+   createEmptyBoardIntakeDraft,
+@@ -478,12 +482,27 @@ const claireConfirmation: RoomDriver = {
+ 
+ function rememberPageTurn(text: string, turn: number, lastAssistant: string): string {
+   // Same seam order as CompanionPageClient (mirrors executableIntent.round1.test.ts sendTurn).
++  // OB-3: like the page, the ONE pending binding is computed before any seam
++  // (Boundary runs before the page's turn counter advances) and handed to the
++  // frictionless layer. Kill switch → null → legacy binders.
++  const snapshot = captureBoundaryPreTurnSnapshot();
++  const boundaryDecision = resolveTurnBoundaryDecision({ userText: text, turn: turn - 1, lastAssistantText: lastAssistant, snapshot });
++  const pendingBinding = resolvePendingBinding({ decision: boundaryDecision, pending: snapshot.pendingOwner, currentTurn: turn });
++  if (pendingBinding?.kind === "preserve") notePendingReplyHeld(turn);
++  if (pendingBinding?.kind === "release") releasePendingReply("member_declined");
+   const wr = resolveWorkRecognitionFirstRefusal(text, lastAssistant);
+   if (wr) return "work_recognition";
+   if (resolveExplicitCapabilityIntent(text)) return "universal_capability";
+   if (buildAppFeatureNavOffer(text)) return "app_feature_nav";
+   const primaryTurn = classifyPrimaryConversationTurn({ userText: text, lastAssistantText: lastAssistant });
+-  const d = resolveFrictionlessAction({ userText: text, currentTurn: turn, lastAssistantText: lastAssistant, primaryTurn });
++  const d = resolveFrictionlessAction({
++    userText: text,
++    currentTurn: turn,
++    lastAssistantText: lastAssistant,
++    primaryTurn,
++    boundaryDecision,
++    pendingBinding,
++  });
+   return d.localReply ? `frictionless:${d.category}` : "chat_api";
+ }
+ 
+@@ -494,6 +513,7 @@ const rhythmOffer: RoomDriver = {
+   controlAnswer: "Every month is fine.",
+   run: (text) => {
+     localStorage.clear();
++    getOrCreateConversationSpine(); // a live conversation (the page always has one)
+     const now = new Date().toISOString();
+     savePendingRememberCreate({
+       kind: "rhythm", title: "Check my ASEA order", sourceText: "check my ASEA order every month",
+@@ -514,6 +534,7 @@ const rhythmExecuted: RoomDriver = {
+   controlAnswer: "Thanks!",
+   run: (text) => {
+     localStorage.clear();
++    getOrCreateConversationSpine();
+     const now = new Date().toISOString();
+     const r = createMemberRhythm({ title: "Check my ASEA order", cadence: "weekly" });
+     const beforeRec = JSON.stringify(getMemberRhythm(r.id));
+diff --git a/lib/remindersVsRhythms/conversationPending.ts b/lib/remindersVsRhythms/conversationPending.ts
+index b1c474c9..3b40f9ec 100644
+--- a/lib/remindersVsRhythms/conversationPending.ts
++++ b/lib/remindersVsRhythms/conversationPending.ts
+@@ -9,6 +9,8 @@
+  * No new store — same key, same owner.
+  */
+ 
++import { armPendingReply } from "@/lib/conversationSession/ownership/pendingReply";
++
+ export type PendingRememberPhase =
+   /** Spark offered to create it; only the very next member turn may accept. */
+   | "confirm"
+@@ -78,6 +80,16 @@ export function savePendingRememberCreate(
+       return;
+     }
+     window.localStorage.setItem(KEY, JSON.stringify(pending));
++    // OB-3 — a Remember OFFER awaiting yes/no is armed on the ONE pending
++    // record; its requested capabilities are the enumerated items.
++    if ((pending.phase ?? "confirm") === "confirm" && pending.offeredAtTurn != null) {
++      const actions = pending.requestedActions?.filter((a) => a.availability === "executable") ?? [];
++      armPendingReply({
++        bindKey: "remember_offer",
++        offeredAtTurn: pending.offeredAtTurn,
++        items: actions.length > 1 ? actions.map((a) => ({ id: a.capability, label: a.capability })) : undefined,
++      });
++    }
+   } catch {
+     /* ignore */
+   }
+-- 
+2.43.0
+
