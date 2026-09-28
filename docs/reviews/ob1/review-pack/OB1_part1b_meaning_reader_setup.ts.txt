@@ -1,0 +1,219 @@
+OB-1 REVIEW PACK — PART 1b of 1a–1d: conversationBoundaryMeaning.ts lines 1–215 (imports, types, text helpers, ordinal scope)
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024).
+Part 1 is split into 1a (Boundary contract + rule module diff), 1b/1c/1d (the new file lib/conversationBoundaryMeaning.ts, full text, in 3 consecutive pieces).
+
+/**
+ * Boundary meaning — OB-1 (SHADOW).
+ *
+ * The minimum member meaning Boundary (S4) owns, per
+ * docs/reviews/OB05_BOUNDARY_MEANING_CONTRACT_DECISION.md:
+ *
+ *   relation  ask | clarify | unsure | correct | decline | accept | none
+ *   stance    act | talk_about | none
+ *   affect    none | strained | distressed          (a modifier, never exclusive)
+ *   binding   target + optional include / exclude / amended
+ *
+ * Boundary transition (interrupt / return / switch / cancel) is NOT repeated
+ * here; it stays in `resolveConversationBoundary`.
+ *
+ * This is the DETERMINISTIC CERTAIN TIER. It returns `meaningConfidence:
+ * "high"` only for unambiguous shapes; anything else is "low", and
+ * `permitsFor` treats low as: no execution, no storing as an answer, no
+ * advancement.
+ *
+ * SHADOW: `resolveConversationBoundary` is the only production caller. No
+ * production code reads `relation` / `stance` / `affect` / `binding` /
+ * `meaningConfidence`, and nothing in production calls `permitsFor`
+ * (enforced by lib/oneBrainCertification/shadowIsolation.test.ts).
+ */
+
+import type {
+  BoundaryArmedItem,
+  BoundaryBinding,
+  BoundaryMemberAffect,
+  BoundaryMemberRelation,
+  BoundaryMemberStance,
+  BoundaryTurnInput,
+  ConversationBoundaryDecision,
+} from "./conversationBoundary";
+import {
+  AFFECT_DISTRESS_RE,
+  AFFECT_STRAIN_RE,
+  AMENDMENT_RE,
+  CONFIRMATION_DECLINE_RE,
+  DEFERRAL_SUPPLEMENT_RE,
+  DIRECT_INSTRUCTION_RE,
+  DONT_ACT_OPEN_RE,
+  EXCLUSION_MARKER_RE,
+  FIRST_PERSON_AFFECT_FRAME_RE,
+  GENERIC_ACCEPTANCE_RE,
+  IMPERATIVE_ACTION_OPEN_RE,
+  LEADING_ACCEPTANCE_RE,
+  MEMBER_CLARIFICATION_RE,
+  MEMBER_CORRECTION_RE,
+  MEMBER_HELP_REQUEST_RE,
+  REFERENT_CORRECTION_RE,
+  REQUEST_TO_SPARK_RE,
+  SAID_MEANT_RE,
+  SHORT_ACCEPTANCE_SUPPLEMENT_RE,
+  QUESTION_TO_SPARK_OPEN_RE,
+  STATED_WRONG_RE,
+  TALK_ABOUT_SUPPLEMENT_RE,
+  UNSURE_RE,
+  WH_OPEN_RE,
+  normalizeAcceptanceText,
+  talkAboutReason,
+} from "./conversationBoundaryLexicon";
+import { detectRepairTrigger } from "./conversationRepairClarificationIntelligence/triggerDetection";
+import { classifyTurnRecovery } from "./shariAnswerFirst/turnRecovery";
+
+export type BoundaryMeaningConfidence = "high" | "low";
+
+export type BoundaryMeaning = {
+  relation: BoundaryMemberRelation;
+  stance: BoundaryMemberStance;
+  affect: BoundaryMemberAffect;
+  binding?: BoundaryBinding;
+  meaningConfidence: BoundaryMeaningConfidence;
+  /** Explainable signals, in order. Appended to Boundary `evidence` as `meaning:*`. */
+  evidence: string[];
+};
+
+// ── Text helpers ─────────────────────────────────────────────────────────────
+
+function normalize(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[‘’ʼ`]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Sentences, keeping their terminal punctuation (so "?" survives). */
+function sentences(t: string): string[] {
+  return t
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Clauses: sentences further split on commas, semicolons, dashes and "but". */
+function clauses(t: string): string[] {
+  return t
+    .split(/[.!?…;]+|,|\s[—–-]\s|\s+but\s+/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isBareAcceptance(t: string): boolean {
+  const n = normalizeAcceptanceText(t);
+  return Boolean(n) && (GENERIC_ACCEPTANCE_RE.test(n) || SHORT_ACCEPTANCE_SUPPLEMENT_RE.test(n));
+}
+
+function isDeclineClause(c: string): boolean {
+  const n = normalizeAcceptanceText(c);
+  return (
+    CONFIRMATION_DECLINE_RE.test(n) ||
+    DEFERRAL_SUPPLEMENT_RE.test(n) ||
+    DONT_ACT_OPEN_RE.test(n)
+  );
+}
+
+/** A question about what a word or phrase MEANS — clarify-or-ask, never certain. */
+const MEANING_QUESTION_RE = /\bmean(?:s|ing|t)?\b|\bstand for\b|\bdefin(?:e|ition)\b/i;
+/** Words that signal confusion about Spark's words even when no clarify rule matched. */
+const CONFUSION_SHAPE_RE =
+  /\b(?:what|how)\s+you\s+(?:mean|meant)\b|\b(?:get|follow|understand)\s+(?:what|how)\s+you\b|\bdon'?t\s+(?:get|follow)\b|\bconfus/i;
+
+// ── Scope (partial acceptance) — validated against the armed items only ────
+
+const ORDINAL_INDEX: Record<string, number> = {
+  first: 0, "1st": 0, one: 0,
+  second: 1, "2nd": 1, two: 1,
+  third: 2, "3rd": 2, three: 2,
+  fourth: 3, "4th": 3, four: 3,
+  fifth: 4, "5th": 4, five: 4,
+};
+const COUNT_WORD: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+
+const ORDINAL_RE =
+  /\b(?:the\s+)?(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|last)(?:\s+(one|two|three|four|five))?(?:\s+ones?)?\b/gi;
+/** Non-global twin of ORDINAL_RE for `.test()` (a /g regex keeps lastIndex state). */
+const ORDINAL_TEST_RE = new RegExp(ORDINAL_RE.source, "i");
+const ALL_RE = /\b(?:both|all(?:\s+of\s+(?:them|those|these))?|all\s+(?:two|three|four|five)|everything)\b/i;
+
+type ScopeRead = { ids: string[]; unknownReference: boolean };
+
+/** Item ids a clause refers to, by ordinal, "last", "both/all", or label word. */
+function referencedItems(clause: string, items: readonly BoundaryArmedItem[]): ScopeRead {
+  const ids = new Set<string>();
+  let unknownReference = false;
+  const c = clause.toLowerCase();
+
+  if (ALL_RE.test(c)) items.forEach((i) => ids.add(i.id));
+
+  for (const m of c.matchAll(ORDINAL_RE)) {
+    const word = m[1]!.toLowerCase();
+    const count = m[2] ? COUNT_WORD[m[2].toLowerCase()] : undefined;
+    if (word === "last") {
+      const last = items[items.length - 1];
+      if (last) ids.add(last.id);
+      else unknownReference = true;
+      continue;
+    }
+    const idx = ORDINAL_INDEX[word];
+    if (idx === undefined) continue;
+    if (count && word === "first") {
+      // "the first two" → items 1..2
+      if (count > items.length) unknownReference = true;
+      items.slice(0, count).forEach((i) => ids.add(i.id));
+      continue;
+    }
+    const item = items[idx];
+    if (item) ids.add(item.id);
+    else unknownReference = true;
+  }
+
+  for (const item of items) {
+    const words = item.label
+      .toLowerCase()
+      .split(/[^a-z0-9']+/)
+      .filter((w) => w.length >= 3 && !LABEL_STOPWORDS.has(w));
+    if (words.some((w) => new RegExp(`\\b${w}\\b`, "i").test(c))) ids.add(item.id);
+  }
+  return { ids: [...ids], unknownReference };
+}
+
+const LABEL_STOPWORDS = new Set([
+  "add", "the", "and", "for", "with", "your", "my", "our", "to", "a", "an",
+  "set", "put", "make", "create", "new", "item", "one", "two", "this", "that",
+  "speaker", "speakers", "reminder", "rhythm", "calendar", "project",
+]);
+
+function mentionsScope(clause: string): boolean {
+  return ORDINAL_TEST_RE.test(clause) || ALL_RE.test(clause);
+}
+
+// ── The certain-tier reader ─────────────────────────────────────────────────
+
+type RelationCandidate = {
+  relation: Exclude<BoundaryMemberRelation, "none">;
+  strong: boolean;
+  signal: string;
+};
+
+const PRECEDENCE: BoundaryMemberRelation[] = [
+  "clarify",
+  "ask",
+  "correct",
+  "unsure",
+  "decline",
+  "accept",
+  "none",
+];
+
+/**
+ * Read the member's relation to Spark's last contribution. Pure; reads only
+ * the Boundary input (the pre-turn snapshot + text).
+ */

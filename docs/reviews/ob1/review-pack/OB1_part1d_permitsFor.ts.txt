@@ -1,0 +1,142 @@
+OB-1 REVIEW PACK — PART 1d of 1a–1d: conversationBoundaryMeaning.ts lines 548–685 (permitsFor — derived, fail-safe permissions)
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024).
+Part 1 is split into 1a (Boundary contract + rule module diff), 1b/1c/1d (the new file lib/conversationBoundaryMeaning.ts, full text, in 3 consecutive pieces).
+
+// ── Derived permissions (one function; children never re-derive) ────────────
+
+export type BoundaryObligation =
+  | "check_meaning"
+  | "explain_own_last_contribution"
+  | "answer_question"
+  | "help_with_pending"
+  | "apply_or_confirm_correction"
+  | "acknowledge_and_release"
+  | "execute_authorized_scope"
+  | "domain_turn";
+
+export type BoundaryPermitSnapshot = {
+  currentTurn: number;
+  /** Turn on which the armed offer was made (spine expectedReply offeredAtTurn). */
+  armedOfferedAtTurn?: number | null;
+  armedItems?: readonly BoundaryArmedItem[] | null;
+  /** Receipt id of the item Spark most recently executed in this conversation. */
+  lastExecutedId?: string | null;
+  /** The pending owner's own affordance check on the reply (domain-owned). */
+  answerAffordanceValid?: boolean;
+};
+
+export type BoundaryPermits = {
+  /** Authorization meaning for the armed offer (the action chain still runs its own checks). */
+  mayExecute: boolean;
+  /** Item ids the authorization covers when `mayExecute`. */
+  executableScope: string[];
+  /** The capability must parse the amendment before executing; never execute the unamended version. */
+  requiresAmendmentParse: boolean;
+  /** A new direct request (`relation: none`, `stance: act`) may go to the capability's own slot check. */
+  mayHandNewRequestToCapability: boolean;
+  mayModifyExecuted: boolean;
+  mayStoreAsAnswer: boolean;
+  mayAdvance: boolean;
+  /** The pending item survives this turn. */
+  preservesPending: boolean;
+  obligation: BoundaryObligation;
+};
+
+const NOTHING: Omit<BoundaryPermits, "obligation" | "preservesPending"> = {
+  mayExecute: false,
+  executableScope: [],
+  requiresAmendmentParse: false,
+  mayHandNewRequestToCapability: false,
+  mayModifyExecuted: false,
+  mayStoreAsAnswer: false,
+  mayAdvance: false,
+};
+
+/**
+ * Pure permissions derived from a Boundary decision. Fails safe: LOW meaning
+ * confidence, a missing meaning, or a transition away from the thread grants
+ * nothing. Interpretation alone never executes — `mayExecute` is authorization
+ * meaning only; the action chain still owns slot checks, execution and
+ * read-back.
+ */
+export function permitsFor(
+  decision: ConversationBoundaryDecision,
+  snapshot: BoundaryPermitSnapshot,
+): BoundaryPermits {
+  const relation = decision.relation;
+  if (!relation || decision.meaningConfidence !== "high") {
+    return { ...NOTHING, preservesPending: true, obligation: "check_meaning" };
+  }
+  const leftThread =
+    decision.decision === "switch_topic" ||
+    decision.decision === "cancel_current_workflow" ||
+    decision.decision === "return_to_suspended_topic";
+
+  switch (relation) {
+    case "clarify":
+      return { ...NOTHING, preservesPending: true, obligation: "explain_own_last_contribution" };
+    case "ask":
+      return { ...NOTHING, preservesPending: true, obligation: "answer_question" };
+    case "unsure":
+      return { ...NOTHING, preservesPending: true, obligation: "help_with_pending" };
+    case "correct": {
+      const mayModifyExecuted =
+        !leftThread &&
+        decision.binding?.target === "executed" &&
+        Boolean(snapshot.lastExecutedId);
+      return {
+        ...NOTHING,
+        mayModifyExecuted,
+        preservesPending: true,
+        obligation: "apply_or_confirm_correction",
+      };
+    }
+    case "decline":
+      return { ...NOTHING, preservesPending: false, obligation: "acknowledge_and_release" };
+    case "accept": {
+      const armedIds = (snapshot.armedItems ?? []).map((i) => i.id);
+      const freshOffer =
+        snapshot.armedOfferedAtTurn != null &&
+        snapshot.armedOfferedAtTurn === snapshot.currentTurn - 1;
+      const include = decision.binding?.include;
+      const exclude = decision.binding?.exclude ?? [];
+      const idsValid =
+        (include ?? []).every((id) => armedIds.includes(id)) &&
+        exclude.every((id) => armedIds.includes(id)) &&
+        !(include ?? []).some((id) => exclude.includes(id));
+      const scope = (include ?? armedIds).filter((id) => !exclude.includes(id));
+      const authorized =
+        !leftThread &&
+        decision.binding?.target === "pending" &&
+        freshOffer &&
+        idsValid &&
+        decision.stance !== "talk_about" &&
+        (armedIds.length === 0 || scope.length > 0);
+      if (!authorized) {
+        return { ...NOTHING, preservesPending: true, obligation: "check_meaning" };
+      }
+      return {
+        ...NOTHING,
+        mayExecute: true,
+        executableScope: scope,
+        requiresAmendmentParse: decision.binding?.amended === true,
+        preservesPending: false,
+        obligation: "execute_authorized_scope",
+      };
+    }
+    case "none":
+    default: {
+      const mayStoreAsAnswer =
+        decision.decision === "answer_pending_question" &&
+        snapshot.answerAffordanceValid !== false;
+      return {
+        ...NOTHING,
+        mayHandNewRequestToCapability: !leftThread && decision.stance === "act",
+        mayStoreAsAnswer,
+        mayAdvance: mayStoreAsAnswer,
+        preservesPending: !mayStoreAsAnswer,
+        obligation: "domain_turn",
+      };
+    }
+  }
+}
