@@ -1,0 +1,3688 @@
+[
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "unclear"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "unclear"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "answer_pending_question"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "interrupt_and_suspend"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Main Boundary (S4)",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "continue_current_topic"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (conversation)",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "no_write"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "modified"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": null,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "confirmed"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "unrecognized"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "modified"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Claire (confirmation pending)",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "held"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "review"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "options"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board intake",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "importance"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "answered/information"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Board meeting",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "asked"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "skip"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Events",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "answered"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "q1"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Apply",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "q0"
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Strategy Chamber",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "complete"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "complete"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Day Designer (Plan My Day)",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "priorities"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "confirm"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Reminder intake",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "ask"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": null,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "frictionless:estate_concierge"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": null,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "frictionless:estate_concierge"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (offer pending)",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": true,
+   "pendingPreserved": true,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "frictionless:estate_concierge"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "frictionless:reminder"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "frictionless:estate_concierge"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Rhythm owner (just executed)",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": null,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "chat_api"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Create entrance",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": true,
+   "executed": false,
+   "pendingPreserved": false,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "Work Recognition",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": false,
+   "executed": false,
+   "pendingPreserved": true,
+   "note": "question"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S1-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S2-ask",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S3-unsure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S4-correct",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S5-bare-yes",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": null,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "open:decision-tree"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S6-decline",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S7-strained-clarify",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S8-answer",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": true,
+   "storedAsAnswer": null,
+   "executed": true,
+   "pendingPreserved": false,
+   "note": "open:mind-map"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S3b-dont-know-help",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S4b-not-what-i-meant",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "S9-distress",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R1-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R2-not-sure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R3-help-figure",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R4-really-dont-know",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R5-what-mean",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R6-explain",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R7-dont-understand",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ },
+ {
+  "room": "VTS menu",
+  "situation": "R8-why-asking",
+  "diverges": false,
+  "divergentFields": [],
+  "observed": {
+   "advanced": false,
+   "storedAsAnswer": null,
+   "executed": false,
+   "pendingPreserved": null,
+   "note": "unresolved"
+  }
+ }
+]
