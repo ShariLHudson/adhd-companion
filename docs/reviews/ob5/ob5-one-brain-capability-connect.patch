@@ -1,0 +1,3582 @@
+From 0877243b5b3040ca4eef700ad5b6e92bf775fcf8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 20:21:03 +0000
+Subject: [PATCH] OB-5: One Brain capability CONNECT
+
+One capability read path projected from existing registries and owner
+recognizers (no new catalog/router/vocabulary); one capability selection
+per turn after the OB-3/OB-4 bindings, reading Boundary meaning through the
+gate; handoffs through owners' existing entry points on the one pending
+record; returns as projections over owners' own records.
+
+Connections: chat -> Claire (context + confirmed-write return + receipt),
+Board result -> chat (Board Room opened for chat intakes, return + one armed
+next action), Board -> Research -> Board, chat -> Projects (next-step engine
+answer + Project Home). Model prompt gets the same capability projection;
+fabricated-research instructions replaced with honest ones.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0162D2EyVC24X9wVgoMdDuJm
+---
+ app/companion/CompanionPageClient.tsx         | 305 +++++++++
+ components/companion/board/BoardBriefView.tsx |  57 +-
+ .../board/BoardDirectorDiscussionIntake.tsx   |   4 +
+ .../boardroom/BoardroomRoomPanel.tsx          |   5 +
+ .../researchLibrary/ResearchLibraryPanel.tsx  |  35 ++
+ .../BusinessProfileBp2aPrototype.tsx          |  35 ++
+ ...AIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md | 295 +++++++++
+ .../BRAIN_SPARK_ESTATE_OB5_RETURN_REPORT.md   | 332 ++++++++++
+ .../claireChatHandoff.ts                      | 157 +++++
+ lib/companionPrompt.ts                        |  14 +-
+ lib/conversationBoundaryLexicon.ts            |   2 +-
+ lib/conversationBoundaryRoomGate.ts           |  40 ++
+ .../conversationalTurnContract.test.ts        |   4 +-
+ .../jobFamilyComposition.test.ts              |   4 +-
+ lib/conversationGate/jobFamilyComposition.ts  |   8 +-
+ .../ownership/pendingReply.ts                 |   3 +
+ lib/conversationSession/ownership/types.ts    |   6 +
+ lib/conversationSession/receiptCorrection.ts  |   8 +-
+ lib/oneBrainCapability/connections.ts         | 219 +++++++
+ lib/oneBrainCapability/handoffs.ts            | 195 ++++++
+ lib/oneBrainCapability/projection.ts          | 209 +++++++
+ lib/oneBrainCapability/readPath.ts            | 201 ++++++
+ lib/oneBrainCapability/returns.ts             | 139 +++++
+ lib/oneBrainCapability/selectCapability.ts    | 105 ++++
+ .../capabilityConnect.ob5.test.ts             | 584 ++++++++++++++++++
+ .../oneBrainConsumers.test.ts                 |  58 +-
+ lib/researchIntelligence.ts                   |   9 +-
+ 27 files changed, 3004 insertions(+), 29 deletions(-)
+ create mode 100644 docs/reviews/BRAIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md
+ create mode 100644 docs/reviews/BRAIN_SPARK_ESTATE_OB5_RETURN_REPORT.md
+ create mode 100644 lib/businessProfileFounder/claireChatHandoff.ts
+ create mode 100644 lib/oneBrainCapability/connections.ts
+ create mode 100644 lib/oneBrainCapability/handoffs.ts
+ create mode 100644 lib/oneBrainCapability/projection.ts
+ create mode 100644 lib/oneBrainCapability/readPath.ts
+ create mode 100644 lib/oneBrainCapability/returns.ts
+ create mode 100644 lib/oneBrainCapability/selectCapability.ts
+ create mode 100644 lib/oneBrainCertification/capabilityConnect.ob5.test.ts
+
+diff --git a/app/companion/CompanionPageClient.tsx b/app/companion/CompanionPageClient.tsx
+index aae8e27c..eb87cc99 100644
+--- a/app/companion/CompanionPageClient.tsx
++++ b/app/companion/CompanionPageClient.tsx
+@@ -327,6 +327,7 @@ import {
+   saveBoardIntakeDraft,
+   suspendBoardIntakeConversation,
+ } from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
++import type { BoardDirectorDiscussionRecord } from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
+ import type { BoardDirectorId } from "@/lib/board/types";
+ import { PROJECT_HOMES_ROOM_BACKGROUND } from "@/lib/projectHomes/roomCatalog";
+ 
+@@ -1543,8 +1544,30 @@ import {
+ import {
+   armPendingReply,
+   notePendingReplyHeld,
++  readPendingReply,
+   releasePendingReply,
+ } from "@/lib/conversationSession/ownership/pendingReply";
++import { resolveCapabilitySelection } from "@/lib/oneBrainCapability/selectCapability";
++import {
++  CAPABILITY_BIND_PREFIX,
++  planCapabilityTurn,
++  planChoiceAcceptance,
++  type CapabilityHandoffPayload,
++  type CapabilityTurnPlan,
++} from "@/lib/oneBrainCapability/handoffs";
++import type { OneBrainCapabilityId } from "@/lib/oneBrainCapability/connections";
++import {
++  boardReturnForConversation,
++  formatBoardReturnHint,
++  formatBoardReturnMessage,
++} from "@/lib/oneBrainCapability/returns";
++import {
++  consumeClaireChatReturn,
++  formatClaireReturnMessage,
++  recordClaireReturnReceipt,
++  requestClaireChatHandoff,
++} from "@/lib/businessProfileFounder/claireChatHandoff";
++import { stageConversationResearch } from "@/lib/researchLibrary/conversationResearchLaunch";
+ import { isReceiptFresh, noteReceiptHeld } from "@/lib/conversationSession/receipts";
+ import { resolveReceiptCorrectionReply } from "@/lib/conversationSession/receiptCorrection";
+ import { recordReminderReceipt } from "@/lib/reminderIntelligence";
+@@ -5635,6 +5658,63 @@ export default function CompanionPageClient() {
+     offeredAtTurn: number;
+     sourceText: string;
+   } | null>(null);
++  /** OB-5 — when the member took a chat conversation to the Board (return projection). */
++  const boardHandoffSinceRef = useRef<string | null>(null);
++  const announcedBoardReturnRef = useRef<string | null>(null);
++  /**
++   * OB-5 — RETURN. When the member comes back to the conversation from a room
++   * One Brain handed them to, the owner's result is brought back (smallest
++   * useful summary), recorded where OB-3 / OB-4 can bind to it ("do that",
++   * "change it"), and never duplicated.
++   */
++  const previousOverlayRef = useRef<typeof overlay>(null);
++  useEffect(() => {
++    const was = previousOverlayRef.current;
++    previousOverlayRef.current = overlay;
++    if (was !== "my-business-estate" || overlay === "my-business-estate") return;
++    const back = consumeClaireChatReturn();
++    if (!back) return;
++    recordClaireReturnReceipt(back, chatTurnRef.current);
++    setMessages((prev) => [
++      ...prev,
++      {
++        role: "assistant",
++        content: finalizeMemberFacingAssistantText(formatClaireReturnMessage(back), "companion_chat", {
++          deliveryKind: "system",
++        }),
++      },
++    ]);
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on overlay transitions only
++  }, [overlay]);
++  const previousSectionRef = useRef<AppSection | null>(null);
++  useEffect(() => {
++    const was = previousSectionRef.current;
++    previousSectionRef.current = activeSection;
++    if (was !== "boardroom" || activeSection === "boardroom") return;
++    const since = boardHandoffSinceRef.current;
++    if (!since) return;
++    const back = boardReturnForConversation(since);
++    if (!back || announcedBoardReturnRef.current === `${back.discussionId}:${back.updatedAt}`) return;
++    announcedBoardReturnRef.current = `${back.discussionId}:${back.updatedAt}`;
++    setMessages((prev) => [
++      ...prev,
++      {
++        role: "assistant",
++        content: finalizeMemberFacingAssistantText(formatBoardReturnMessage(back), "companion_chat", {
++          deliveryKind: "system",
++        }),
++      },
++    ]);
++    // "Okay, let's do that" binds (OB-3) to exactly the one next action offered.
++    if (back.nextAction) {
++      armPendingReply({
++        bindKey: `${CAPABILITY_BIND_PREFIX}research`,
++        offeredAtTurn: chatTurnRef.current,
++        handoff: back.nextAction.handoff as unknown as Record<string, unknown>,
++      });
++    }
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on section transitions only
++  }, [activeSection]);
+   /**
+    * Conversation-spine wedge (2026-08-20) — a soft Chamber invite ("Would
+    * you like me to bring that perspective into this conversation?")
+@@ -11952,6 +12032,78 @@ export default function CompanionPageClient() {
+     setEstateRoomChatVisible(true);
+   }
+ 
++  // OB-5 — execute an accepted / direct capability handoff through each
++  // owner's EXISTING entry point, carrying only what the owner needs.
++  function executeCapabilityHandoff(payload: CapabilityHandoffPayload) {
++    switch (payload.kind) {
++      case "claire_topic":
++        requestClaireChatHandoff({ memberPrompt: payload.memberRequest, areaId: payload.areaId });
++        openProfileDestinationCore("my-business-estate");
++        return;
++      case "research_launch":
++        if (payload.sourceRoom === "board" && payload.sourceId) {
++          captureLeaveToDestination("research-library");
++          stageContextualResearch({
++            origin: "board",
++            entityId: payload.sourceId,
++            entityLabel: payload.memberRequest.slice(0, 80),
++            topic: payload.memberRequest,
++          });
++        } else {
++          stageConversationResearch({ memberRequest: payload.memberRequest });
++        }
++        openResearchLibraryCore();
++        return;
++      case "project_home":
++        setProjectHomesInitialProjectId(payload.projectId);
++        openProjectHomesPrototypeCore("detail");
++        return;
++      case "choice":
++        return;
++    }
++  }
++
++  function capabilityHandoffAck(payload: CapabilityHandoffPayload): string {
++    switch (payload.kind) {
++      case "claire_topic":
++        return "Opening Claire in My Business Estate — she'll pick up with what you said.";
++      case "research_launch":
++        return "Opening the Research Library with your question.";
++      case "project_home":
++        return `Opening “${payload.projectName}” in your Project Home.`;
++      case "choice":
++        return "";
++    }
++  }
++
++  // OB-5 — Board → Research: the Brief's "Research this" launches Research
++  // with the Board's own bounded question; Research returns to the Board.
++  function openResearchFromBoardCore(record: BoardDirectorDiscussionRecord) {
++    const question =
++      record.certifiedSynthesis?.researchOpportunity?.boundedQuestion?.trim() ||
++      record.sharedHandoff?.evidenceRequest?.evidenceNeeded?.trim() ||
++      record.title;
++    leaveClearMyMindIfNavigatingAway();
++    if (!confirmLeaveUnsavedWork()) return;
++    captureLeaveToDestination("research-library");
++    stageContextualResearch({
++      origin: "board",
++      entityId: record.id,
++      entityLabel: (record.answers?.decision?.trim() || record.title).slice(0, 80),
++      topic: question,
++      surroundingContext:
++        record.sharedHandoff?.situationSummary?.trim() ||
++        record.certifiedSynthesis?.situationSummary?.trim() ||
++        undefined,
++    });
++    openResearchLibraryCore();
++  }
++
++  function returnToBoardFromResearch(_discussionId: string) {
++    if (restoreNavigationFrame()) return;
++    openBoardroomCore({ intent: "past" });
++  }
++
+   function openCreateFromChamberConversationCore() {
+     leaveClearMyMindIfNavigatingAway();
+     if (!confirmLeaveUnsavedWork()) return;
+@@ -16719,6 +16871,16 @@ export default function CompanionPageClient() {
+     ) {
+       noteReceiptHeld(pendingBindingTurn);
+     }
++    // OB-5 — the ONE capability selection (CONNECT): which EXISTING owner is
++    // relevant, from the same Boundary decision + bindings, via the capability
++    // read path (existing registries + owner recognizers). Pure; the connect
++    // block below executes it. Kill switch: `null` → legacy seams only.
++    const capabilitySelection = resolveCapabilitySelection({
++      decision: turnBoundaryDecision,
++      userText: trimmed,
++      pendingBinding,
++      correctionBinding,
++    });
+ 
+     // Cognitive pipeline / answer-first: help in chat before destination routers.
+     // Bind every Companion turn to the active ConversationSession spine id.
+@@ -17175,6 +17337,125 @@ export default function CompanionPageClient() {
+       clearUniversalCreationSession();
+     }
+ 
++    // OB-5 — capability CONNECT. (a) A member accepting a One Brain capability
++    // offer ("yes" / "do that" / "the second one") that OB-3 bound to it
++    // executes exactly that offer's handoff; a stale offer never binds.
++    // (b) A correction of Claire's just-returned work goes back to Claire.
++    // (c) Otherwise the turn's capability selection connects the owner.
++    {
++      const capabilityReply = (reply: string, owner: string) => {
++        lastUserTextRef.current = trimmed;
++        const userMessage: Message = { role: "user", content: trimmed };
++        if (fresh) clearConversation();
++        const text = finalizeMemberFacingAssistantText(reply, "companion_chat", { deliveryKind: "system" });
++        setMessages((prev) => [...(fresh ? [] : prev), userMessage, { role: "assistant", content: text }]);
++        setInput("");
++        voiceUsedRef.current = false;
++        if (!getPrefs().hasChatted) {
++          savePrefs({ hasChatted: true });
++          setHasChatted(true);
++        }
++        finishEarlyChatTurn(owner);
++        finishLatencyTurn({ localReply: true });
++      };
++      const runPlan = (plan: CapabilityTurnPlan): boolean => {
++        if (plan.kind === "execute") {
++          capabilityReply(plan.ack, `one_brain:${plan.id}`);
++          executeCapabilityHandoff(plan.payload);
++          return true;
++        }
++        if (plan.kind === "offer") {
++          capabilityReply(plan.reply, `one_brain:${plan.id}`);
++          armPendingReply({
++            bindKey: plan.bindKey,
++            offeredAtTurn: chatTurnRef.current,
++            handoff: plan.payload as unknown as Record<string, unknown>,
++            ...(plan.items ? { items: plan.items } : {}),
++          });
++          return true;
++        }
++        if (plan.kind === "board_invite") {
++          capabilityReply(plan.reply, "board_invite");
++          // Reuse the EXISTING Board invite (continuity gate's mechanism).
++          armPendingReply({ bindKey: "board_invite", offeredAtTurn: chatTurnRef.current });
++          setPendingBoardInvite({ offeredAtTurn: chatTurnRef.current, sourceText: plan.sourceText });
++          return true;
++        }
++        capabilityReply(plan.reply, `one_brain:${plan.id ?? "capability"}`);
++        return true;
++      };
++
++      if (
++        pendingBinding?.kind === "bind" &&
++        pendingBinding.executable &&
++        pendingBinding.bindKey.startsWith(CAPABILITY_BIND_PREFIX)
++      ) {
++        const payload = readPendingReply()?.handoff as CapabilityHandoffPayload | undefined;
++        releasePendingReply("capability_handoff_accepted");
++        if (payload?.kind === "choice") {
++          const chosen = pendingBinding.scope.length === 1 ? (pendingBinding.scope[0] as OneBrainCapabilityId) : null;
++          const plan = chosen ? planChoiceAcceptance(payload, chosen) : null;
++          if (plan && runPlan(plan)) return;
++          capabilityReply(
++            "Which one would you like — tell me by name and I'll take you there.",
++            "one_brain:choice",
++          );
++          armPendingReply({
++            bindKey: `${CAPABILITY_BIND_PREFIX}choice`,
++            offeredAtTurn: chatTurnRef.current,
++            handoff: payload as unknown as Record<string, unknown>,
++            items: payload.options.map((id) => ({ id, label: id })),
++          });
++          return;
++        }
++        if (payload) {
++          capabilityReply(capabilityHandoffAck(payload), `one_brain:${payload.kind}`);
++          executeCapabilityHandoff(payload);
++          return;
++        }
++      }
++
++      if (
++        correctionBinding?.kind === "correct_receipt" &&
++        correctionBinding.receipt.ownerKey === "claire"
++      ) {
++        if (correctionBinding.undo) {
++          // No fake rollback: a confirmed profile change is revised, not undone.
++          noteReceiptHeld(pendingBindingTurn);
++          capabilityReply(
++            "I can't quietly undo what Claire saved — but she can change it. Tell me what it should say instead, and I'll take it back to her.",
++            "one_brain:claire_correction",
++          );
++          return;
++        }
++        const areaId = String(correctionBinding.receipt.committed.area ?? "my-business") as Extract<
++          CapabilityHandoffPayload,
++          { kind: "claire_topic" }
++        >["areaId"];
++        capabilityReply(
++          "Taking that back to Claire so she can correct it with you.",
++          "one_brain:claire_correction",
++        );
++        executeCapabilityHandoff({
++          kind: "claire_topic",
++          memberRequest: trimmed,
++          areaId,
++          sourceRoom: "main_chat",
++          returnTo: "main_chat",
++        });
++        return;
++      }
++
++      const capabilityPlan = capabilitySelection
++        ? planCapabilityTurn({
++            selection: capabilitySelection,
++            userText: trimmed,
++            peopleIHelp: detectClientAvatarExploration(trimmed),
++          })
++        : null;
++      if (capabilityPlan && runPlan(capabilityPlan)) return;
++    }
++
+     // Deterministic Business Estate navigation — "open business builder",
+     // "go to my business estate", "help me work on my business", etc. These
+     // match no capability/direct-command detector and otherwise fall through to
+@@ -17318,6 +17599,8 @@ export default function CompanionPageClient() {
+           draft.decision = pendingBoardInvite.sourceText.trim();
+           draft.currentStep = "review";
+         }
++        // OB-5 — the Board result returns to THIS conversation (see returns.ts).
++        boardHandoffSinceRef.current = new Date().toISOString();
+         saveBoardIntakeDraft(draft);
+         setActiveConversationOwner({
+           kind: "board_intake",
+@@ -17756,6 +18039,18 @@ export default function CompanionPageClient() {
+           { role: "assistant", content: routed.reply },
+         ]);
+         setActiveConversationOwner(owner);
++        // OB-5 — chat → Board Room: a Board discussion the member started from
++        // chat used to stop at "we can begin the Board discussion" and never
++        // opened the Board. When the chat-invited intake is ready, open the
++        // Board Room on that same saved draft (its own intake resumes it).
++        if (
++          routed.kind === "board_intake" &&
++          routed.draft.sourceContext?.source === "chat_invite" &&
++          (routed.draft.currentStep === "ready_to_begin" || routed.draft.currentStep === "discussion")
++        ) {
++          boardHandoffSinceRef.current ??= new Date().toISOString();
++          openBoardroomCore({ intent: "intake", sourceContext: routed.draft.sourceContext });
++        }
+         setInput("");
+         voiceUsedRef.current = false;
+         if (!getPrefs().hasChatted) {
+@@ -24048,6 +24343,13 @@ export default function CompanionPageClient() {
+                 chamberConversationActive
+                   ? ""
+                   : universalLegacyHints.legacyHints.decisionLedger,
++                // OB-5 — the Board result of a discussion started from this chat.
++                chamberConversationActive || !boardHandoffSinceRef.current
++                  ? ""
++                  : (() => {
++                      const back = boardReturnForConversation(boardHandoffSinceRef.current);
++                      return back ? formatBoardReturnHint(back) : "";
++                    })(),
+                 estateMemoryHintForChat(),
+                 buildSavedPatternsPromptHint(),
+                 adhdStrategyHintForChat(trimmed),
+@@ -30278,6 +30580,8 @@ export default function CompanionPageClient() {
+                 onIntakeSeedConsumed={() => setBoardIntakeSeedMessage(null)}
+                 onOpenPlanMyDay={() => openPlanMyDayCore()}
+                 onBack={goBack}
++                onReturnToSource={goBackToChat}
++                onResearch={openResearchFromBoardCore}
+                 shariChatOpen={boardroomShariChatOpen}
+                 onToggleShariChat={setBoardroomShariChatOpen}
+                 conversationScrollKey={estateChatScrollKey}
+@@ -30810,6 +31114,7 @@ export default function CompanionPageClient() {
+               registerBack={registerBack}
+               onReturnToProject={returnToProjectFromResearch}
+               onReturnToChamber={returnToChamberFromResearch}
++              onReturnToBoard={returnToBoardFromResearch}
+               onOpenCreate={(seedText) => {
+                 // Develop substantive research outcomes in Creation Workspace first.
+                 openCreationWorkspaceRoomCore({ initialRequest: seedText });
+diff --git a/components/companion/board/BoardBriefView.tsx b/components/companion/board/BoardBriefView.tsx
+index 1d267ff9..8c0ccfe1 100644
+--- a/components/companion/board/BoardBriefView.tsx
++++ b/components/companion/board/BoardBriefView.tsx
+@@ -7,6 +7,7 @@
+  * cross-examination text, and director-attributed differences (not one wall).
+  */
+ import type { ReactNode } from "react";
++import { researchReturnForBoard } from "@/lib/oneBrainCapability/returns";
+ import { BOARD_JOURNEY_COPY } from "@/lib/board/boardJourneyCopy";
+ import { resolveBoardParticipantDisplayName } from "@/lib/board/boardParticipantRoster";
+ import type { BoardDirectorDiscussionRecord } from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
+@@ -137,6 +138,12 @@ export type BoardBriefViewProps = {
+    * summarizes instead of repeating the exchange-by-exchange transcript.
+    */
+   meetingShownAbove?: boolean;
++  /**
++   * OB-5 — Board → Research. When the host connects Research, the Brief's
++   * existing "Research this" control launches it with the Board's own
++   * bounded question; without a host handler it stays disabled (unchanged).
++   */
++  onResearch?: (record: BoardDirectorDiscussionRecord) => void;
+ };
+ 
+ export function BoardBriefView({
+@@ -145,7 +152,10 @@ export function BoardBriefView({
+   onViewLivingModel,
+   children,
+   meetingShownAbove = false,
++  onResearch,
+ }: BoardBriefViewProps) {
++  // OB-5 — Research → Board: what came back from research launched here.
++  const researchBack = onResearch ? researchReturnForBoard(record.id) : null;
+   const weighedIn = resolveWhoWeighedIn(record);
+   const names = weighedIn.length
+     ? weighedIn.map((w) => w.displayName)
+@@ -348,16 +358,43 @@ export function BoardBriefView({
+             {record.certifiedSynthesis.researchOpportunity.boundedQuestion}
+           </p>
+           <p className="board-brief__research-action">
+-            <button
+-              type="button"
+-              className="boardroom-btn boardroom-btn--secondary"
+-              data-testid="board-brief-research-offer-action"
+-              disabled
+-              aria-disabled="true"
+-              title="Research launch from the Board isn't available yet."
+-            >
+-              {COPY.researchOfferAction}
+-            </button>
++            {onResearch ? (
++              <button
++                type="button"
++                className="boardroom-btn boardroom-btn--secondary"
++                data-testid="board-brief-research-offer-action"
++                onClick={() => onResearch(record)}
++              >
++                {COPY.researchOfferAction}
++              </button>
++            ) : (
++              <button
++                type="button"
++                className="boardroom-btn boardroom-btn--secondary"
++                data-testid="board-brief-research-offer-action"
++                disabled
++                aria-disabled="true"
++                title="Research launch from the Board isn't available yet."
++              >
++                {COPY.researchOfferAction}
++              </button>
++            )}
++          </p>
++        </article>
++      ) : null}
++
++      {researchBack ? (
++        <article className="boardroom-card mt-4" data-testid="board-brief-research-returned">
++          <p className="boardroom-card__title">Research came back</p>
++          <p className="boardroom-card__meta">{researchBack.question}</p>
++          {researchBack.synthesis ? (
++            <p className="boardroom-card__meta">{researchBack.synthesis}</p>
++          ) : null}
++          <p className="boardroom-card__meta">
++            {researchBack.sourcedCount > 0
++              ? `${researchBack.sourcedCount} sourced finding${researchBack.sourcedCount === 1 ? "" : "s"}.`
++              : "No sourced findings yet."}
++            {researchBack.uncertainties.length ? ` Still uncertain: ${researchBack.uncertainties[0]}` : ""}
+           </p>
+         </article>
+       ) : null}
+diff --git a/components/companion/board/BoardDirectorDiscussionIntake.tsx b/components/companion/board/BoardDirectorDiscussionIntake.tsx
+index 36193f45..15f138b3 100644
+--- a/components/companion/board/BoardDirectorDiscussionIntake.tsx
++++ b/components/companion/board/BoardDirectorDiscussionIntake.tsx
+@@ -92,6 +92,8 @@ type Props = {
+   onComplete: (record: BoardDirectorDiscussionRecord) => void;
+   onChooseDirectors?: () => void;
+   onReturnToSource?: () => void;
++  /** OB-5 — Board → Research (enables the Brief's "Research this"). */
++  onResearch?: (record: BoardDirectorDiscussionRecord) => void;
+   /** Atomic J1 — quiet View Living Model (overlay owned by the Board Room panel). */
+   onViewLivingModel?: () => void;
+   /** Add to Plan hands off to the existing Plan My Day authority. */
+@@ -141,6 +143,7 @@ export function BoardDirectorDiscussionIntake({
+   onComplete,
+   onChooseDirectors,
+   onReturnToSource,
++  onResearch,
+   onViewLivingModel,
+   onOpenPlanMyDay,
+   onSeatingChange,
+@@ -1322,6 +1325,7 @@ export function BoardDirectorDiscussionIntake({
+             arrival
+             onViewLivingModel={onViewLivingModel}
+             meetingShownAbove={Boolean(result.boardSession?.deliberation)}
++            onResearch={onResearch}
+           >
+             {body}
+           </BoardBriefView>
+diff --git a/components/companion/boardroom/BoardroomRoomPanel.tsx b/components/companion/boardroom/BoardroomRoomPanel.tsx
+index d0296e0f..6c87b264 100644
+--- a/components/companion/boardroom/BoardroomRoomPanel.tsx
++++ b/components/companion/boardroom/BoardroomRoomPanel.tsx
+@@ -105,6 +105,8 @@ type Props = {
+   /** Current Focus / Call the Board context (Prompt 145) — intake only. */
+   sourceContext?: BoardDiscussionContext | null;
+   onReturnToSource?: () => void;
++  /** OB-5 — Board → Research (passed to the discussion's Brief). */
++  onResearch?: (record: BoardDirectorDiscussionRecord) => void;
+   /** Add to Plan hands off to the existing Plan My Day authority. */
+   onOpenPlanMyDay?: () => void;
+   /** Supporting Shari chat — not the primary Boardroom interface. */
+@@ -139,6 +141,7 @@ export function BoardroomRoomPanel({
+   entryIntent = "home",
+   sourceContext = null,
+   onReturnToSource,
++  onResearch,
+   onOpenPlanMyDay,
+   shariChatOpen = false,
+   onToggleShariChat,
+@@ -731,6 +734,7 @@ export function BoardroomRoomPanel({
+                 setView("meet-directors");
+               }}
+               onReturnToSource={onReturnToSource}
++              onResearch={onResearch}
+               onViewLivingModel={() => setLivingModelOpen(true)}
+               onOpenPlanMyDay={onOpenPlanMyDay}
+               onSeatingChange={(ids) =>
+@@ -765,6 +769,7 @@ export function BoardroomRoomPanel({
+                     arrival={false}
+                     onViewLivingModel={() => setLivingModelOpen(true)}
+                     meetingShownAbove={Boolean(directorPastDetail.boardSession?.deliberation)}
++                    onResearch={onResearch}
+                   >
+                     {directorPastDetail.decisionRecord ? (
+                       <div className="boardroom-card mt-4" data-testid="board-past-decision-record">
+diff --git a/components/companion/researchLibrary/ResearchLibraryPanel.tsx b/components/companion/researchLibrary/ResearchLibraryPanel.tsx
+index 382588f0..9e392119 100644
+--- a/components/companion/researchLibrary/ResearchLibraryPanel.tsx
++++ b/components/companion/researchLibrary/ResearchLibraryPanel.tsx
+@@ -105,6 +105,8 @@ type Props = {
+   onReturnToProject?: (projectId: string) => void;
+   /** Return to Chamber when research was launched from a Chamber conversation. */
+   onReturnToChamber?: (entityId: string) => void;
++  /** OB-5 — return to the Board discussion this research was launched from. */
++  onReturnToBoard?: (discussionId: string) => void;
+   /**
+    * Open Projects on the proposal the member just asked for. The handoff is
+    * already stored; Projects picks it up and opens the existing review panel.
+@@ -142,6 +144,7 @@ export function ResearchLibraryPanel({
+   onOpenBusinessEstate,
+   onReturnToProject,
+   onReturnToChamber,
++  onReturnToBoard,
+   onOpenProjectProposal,
+ }: Props) {
+   const titleId = useId();
+@@ -178,6 +181,11 @@ export function ResearchLibraryPanel({
+     entityId: string;
+     label: string;
+   } | null>(null);
++  // OB-5 — research launched from a Board discussion returns to that Board.
++  const [researchForBoard, setResearchForBoard] = useState<{
++    discussionId: string;
++    label: string;
++  } | null>(null);
+   const [outcome, setOutcome] = useState<ResearchOutcomeArtifact | null>(null);
+   const [saved, setSaved] = useState(() => listSavedResearch());
+   const [activeSessions, setActiveSessions] = useState(() =>
+@@ -209,6 +217,12 @@ export function ResearchLibraryPanel({
+         setResearchFor({ projectId: project.id, label: project.name });
+       }
+     }
++    if (origin?.origin === "board") {
++      setResearchForBoard({
++        discussionId: origin.entityId,
++        label: origin.entityLabel?.trim() || "Board discussion",
++      });
++    }
+     if (origin?.origin === "chamber") {
+       setResearchForChamber({
+         entityId: origin.entityId,
+@@ -817,6 +831,27 @@ export function ResearchLibraryPanel({
+               ) : null}
+             </div>
+           ) : null}
++          {researchForBoard ? (
++            <div
++              className="mb-1 flex flex-wrap items-center gap-2"
++              data-testid="research-for-board"
++            >
++              <p className="text-sm font-medium text-[#4b463f]">
++                From your Board discussion —{" "}
++                <span className="font-semibold">{researchForBoard.label}</span>
++              </p>
++              {onReturnToBoard ? (
++                <button
++                  type="button"
++                  className={BTN_SECONDARY}
++                  data-testid="research-back-to-board"
++                  onClick={() => onReturnToBoard(researchForBoard.discussionId)}
++                >
++                  Back to the Board
++                </button>
++              ) : null}
++            </div>
++          ) : null}
+           {researchForChamber ? (
+             <div
+               className="mb-1 flex flex-wrap items-center gap-2"
+diff --git a/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx b/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx
+index 7e1a135c..e1ca9992 100644
+--- a/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx
++++ b/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx
+@@ -53,7 +53,13 @@ import {
+   claireTurnExpectsMemberReply,
+ } from "@/lib/businessProfileFounder/claireInputPlaceholder";
+ import {
++  consumeClaireChatHandoff,
++  recordClaireChatReturn,
++} from "@/lib/businessProfileFounder/claireChatHandoff";
++import {
++  handoffFromArea,
+   isClaireTalkRequest,
++  resolveHandoffEntity,
+   toActiveTopicContext,
+   type ClaireActiveTopicContext,
+   type ClaireTalkWithClaireRequest,
+@@ -78,6 +84,7 @@ import {
+   type CelebrationOffer,
+ } from "@/lib/businessProfileFounder/celebrationOffer";
+ import {
++  BP2_PROFILE_AREAS,
+   buildBp2ProfileAreaViews,
+   type Bp2ProfileAreaId,
+   type Bp2ProfileItem,
+@@ -549,6 +556,12 @@ export function BusinessProfileBp2aPrototype({
+             });
+ 
+           if (anyCommitted && transaction) {
++            // OB-5 — a confirmed write during a visit that came from main chat
++            // returns to the conversation (no-op for any other visit).
++            recordClaireChatReturn({
++              areaId: activeTopicContext?.areaId ?? "my-business",
++              summary: pendingCandidate.candidateMeaning,
++            });
+             setPricePreview(null);
+             setSnapshotVersion((v) => v + 1);
+             const freshSnapshot = transaction.snapshot;
+@@ -799,6 +812,28 @@ export function BusinessProfileBp2aPrototype({
+     ],
+   );
+ 
++  // OB-5 — main chat → Claire: pick up what the member said in chat through
++  // the SAME topic-handoff path the Living Model uses (handoffFromArea →
++  // talkWithClaire). One-shot, only in the member destination.
++  const chatHandoffConsumedRef = useRef(false);
++  useEffect(() => {
++    if (!isProfileDestination || chatHandoffConsumedRef.current) return;
++    chatHandoffConsumedRef.current = true;
++    const pending = consumeClaireChatHandoff();
++    if (!pending) return;
++    const area = BP2_PROFILE_AREAS.find((a) => a.id === pending.areaId);
++    const handoff = handoffFromArea(
++      pending.areaId,
++      area?.label ?? "My Business",
++      pending.memberPrompt,
++      snapshot,
++      resolveHandoffEntity(pending.areaId, snapshot) ?? undefined,
++    );
++    // Deferred one tick: Claire answers after mount, never during the effect.
++    window.setTimeout(() => talkWithClaire({ memberPrompt: pending.memberPrompt, handoff }), 0);
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot on mount
++  }, [isProfileDestination]);
++
+   const practiceRespondToMember = useCallback((text: string) => {
+     const memberLine = text.trim();
+     if (!memberLine) return;
+diff --git a/docs/reviews/BRAIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md b/docs/reviews/BRAIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md
+new file mode 100644
+index 00000000..57c32146
+--- /dev/null
++++ b/docs/reviews/BRAIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md
+@@ -0,0 +1,295 @@
++# BRAIN SPARK ESTATE™ — Intelligence Inventory
++## What Spark already has: specialists, advisors, engines, and system intelligence
++
++**What this is.**
++- A repository-backed inventory of the specialist and system intelligence that already exists in `ShariLHudson/adhd-business-companion-vs3`.
++- Taken at the OB-5 base `b9ef5d6a`. The OB-5 edits change no specialist intelligence.
++- Every row cites a file. **"Not traced"** means the item was not verified end to end; it does not mean the item is missing.
++- Nothing in this document was built in OB-5. The inventory exists so the Founder can decide what to **connect** before anything new is **built**.
++
++**How to read "One Brain".**
++- *Discover*: can main chat (`app/companion/CompanionPageClient.tsx` plus `/api/companion-chat`) find it from a natural sentence?
++- *Context*: does it receive the member's situation?
++- *Return*: does its result come back into the main conversation?
++
++---
++
++## 0. Top-line findings
++
++1. **At least seven separate Board/advisor rosters exist.** Only two drive the Board room today:
++   - the reconstructed **seven**, which handle new discussions and certified server deliberation;
++   - the legacy **twelve**, which handle history, the Meet-the-Directors cards and the template engine.
++
++   The other five are all live somewhere or only half-wired: 20 advisory members, 7 founder advisors, 4 workspace advisors, 8 legacy `AdvisorType`s and 15 Estate experts. **There is no shared advisor registry** (`lib/adaptiveCompanionArchitecture.ts` admits this).
++2. **There are two different "Chambers":**
++   - the **Chamber of Momentum**: 24 members, answered silently in main chat;
++   - the **Strategy Chamber**: 11 strategy domains, deterministic, no LLM, and it runs in the Strategies panel.
++3. **Several intelligent pieces look live but are not wired:**
++   - Board Director specialist and research escalations are declared data only.
++   - Chamber deep intelligence (19 expert modules) sits behind a flag that defaults OFF.
++   - `buildCompanionTurnIntelligence` is never called in production.
++   - `eventsIntelligenceHintForChat` has no production consumer.
++   - The founder `lib/governor` is not used in member chat.
++4. **Several files describe themselves wrongly:**
++   - `lib/board/reconstructed/registry.ts:1-4` and `lib/board/boardRuntimeAuthority.ts:4-8` say "NOT wired to member-visible runtime". They are wired.
++   - `lib/conversationBoundary.ts:1-6` says "PURE, UNWIRED". It is wired.
++   - `lib/chamberExpertise/chamberExpertRegistry.ts:9-10` says "not imported by chat runtime". It is consumed through activation.
++   - The Board layer of `lib/adaptiveCompanionArchitecture.ts` never mentions `lib/board/`.
++5. **Claire, Project Brain, the Strategy engine and Events intelligence are strong but isolated.** Before OB-5, main chat could not reach Claire. OB-5 connects Claire and Projects; see the OB-5 report.
++
++---
++
++## 1. Board of Directors
++
++### 1a. Runtime authority (traced)
++
++| Concern | File | Evidence |
++|---|---|---|
++| Flag | `lib/intelligence-layer/featureFlags.ts:141-149` | `isBoardDeliberationV2Enabled()`: localStorage override, then `NEXT_PUBLIC_BOARD_DELIBERATION_V2`. **Default false.** |
++| Authority seam | `lib/board/boardRuntimeAuthority.ts:26-65` | Chooses "legacy-twelve" or "reconstructed-seven". `assertReconstructedBoardDeliberationAllowed()` throws when the flag is off. |
++| Roster for new discussions | `lib/board/boardParticipantRoster.ts:1-31` | `NEW_BOARD_DISCUSSION_ROSTER = "reconstructed-seven"`. The legacy twelve are a "read-only history dictionary". |
++| Engine selection | `lib/board/boardDeliberationRoute.ts`; `components/companion/board/BoardDirectorDiscussionIntake.tsx:626-775` | A legacy draft uses the legacy template engine. Seven + V2 on goes to the server. Seven + V2 off is held ("not-open"). No fallback either way. |
++| Certified server pipeline | `app/api/board/deliberate/route.ts:1-70` → `lib/board/delivery/runCertifiedBoardDeliberation.ts:5-44` | Supabase bearer auth, V2 gate, OpenAI key. Stages: orchestrator → first pass → cross-exam → synthesis → delivery. The LLM call is `lib/internalAgent/invokeStructuredLlm.ts:14` (`gpt-4o-mini`). |
++| Material signals | `app/api/board/material-signals/route.ts:19-24` | `reconstructed/selection/modelMaterialSignalExtractor` |
++| Legacy-only routes | `app/api/board/recommend/route.ts:1-9` ("LEGACY… No member-facing surface calls this route"); `app/api/board/directors/*`, `app/api/board/relationships/*` | Legacy twelve metadata |
++| Board UI | `components/companion/boardroom/BoardroomRoomPanel.tsx:15-91` | Imports the roster, `visibleDirectors` (legacy twelve), `reconstructed/types`, **and** `lib/boardroom` + `lib/advisory/types` (the 20-member advisory model) |
++
++### 1b. The reconstructed seven: the authoritative contract for new Board work
++
++**Where each part of a Director is defined:**
++- Registry: `lib/board/reconstructed/registry.ts:21-42`.
++- Identity: `identities.ts:10-74`.
++- Reasoning, expertise and guardrails: `reasoningProtocols.ts`, RP-1 to RP-7. The fields are coreReflex, steps, inputPriorities P0–P3, ignoreRules, evidenceStandard, timeHorizon, riskSensitivities, defaultHypothesis, disconfirmationRule, changeMindConditions and silenceRules (types at `types.ts:135-147`).
++- Handoffs: `collaborationProfiles.ts`, with crossExamEdges, specialistEscalation and researchEscalation.
++- Voice and life story: `voiceProfiles.ts` and `executiveLifeProfiles.ts`, linked through `biographyReasoningLinks.ts`.
++- Output guardrail: `firstPass/epistemicContract.ts`.
++
++| reasoningId | Name | Expertise | Legacy origin (`legacyMigrationMap.ts`) | Specialist escalation (`collaborationProfiles.ts`) |
++|---|---|---|---|---|
++| customer-reality (RP-1) | Sofia Ramirez | demand, pricing, willingness to pay | customer-market (identity kept) | sales-win-loss / pricing (:26, :32) |
++| economic-survivability (RP-2) | Margaret O'Brien | cash timing, margin, survival | absorbs Melissa Grant | finance-bookkeeping (:61) |
++| recovery-hard-truth (RP-3) | Gerald Novak | stop or recover | absorbs Laura Bennett (partly) | turnaround-ops (:90) |
++| scale-systems (RP-4) | Renee Ashford | growth breaking delivery, founder bottleneck | absorbs Marcus Whitaker | operations (:119) |
++| strategic-reinvention (RP-5) | James Holloway | opportunity and cost of waiting | growth-opportunity (identity kept); absorbs Victoria and Maya | competitive-intel (:148) |
++| human-systems (RP-6) | David Kim | founder and team sustainability | founder-advocate (identity kept) | facilitation (:177) |
++| commitment-portfolio (RP-7) | Camille Turner | portfolio gates, one bet | new | data-analytics (:206) |
++
++**Context in (traced).**
++- `reconstructed/context/buildAuthorizedBoardContext.ts:74` supplies the situation through authorized consumption with `consumerRole: "board"`.
++- `orchestration/contextAssembly.ts:1-9` only shapes that context.
++
++**Results out (traced).**
++- Member decision → Decision Ledger, via `lib/board/memberDecision/connectBoardMemberDecisionToLedger.ts` (called from `processBoardRecordMemberResponse.ts:190`).
++- Shared retrieval reads Board results in `lib/relevantSituation/retrieveRelevantSituation.ts:604` (`collectCertifiedBoardLedgerItems`) and `:622` (`collectBoardSharedHandoffItems`).
++- **OB-5 adds** a direct Board → main-chat return projection; see the OB-5 report §8.
++
++**Disconnected.**
++- `specialistEscalation` and `researchEscalation` are read only by `differentiationMatrix.ts:29,53`. No Director invokes a Chamber, Strategy or Research specialist.
++- OB-5 connects Board → Research at the Brief level, where the member asks, not per Director.
++- The first-pass prompt (`firstPass/buildFirstPassPrompt.ts:6,33-100`) uses only `REASONING_PROTOCOLS`. Voice and executive-life profiles are not in the prompt. Synthesis and delivery prompts were not traced.
++
++### 1c. The legacy twelve (`lib/board/boardDirectorRegistry.ts`)
++- Seeds are at :55-573 and the export `BOARD_DIRECTORS` is at :627; narratives come from `directorProfileNarratives.ts`.
++- Fields (`lib/board/types.ts:58-96`): purpose, decisionLens, questionsAsked, tone, openingMessage, responseStructure, aliases, watchesFor, chamberContrast, philosophy, whatIProtect.
++- Response templates are in `directorResponseProfiles.ts`. The engine is template-based; no LLM was found.
++
++| id | Name | Disposition (`reconstructed/legacyMigrationMap.ts:8-99`) |
++|---|---|---|
++| board-chair | Thomas Ellison | retired → Spark orchestration |
++| vice-chair | Shari Menon | retired → shared execution |
++| founder-advocate | David Kim | → RP-6 |
++| strategy-director | Victoria Hayes | retired → shared method |
++| financial-stewardship | Melissa Grant | retired → RP-2 + finance specialist |
++| operations-capacity | Marcus Whitaker | retired → RP-4 |
++| customer-market | Sofia Ramirez | → RP-1 |
++| growth-opportunity | James Holloway | → RP-5 |
++| risk-resilience | Laura Bennett | retired → shared method |
++| technology-future | Maya Chen | retired → tech specialist + Research |
++| values-trust | Carlos Rivera | retired → shared method |
++| devils-advocate | Mateo Vargas | retired → cross-exam method |
++
++Where the twelve are still live:
++- Meet-the-Directors cards (`visibleDirectors.ts`).
++- The `shouldOpen{Thomas,Shari,Marcus,…}FromEntry` deep links (`BoardroomRoomPanel.tsx:62-68`).
++- Director alias resolution in main-chat intent (`lib/memberIntent/classifyMemberIntent.ts:13`).
++- History records.
++
++### 1d. Other Board and advisor rosters (duplicates)
++
++| Roster | File | Members | Runtime use |
++|---|---|---|---|
++| Advisory board (Boardroom v1) | `lib/advisory/members/boardMembers.ts:9-205` | 20: CEO, Visionary, Strategist, Product Manager, Marketing Director, Sales Director, Customer Experience, ADHD Expert, Behavioral Psychology, Learning Designer, Technology Advisor, AI Advisor, Operations, Finance, Community Builder, Creative Director, Research Analyst, Accessibility Expert, … | `lib/boardroom/generateDiscussion.ts` and `recommendBoard.ts`. Still invoked in `BoardroomRoomPanel.tsx:373,404,443`. Reachability of the "new-situation" view is **not traced**. Also used by `lib/profile/advisoryHelp*`. |
++| Founder Advisor Board | `lib/ecosystem/board/advisorTypes.ts:1-50` | 7: ceo, marketing, sales, operations, productivity, accountability, wellness | `boardReasoningEngine.ts:182`, `FounderBoardPanel.tsx`, `lib/ecosystem/ops/advisorExecutionEngine.ts`. **Not in member chat** (ledger: "Founder board not wired through companionIntelligenceRouter"). |
++| Workspace advisors | `lib/workspaceContextLock.ts:43-58,124-143` | 4: marketing, operations, planning, mindset | Live hint, via `buildWorkspaceBoardAdvisorHint` → `lib/workspaceAwareness.ts:62` |
++| Legacy AdvisorType | `lib/companionIntelligence.ts:42-50,137-160,293` | 8: adhd_coach, organization_advisor, business_strategist, marketing_strategist, content_creator, wellness_guide, deep_dive_companion, general_companion | Live. `buildCompanionIntelligence` → `intelligenceHintForChat` injects `ADVISOR_VOICE` |
++| Estate experts | `lib/estateBrain/expertRegistry.ts:8-113` | 15: copywriter, research-analyst, marketing-expert, business-strategist, sales-expert, instructional-designer, project-manager, adhd-coach, executive-coach, writing-coach, technology-expert, productivity-specialist, graphic-design-advisor, financial-educator, career-advisor | Metadata only (triggers, specialties, no prompts). These are the `expertIds` on every capability-catalog entry. They reach chat as `legacyExpertIds` through `lib/chamberExpertise/legacyExpertAliasMap.ts`. |
++
++---
++
++## 2. The Chambers
++
++### 2a. Chamber of Momentum: 24 members in three layered registries
++
++| Layer | File | Content | Runtime |
++|---|---|---|---|
++| Persona cards | `lib/chamber/chamberMemberRegistry.ts:8-33,50-339` | 24 ids (ai-technology … wellness): displayName, specialty, bio, howTheyHelp, activationOpener | Live |
++| Prompt and guardrails | `lib/chamber/chamberMemberPrompt.ts:18-107` | `CHAMBER_SHARED_RESPONSE_POLICY` (11 binding rules), `CHAMBER_UNDERSTANDING_FIRST_BLOCK`, a banned-phrase list, an inline Events operating block (:56-71), and a knowledge block | Injected by `CompanionPageClient.tsx` into `intentHint` → `/api/companion-chat` |
++| Expert registry | `lib/chamberExpertise/chamberExpertRegistry.ts` | 24 codes (STR, SYS, MKT, CR, FIN, SALES, CNT, PM, AI, RES, CRE, DATA, EVT, HOR, INN, KMG, LEAD, LEARN, MOM, NET, PART, PC, PRES, WELL): activationSignals, outcomeSignals, supportingRelationships (handoffs), intentAffinities | Live via `resolveChamberExpertActivation(V2)`; V2 defaults ON |
++| Deep intelligence | `lib/chamberIntelligence/intelligenceRegistry.ts:71-124`; `experts/*.ts` | **19 built:** MKT SYS EVT STR CR FIN PM SALES CNT AI CRE RES PRES LEAD KMG DATA PC MOM WELL. **Missing:** HOR, INN, LEARN, NET, PART. | **Gated OFF** (`isChamberIntelligencePilotEnabled()` defaults false) |
++| Knowledge packs | `lib/chamber/knowledge/chamberKnowledgeRegistry.ts:84-150` | Approved and bridged: client-relationships, events, knowledge-management. 12 are "architecture-pack-only / docs-only"; the rest are specialty-prompt only. | `chamberKnowledgeHintForChat` |
++
++**One Brain.**
++- Discover: yes. `resolveSpecialistTurnMember` lets a specialist answer silently in main chat.
++- Context: yes. `buildChamberAuthorizedPromptBlockForChat` (`lib/chamber/chamberAuthorizedContext.ts:29-45`, role chamber) is gated on `chamberConversationActive`.
++- Return: results stay in the chat thread. Handoffs go to Create and Research (`lib/chamber/chamberContextHandoff.ts`). Chamber outcomes are **not** a source in `retrieveRelevantSituation`.
++
++**Prompt path (traced).**
++1. `CompanionPageClient.tsx` builds `chamberAuthorizedPromptBlock`.
++2. `app/api/companion-chat/route.ts:256-261` truncates it to 2,000 characters.
++3. `lib/companionPrompt.ts:693-695` adds it to the system prompt.
++4. The model is `gpt-4o-mini`.
++
++### 2b. Strategy Chamber (`lib/strategyChamber/**`)
++- **Registry:** `intelligence/registry.ts:14-26` holds 11 `StrategyTypeContract`s, matched on regex `entrySignals` (:47-66).
++- **Domain loader:** `intelligence/domainIntelligence/registry.ts:25-37`.
++- **Engine:** `intelligence/engine/*` (classify, question selection, options, compare, recommend, readiness, decision record).
++- **Frameworks:** `intelligence/frameworks/*`; `optionCatalog.ts` alone is 957 lines.
++- **Memory and patterns:** `memory/*` and `patterns/*`.
++
++| Domain | Status | Evidence |
++|---|---|---|
++| pricing | **Full domain pack** | `domains/pricing/` (pricingDomain 854 lines, pricingIntelligence 483, contract 125) |
++| growth | **Full domain pack** | `domains/growth/` (growthDomain 1001, growthIntelligence 537, contract 174) |
++| offer, market_customer, capacity_focus, hiring_delegation, partnership, pivot_rethink, personal_direction | Contract level only (187–207 lines each) | `strategyTypes/*.ts` |
++| business_direction, ninety_day | Thinnest contracts (100 / 86 lines) | same |
++| thin engine parts | `engine/recommendHandoff.ts` (11 lines), `identifyRisks.ts` (14), `designExperiment.ts` (45) | wrappers |
++
++- **No LLM:** no `fetch`, `openai` or `invokeStructuredLlm` in `lib/strategyChamber`.
++- **UI:** `components/companion/StrategiesPanel.tsx:90` → `StrategyChamberConversation`.
++
++**One Brain.**
++- Context: `buildStrategyAuthorizedPromptBlockForChat` (`strategyAuthorizedContext.ts:35-77`) is gated by `isStrategyChamberTurn`.
++- Return: only the prior conclusion string reaches main chat (`strategyChamberContinuity.ts:65-84`). The engine's options, risks, readiness and decision record stay inside the Chamber.
++- Memory: `memory/strategicMemoryStore.ts` has no consumers outside the Chamber and is not a situation source.
++
++---
++
++## 3. Room specialists
++
++| Specialist | Runtime files | Prompt / model | Guardrails | Context in | Result back to One Brain |
++|---|---|---|---|---|---|
++| **Claire** (Business Understanding) | `lib/businessProfileFounder/*` (≈90 files); `app/api/claire-reasoning/route.ts`; mounted via `components/companion/ProfileDestinationHost.tsx:87` → `ClaireBusinessProfileDestination` → `BusinessProfileBp2aPrototype` | `claireReasoningServer.ts` system prompt (strict JSON), `gpt-4o-mini` | Leak guard, praise restraint, reask contract, confirmation contract, write authority (`writeMeaningAuthority.ts`, `p6WriteExecutor.ts`) | Conversation Gate (`claireSharedContext.ts`); LMC handoff (`lmcClaireHandoff.ts`); **OB-5: chat topic handoff** | Writes Business Understanding (read by `relevantSituation/collectBusinessUnderstandingItems.ts`). **OB-5: a confirmed write now returns to main chat.** Networking Intelligence is declared but not invoked (`claireInternalCapabilityMap.ts:1-6`). |
++| **Project Brain** (LLM next action) | `app/api/project-brain/route.ts:4-18`; called only from `components/companion/ProjectsPanel.tsx:612` | Inline `PROJECT_BRAIN_PROMPT`, `gpt-4o-mini` | One primary action, at most two backups; energy and overwhelm rules | Project fields only | Stays in ProjectsPanel |
++| **Project Homes next-step engine** | `lib/projectHomes/nextStepEngine.ts`, `homeActions.ts:480-530` (`resolveProjectHomeNextMove`) | Deterministic, grounded; "nothing" when there is no evidence | Never restates setup text; member-chosen step wins | Project items, facts, constraints | **OB-5: answered in main chat** |
++| **Project coach** | `lib/projectCoachSession.ts`, `projectCoachHandoff.ts`, `projectCoachChoices.ts` | Deterministic coaching in chat | — | Workspace context (needs the old beside-chat ProjectsPanel) | In main chat, only while `workspacePanel === "projects"` |
++| **Events** | `lib/eventsIntelligence/*` (record store, question paths, lifecycle, projects bridge); Chamber EVT module; Chamber knowledge pack; inline Events block in `chamberMemberPrompt.ts:56-71` | Via the Chamber prompt | Never Talk-It-Out loops; one question at a time | Room gate (`applyEventConversationalAnswer.ts`) | Projects bridge. **`eventsIntelligencePrompt.ts:16` is an orphan duplicate of the inline block.** |
++| **Research** | `lib/researchLibrary/*`; `app/api/research-live/route.ts` (`gpt-4o-mini-search-preview`, fallback `gpt-4o-mini`) | Citation-only rule | `researchTruthfulness`, claim state | `researchAuthorizedContext.ts` | Yes: `researchReturnHintForChat` and `collectResearchItems`. **OB-5: Board origin connected.** |
++| **Work Recognition** | `lib/estateBrain/workRecognitionFallthrough.ts` (605 lines) | Deterministic | First-refusal / resumption priority | Message + session | Opens workspaces from chat |
++| **Estate coaching** | `lib/estateBrain/estateCoachingRegistry.ts`, `estateCoaching.ts` | Deterministic menus | Coach before navigating | Text | Via `frictionlessActionLayer.ts` / `discoveryMode.ts` |
++| **Estate knowledge** | `lib/estateBrain/knowledgeRegistry.ts` (857 lines) | Data | — | — | Navigation and discovery |
++| **Visual Thinking (VTS)** | `lib/visualRecommendationEngine.ts`; `app/api/decision-analyze` (LLM) | Deterministic recommender | One decisive fit, at most 2 alternatives, never a default Mind Map | — | `visualRecommendationEngineHintForChat` |
++| **Create** | `lib/universalCreation/documentRegistry.ts:30` (22 plugins), `orchestrator.ts`; LLM routes `api/generate`, `refine`, `remix`, `score`, `email-generator`, `create-draft-review`, `templates`, `snippets` | Per route, `gpt-4o-mini` | No invented recipients; ownership boundary | Create consumption policy | In the chat workspace |
++| **Day Designer / Plan My Day** | `lib/day-designer/*` | Deterministic | Room gate | — | In chat |
++| **Technology future** | `lib/technologyFutureIntelligence/resolveTechFutureOffer.ts:117` | Hint | — | — | Main chat hint |
++| Other LLM personas | `api/avatar-research` ("AIRA"), `api/braindump-classify`, `api/founder/guidance`, `lib/ecosystem/founderAiAdvisor.ts`, `lib/pertinentQuestionMove/wordConversationalMoveLive.ts` | `gpt-4o-mini` | — | — | Not traced |
++
++---
++
++## 4. System-level intelligence
++
++| System | Evidence | State |
++|---|---|---|
++| Conversation Boundary (One Brain) | `lib/conversationBoundary*.ts`; room gate `conversationBoundaryRoomGate.ts` | Live. Governs turn meaning, pending binding (OB-3), corrections (OB-4) and, in OB-5, **capability selection** (`lib/oneBrainCapability`) |
++| companionIntelligenceRouter | `lib/companionIntelligenceRouter.ts` (509 lines) | **`buildCompanionTurnIntelligence` (:141) has no production caller.** Main chat imports only `resolveCompanionAcceptanceTurn` and `trackConversationOffer`, so the router's Board step and `interventionLearningHintForChat` / `effectivenessHintForChat` are dormant. |
++| Companion Governor | `lib/companionGovernor.ts` | Live (`evaluateCompanionTurn`) |
++| Founder Governor | `lib/governor/` | Only via `lib/founder/services/governorBridge.ts`, which nothing imports |
++| Estate intelligence | `lib/estateIntelligence/*`, `estateIntelligenceRuntime/*` | `estateConversationHintForChat` is live; `routeEstateIntelligence` feeds Chamber activation |
++| Authorized consumption / Conversation Gate | `lib/authorizedEstateConsumption/*`; roles `lib/relevantSituation/types.ts:39-47`; sources `retrieveRelevantSituation.ts:195-622` | Live. Policies for board, chamber, strategy, research and create. Sources: suspended work, projects, estate, vault, research, board ledger, board handoff, business understanding. |
++| Signal bus / learning | `lib/intelligence-layer/signalBus.ts` | Shadow mode; flag `NEXT_PUBLIC_UNIFIED_SIGNAL_BUS` defaults off. Profile learning off by default. `closedLoopLearning.ts` and `companionInterventionLearning.ts` are dormant. |
++| Action execution foundation | `lib/executionFoundation/capabilityManifest.ts` | One proven executor: Board decision → project starter (`persistProjectStarter`, verifier `verifyProjectExists`) |
++
++**Admitted gaps, quoted from the Estate's own ledger** (`lib/adaptiveCompanionArchitecture.ts`):
++- "Profile learning disabled by default".
++- "Companion profile is client localStorage — no server-authoritative sync".
++- "Behavior rules fragmented across ~15 modules".
++- "Governor OS not sole turn entry (page.tsx still orchestrates)".
++- "Three relationship stores".
++- "Two prediction systems".
++- "Three parallel advisor models (4 workspace, 7 founder, 8 legacy AdvisorType)".
++- "No shared advisor registry".
++- "Founder board not wired through companionIntelligenceRouter for end-user chat".
++- "Production learning OFF by default"; "Signal bus in shadow mode only".
++
++**The ledger undercounts.** It omits `lib/board` (12 + 7 Directors), `lib/advisory` (20), the Estate experts (15) and the Chamber (24).
++
++---
++
++## 5. One Brain matrix
++
++| Intelligence | Main chat can discover it | Receives shared context | Result returns to main chat |
++|---|---|---|---|
++| Board (seven) | Continuity-gate invite; **OB-5: capability selection** | Yes (role board) | Decision Ledger and the Gate; **OB-5: direct return projection plus a visible return** |
++| Board (legacy twelve) | Alias only | No | History only |
++| Advisory 20 / Founder 7 | No / No | No | No |
++| Workspace 4 / AdvisorType 8 | Implicit (hint) | n/a | Same turn |
++| Chamber of Momentum 24 | Yes (silent specialist) | Yes | In chat; not in the situation store |
++| Chamber deep intelligence 19 | Only when the pilot flag is on | — | — |
++| Strategy Chamber | Turn detection only | Yes (strategy block) | Conclusion string only |
++| Claire | **Before OB-5: no. OB-5: yes** | Yes; **OB-5: the member's request and topic** | **OB-5: yes, on a confirmed write** |
++| Project Brain (LLM) | No | No | No |
++| Project Homes next-step engine | **OB-5: yes** | Project context | **OB-5: yes, answered in chat** |
++| Research | Yes | Yes | Yes (chat origin needs an active project; see the OB-5 report) |
++| Events runtime | Via the Chamber `events` member | Via the Chamber | Projects bridge only |
++| Estate experts 15 | Yes (routing ids) | — | Same turn |
++
++---
++
++## 6. Duplicates, and which one runs
++
++- **Board rosters:**
++  - reconstructed 7: live for new work and V2;
++  - legacy 12: history and cards;
++  - advisory 20: Boardroom v1 path, reachability not traced;
++  - founder 7: founder UI only;
++  - workspace 4: live hint;
++  - `AdvisorType` 8: live hint.
++- **Finance:** Margaret (RP-2) · Melissa (legacy) · Chamber `finance` + FIN · advisory `finance` · Estate `financial-educator` · Strategy `pricing` domain.
++- **Technology:** Maya Chen (legacy) · Chamber `ai-technology` + AI · advisory `technology-advisor` / `ai-advisor` · Estate `technology-expert` · `technologyFutureIntelligence`.
++- **Research:** Chamber `research` + RES · advisory `research-analyst` · Estate `research-analyst` · `researchLibrary` + `api/research-live` (**the live engine**).
++- **Events:**
++  - live: the inline block in `chamberMemberPrompt.ts`, the EVT module (flagged), the knowledge pack and the `eventsIntelligence` runtime;
++  - orphan: `eventsIntelligencePrompt.ts`.
++- **Strategy:** Chamber `strategy` + STR · Strategy Chamber · advisory `strategist` · Estate `business-strategist` · `lib/strategyIntelligence.ts` · legacy Victoria Hayes.
++- **Ideal client / People I Help:** Claire's `people-i-help` area · Client Avatar Builder (`client-avatars` section; the model prompt routes "ideal customer" here) · catalog `business.strategy` (trigger "ideal client" → `client-avatars`).
++- **Marketing / Operations / Wellness:** each exists in the Chamber, advisory, founder, workspace and `AdvisorType` rosters.
++- **Project next step:** Project Brain (LLM, ProjectsPanel) · Project Homes next-step engine (deterministic) · `lib/founderWorkspace/intelligence/nextStepEngine.ts` (founder) · `lib/projects/suggestNextStepHelpers`.
++
++---
++
++## 7. Existing intelligence to connect vs. intelligence that is genuinely missing
++
++### Exists — connect it (no construction)
++1. Director `specialistEscalation` / `researchEscalation` (`collaborationProfiles.ts`) → Chamber experts, the Strategy pricing/growth domains and Research. Today these are declared data only.
++2. Chamber deep intelligence, 19 modules: a rollout decision on `NEXT_PUBLIC_CHAMBER_INTELLIGENCE_PILOT`.
++3. Strategy Chamber engine output and `strategicMemoryStore` → a source in `retrieveRelevantSituation`, so the Board and main chat can see strategy decisions.
++4. Chamber conversation outcomes → the situation store (none today).
++5. Project Brain (LLM) → shared context in and out. It currently sees only the project body. It also duplicates the Project Homes engine.
++6. `buildCompanionTurnIntelligence` and the router-only learning hints: unused.
++7. `eventsIntelligenceHintForChat`: an orphan; consolidate it with the inline Chamber block.
++8. The founder advisor board → member chat (the gap the ledger admits).
++9. Signal bus and profile learning: built, flags OFF.
++10. The architecture ledger: register `lib/board`, the Chamber, the Strategy Chamber and Claire.
++11. Board `boardDecision → project starter`: already a proven executor (`executionFoundation`), reachable only from the Board's own offer UI.
++
++### Genuinely missing (no implementation found)
++1. **A single shared advisor/specialist registry.** Every roster above is independent.
++2. Deep intelligence for Chamber HOR, INN, LEARN, NET and PART.
++3. Full domain packs for 9 of the 11 Strategy domains; only pricing and growth are built.
++4. Knowledge packs for 21 of the 24 Chamber members; only CR, Events and KMG are bridged.
++5. Claire's Networking Intelligence, declared as future work.
++6. Server-side storage or sync for Chamber, Strategy and companion-profile state; all are localStorage.
++7. Closed-loop outcome attribution and a prediction-accuracy feedback loop, per the ledger.
++8. Director voice and executive-life profiles in a runtime prompt. The first pass uses only the RP protocol; synthesis and delivery were not traced.
++9. Main-chat tool use and external write integrations: calendar write scope and email account connection.
++
++*Read-only inventory. OB-5 changed no specialist intelligence. Rows marked "OB-5" record connections added in this round.*
+diff --git a/docs/reviews/BRAIN_SPARK_ESTATE_OB5_RETURN_REPORT.md b/docs/reviews/BRAIN_SPARK_ESTATE_OB5_RETURN_REPORT.md
+new file mode 100644
+index 00000000..f2b3c472
+--- /dev/null
++++ b/docs/reviews/BRAIN_SPARK_ESTATE_OB5_RETURN_REPORT.md
+@@ -0,0 +1,332 @@
++# BRAIN SPARK ESTATE™ — OB-5 Return Report
++## Capability CONNECT: One Brain knows what Spark already has, and uses it
++
++**Standing constraints.** Nothing was merged. There was no production deployment. `main` is unchanged. The OB-5 branch has **not** been pushed; pushing triggers a Vercel preview, so it needs Founder authorization. OB-6 was not started.
++
++---
++
++## 1. Verified starting point
++
++| Item | Value |
++|---|---|
++| Accepted OB-4 | `ob4/receipts-universal-corrections` @ `b9ef5d6abcb02e5e619b55e02e013817cc31da8f`, verified to match exactly |
++| OB-4 report | `docs/reviews/ob4/BRAIN_SPARK_ESTATE_OB4_RETURN_REPORT.md` (adhd-companion), present |
++| Capability Connection Audit | `docs/reviews/ob2/BRAIN_SPARK_ESTATE_CAPABILITY_CONNECTION_AUDIT.md`, present; re-verified in §3 |
++| Older action work | `origin/atomic-gca-r1`, the same commit as `atomic/global-conversation-action-r1` (`9ae818cc`); inspected as evidence only |
++
++## 2. Ending branch / SHA
++
++| Item | Value |
++|---|---|
++| Branch | `ob5/one-brain-capability-connect`, created from exactly `b9ef5d6a` |
++| Ending SHA | the OB-5 commit on `ob5/one-brain-capability-connect` (SHA recorded in the delivered copy; a commit cannot contain its own hash) |
++| Artifacts | This report · `BRAIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md` |
++
++---
++
++## 3. Canonical capability source, and what changed since the audit
++
++**Re-verification.** I traced every named registry again, and ran each owner's own recognizer on the certification sentences.
++
++| Finding | Status now |
++|---|---|
++| `estateCapabilityRegistry/catalog` is the canonical *capability* source | **Partly true.** It holds 62 entries: Create, Research, Momentum, Focus, Restore, Journal, Learn and Places. It has **no entry** for Claire, Board, Events, Strategy Chamber, Reminders, Rhythms, Plan My Day, VTS or LMC. It also holds duplicates: `create.business_plan` / `create.business-plan`, `create.social` / `create.social_post`, `focus.music` / `restore.music`. Its only runtime reader is the concierge (`frictionlessActionLayer.tryEstateConciergeFlow`) plus `routeEstateIntelligence`. |
++| **Correction:** "Claire has no path from main chat" | **Wrong, and already wrong at the audit.** `detectBusinessEstateNavIntent` (`CompanionPageClient`, before the router) opens My Business Estate. The real break was **context**: Claire received nothing. The recognizer is also narrow; see §13. |
++| **Correction:** "Research launch + return from chat works (A)" | **Wrong.** `stageConversationResearch` had **0 production callers**, so the chat → Research → chat round-trip never ran. Only the Project and Chamber round-trips existed. Meanwhile the model was told "you own research… say 'I looked into…'" with no tools. That is a fabrication risk. |
++| **Correction:** "Strategy open from chat" | `resolveStrategyOpenFromChat` opens the **ADHD strategy library**, not the Strategy Chamber. The Chamber is reachable only by a button. |
++| **New:** Board chat invite dead-ended | Intake ran in chat and ended at "we can begin the Board discussion", but **never opened the Board Room**. |
++| **New:** Work Recognition shadows other owners | "Help me plan today", "design my day" and "make a mind map" all become a generic Create "Document". |
++| Model has no tools; prompt has a hand-written feature list | Still true at base. The feature list omitted Claire, Events, the Strategy Chamber, Rhythms, Reminders, VTS, LMC, the Research Library and the Board Room. |
++
++**Canonical source adopted: no single registry holds everything, and no new catalog was created.** One Brain's single read path is a **projection** (`lib/oneBrainCapability/projection.ts` + `readPath.ts`). Every name, purpose and recognizer is read from registries and owner modules that already exist:
++
++| Owner | Name / purpose read from | Existing recognizer consumed |
++|---|---|---|
++| Claire | `profileNavigatorModel.BP2_PROFILE_AREAS` | `businessEstateNavIntent.detectBusinessEstateNavIntent` |
++| Board | `boardRoomEntranceCopy` (Founder-approved "how it works") | `memberIntent.classifyMemberIntent` → `board_member`; the Board's own copy phrase |
++| Research | catalog `research.current`, `myDayAndWorkNavigation` | catalog `consultEstateCapabilities` (score ≥ 60) |
++| Projects | `appFeatureKnowledge.projects`, catalog `momentum.projects` | `workspaceIntent.extractProjectQuery`, `classifyMemberIntent` → `project` |
++| Events | `chamberMemberRegistry.events` | `eventsIntelligence.detectEventIntent` |
++| Strategy Chamber | `strategyChamber/intelligence/registry` | `matchStrategyTypesFromText` |
++| Create | `appFeatureKnowledge.create` | `classifyMemberIntent` → `new_document` |
++| Plan My Day | `appFeatureKnowledge.plan-my-day` | its `match` patterns; `universalAccess` |
++| Reminders / Rhythms | `myDayAndWorkNavigation` | `executableRequest.resolveExecutableRequest`, `rhythms.classifyRememberIntent` |
++| VTS | `myDayAndWorkNavigation`, catalog `visual.model` | `universalAccess` → `visual-thinking` |
++| Client Avatars | `appFeatureKnowledge.client-avatars` | `clientAvatarOffer.detectClientAvatarExploration` |
++| LMC | `boardRoomEntranceCopy.livingModelNote` | — (none exists) |
++
++**What OB-5 adds is wiring only.** The adapter table (`lib/oneBrainCapability/connections.ts`) records, for each owner, the traced facts about how One Brain reaches it:
++- mode: acts with confirmation / acts / advises / navigates
++- handoff kind
++- return path
++- connection status
++- context carried
++- the honest limit
++- evidence (file / function)
++
++It contains **no names, descriptions or member-need vocabulary**. The catalog itself was not changed.
++
++## 4. One Brain capability-selection architecture
++
++```
++Boundary (what the member is doing)          — unchanged, OB-1
++  → resolvePendingBinding / resolveCorrectionBinding   — OB-3 / OB-4
++  → resolveCapabilitySelection                         — OB-5, ONE call per turn
++       meaning: gate.capabilityTurnEligibility (the gate is the one reader of
++                relation / stance / meaningConfidence — no new classifier)
++       recognitions: readPath.recognizeCapabilities (existing recognizers)
++       → route | confirm | ask | defer | none
++  → planCapabilityTurn (pure) → the page executes with each owner's existing entry point
++```
++
++- **Request vs discussion comes from Boundary alone.**
++  - `stance === "talk_about"` means no capability.
++  - A person-before-process hold on the current thread means none.
++  - Accept, decline, correct, clarify and unsure relations mean none.
++  - Nothing new classifies meaning.
++- **LOW meaning never connects.** It becomes `confirm`, which is an offer.
++- **A catalog-only candidate is only offered**, never connected.
++- **Two owners fitting equally produce a short choice** (`ask`). The choice is armed as items on the one pending record, and nothing runs until the member names one.
++- **An owner whose seam still routes it (`owner_seam`) is `defer`.** One Brain records the selection and the existing seam acts, so behaviour for those owners is unchanged.
++- **Kill switches:**
++  - `NEXT_PUBLIC_ONE_BRAIN_CAPABILITY_CONNECT=0`
++  - or the existing `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0`
++  - Either one returns `null`, which leaves only the legacy seams.
++- **Placement.** The selection is computed immediately after the OB-3/OB-4 bindings. The connect block runs **before** the legacy business-estate seam and the continuity gate (guarded by `oneBrainConsumers.test.ts`).
++
++## 5. Existing systems reused (nothing rebuilt)
++
++| Reused | How |
++|---|---|
++| Boundary meaning contract (OB-1) | Read through the gate's new `capabilityTurnEligibility` |
++| One pending record (OB-3, spine `expectedReply`) | Every capability offer is armed on it. It carries a `handoff` payload so "yes / do that" executes exactly that offer, and a stale offer never runs. |
++| Receipts (OB-4) | Claire's confirmed write becomes the receipt, so "change it" returns to Claire |
++| Capability catalog + its consult scorer | Research candidates; Research purpose |
++| Owner recognizers (table §3) | Consumed unchanged |
++| `claireTopicHandoff.handoffFromArea` → `talkWithClaire` | The same path the Living Model → Claire handoff uses |
++| `businessEstateSectionIntent` sessionStorage one-shot pattern | Mirrored for the Claire handoff and return |
++| Board invite (`pendingBoardInvite` + `board_invite`) + `createEmptyBoardIntakeDraft({source:"chat_invite"})` | One Brain's Board route *is* the existing invite |
++| `buildCertifiedV2BoardContextProjection` | The Board return projection. BC-6 is respected: member decision and Board position stay distinct, and no Board next step is invented. |
++| `BoardDiscussionOutcomePanel` "Return to …" button (`onReturnToSource`) | It existed and was never passed; now wired to `goBackToChat` |
++| `stageContextualResearch` (origin `"board"` already existed) + Research panel origin pattern | Board → Research → Board |
++| `stageConversationResearch` (0 callers before) + `activeConversationResearchReturn` | Chat → Research |
++| Project Homes next-step engine `resolveProjectHomeNextMove`; `searchProjects` / `scoreProjectMatch`; `openProjectHomesPrototypeCore` | Projects connection |
++| **Old action work** (`atomic-gca-r1`) | **Reused as evidence only:** its accurate executor mapping (Board decision → project starter via `persistProjectStarter` / `verifyProjectExists`) is already on HEAD in `executionFoundation`, and its field vocabulary informed the adapter's `mode` / return columns. **Not reused:** its reminder manifest (wrong authority key `reminder-store-v1`; the real key is `companion-reminders-v1`), its OpenAI tool definitions, `ActionProposal`, the shadow action route, and the parallel Cursor manifest. The branch predates OB-1 to OB-4 and would delete receipts and undo if merged. |
++
++## 6. The four required connections, and proof
++
++| Connection | Before | OB-5 | Proof (`capabilityConnect.ob5.test.ts`) |
++|---|---|---|---|
++| **A. Main chat → Claire** | The seam opened My Business Estate. Claire received **nothing**. There was no return. | One Brain `route:claire` connects Claire **with the member's words + profile area**. Claire consumes the handoff on mount and answers through her own topic path. A member-**confirmed** write leaves a return note; back in chat, Spark says what Claire saved and records the OB-4 receipt. "No, make it …" goes back to Claire. "Undo that" is answered honestly (no fake rollback). | "Help me update my business profile." and "I need to update what my business does." → execute with payload; nothing written. One-shot handoff; a return only for chat visits. Correction binds `correct_receipt` (owner-supported); `receiptCorrection` defers to Claire. |
++| **B. Board result → main chat** | 0 Board reads in the page. The chat invite dead-ended before the Board Room. | The chat-invited intake **opens the Board Room** on the same saved draft when it is ready. On return, the page posts the smallest structured result: what was brought, the member's own decision (or "the decision stays yours"), the strongest pushback, and what is still open. If the Board itself said evidence is missing, that **one** research question is armed on the pending record, so "Okay, let's do that." binds to exactly it. The model also gets a labelled `BOARD RETURN` hint. The outcome panel's "Return to …" button is now wired. | Return projection from a certified chat-invite record: `memberDecision: null` (the Board never decides), the next action is research with Board provenance, and there is no internal `leadingPosition` in member text. "Okay, let's do that." → bound `research_launch`. Stale → nothing. |
++| **C. Board → Research** | The Brief's "Research this" was a disabled button; seams were `seam_only`. | The Brief's existing button launches Research with the Board's **own bounded question** and situation (origin `board`). The Research Library shows "From your Board discussion — Back to the Board". Research **returns into the Board Brief** ("Research came back": question, synthesis, sourced-finding count, uncertainty) through Research's own return package. It is not a Board-specific research. | `researchReturnForBoard(id)` returns the collection launched from that discussion and nothing for others. The disabled button is unchanged when no host handler is passed (existing tests). |
++| **D. Main chat → Projects** | "Help me with my launch project" reached nothing. The coach was panel-only. | One Brain `route:projects` finds the **saved** project the member named and answers **in chat** with the Project Homes next-step engine: the member's own chosen step, a grounded suggestion, or an honest "I don't know enough yet". It then offers the project's Project Home; "yes" opens it. With two matches it asks which; with no saved project it defers (nothing invented). | Grounded step answered, read-only; "Okay, let's do that." → `project_home`; ambiguity asks with nothing armed; no project → defer. |
++
++**Why Projects uses the next-step engine, not the old coach.** The old beside-chat Project coach is gated to `workspacePanel === "projects"`. The Founder correction of 2026-08-16 (`CompanionPageClient.openWorkspaceWithSession`) sends saved projects to Project Homes, where chat is hidden. So the certified project intelligence that answers "what next" is the Project Homes next-step engine.
++
++## 7. Context-handoff architecture
++
++- **One payload type** (`handoffs.ts` `CapabilityHandoffPayload`). The owner gets:
++  - the member's **actual words**;
++  - the target object (profile area, project id, Board discussion id);
++  - the **source room**;
++  - the **return destination**.
++- **Never the whole conversation.**
++- **Two carriers:**
++  - The OB-3 pending record (`expectedReply.handoff`) for offers. Fresh-only binding means a stale or replaced offer cannot execute.
++  - The owner's own one-shot slot for rooms that mount (Claire), mirroring `businessEstateSectionIntent`.
++- **Board:** the member's sentence seeds the Board decision (the existing `decisionSeed` pattern).
++- **Research:** the question plus what "this" refers to (active topic) and member decisions in play, via `stageConversationResearch`. From the Board: the bounded question and situation summary.
++
++## 8. Return architecture
++
++**Projections over the owners' own records.** This follows the Research pattern; there is no new result store.
++
++| Owner | Where the result goes | How OB-3 / OB-4 can use it |
++|---|---|---|
++| Claire | Main chat, as a visible "Back from Claire…" message + OB-4 receipt | "change it" → Claire; "undo" → an honest limit |
++| Board | Main chat: a visible return, the `BOARD RETURN` model hint, and at most one armed next action (research the missing evidence) | "do that" / "yes" → exactly that action; stale → nothing |
++| Research (from Board) | Back into the Board Brief | Research's own return package; reopen also consumes saved research (existing) |
++| Research (from chat) | Main chat model context via `activeConversationResearchReturn`, **only while a project is active** (existing lookup, pinned by existing tests) | — |
++| Projects | Answered in chat at the moment of the request | "do that" → opens the Project Home |
++
++## 9. Routing authority: retired / kept / deferred
++
++| Seam / router touched | Classification |
++|---|---|
++| Business-estate nav seam (`detectBusinessEstateNavIntent` block) | **REPLACED by One Brain** for its turns: the connect block runs first with the same recognizer, and adds context. The seam remains **LEGACY behind rollback** (kill switch) and for binding turns. |
++| Continuity gate `board_invite` (for `board_member` turns) | **REPLACED by One Brain.** It is the same invite mechanism. **LEGACY behind rollback.** |
++| Board intake `route_to_owner` | **KEEP as domain specialist**; now connected to the Board Room |
++| Frictionless research `direct_action` ("Study Hall… I'll gather what's current") | **REPLACED by One Brain** for recognized research turns (an honest offer instead of a promise). **DEFER** for others. |
++| `researchIntelligenceHintForChat` + prompt "you own research" | **REPLACED** with honest research instructions |
++| Hand-written prompt feature lists | **REPLACED as authority** by the `ESTATE CAPABILITIES` block. Kept as conversational examples. |
++| Work Recognition first refusal | **DEFER.** It shadows Plan My Day and VTS (§13). |
++| `universalAccess` / `resolveExplicitCapabilityIntent`, Remember owner, Create fast path, Day Designer, estate concierge, estate guide | **KEEP as execution adapters** (One Brain defers) |
++| `detectClientAvatarExploration` | **KEEP as domain specialist.** Duplicate-owner question (§13). |
++| `chamber_invite`, `resolveStrategyOpenFromChat` | **DEFER to a later round** |
++| Project coach (beside-chat panel) | **LEGACY.** It is unreachable for saved projects by Founder rule; Project Homes is the owner. |
++
++No working code was deleted.
++
++## 10. Capability certification results
++
++| Family (no room named) | Result |
++|---|---|
++| Claire: "Help me update my business profile." / "I need to update what my business does." | **Connected** with context |
++| Claire: "I need to change how I describe my business." | **Not discovered** (GAP §13-1); One Brain does not guess |
++| Claire: "My ideal client is different now." | **Deferred** to the Client Avatar Builder's own recognizer (DUPLICATE owner §13-2) |
++| Board: "What does the board think about this?" | **Board invite**, words kept |
++| Board: "I want several perspectives on this." | **Offered** (the Board's own phrase; confirm) |
++| Board: "I need help making a big business decision." | **Not discovered** (GAP §13-3) |
++| Research: "Research this before I decide." / "Find out whether this is actually true." | **Offered**; "yes" stages the member's own question |
++| Research: "What evidence do we have?" | No guess |
++| Projects: "…what to do next on my launch project." / "…my website project." / "What's holding up my project?" | **Answered in chat** from the saved project; Project Home offered |
++| Events: "Help me with my event." | Deferred (existing seam) · "I'm planning a webinar." — **GAP** |
++| Strategy: "I need help with my pricing." | Deferred · "I need a strategy for this." — **GAP** |
++| Create: "Help me create a client onboarding guide." | Deferred (Create) |
++| Plan My Day: "Help me plan today." | Deferred; **Create shadows it** (§13-6) |
++| Reminder: "Remind me tomorrow to call Susan." | Deferred (Remember owner) |
++| Rhythm: "I want to do this every month." | Deferred; **referent lost** (§13-9) |
++| VTS: "Can you map this out visually?" | Deferred (universal access) |
++| Ambiguous / overlapping ("Update my business profile for my launch project.") | **Short choice**; only an offered option can be chosen |
++| Unsupported ("Can you send an email to my client for me?") | No capability claimed; the prompt says Spark cannot send |
++| Capability question ("What can you do?") | No route; the model answers from the projection |
++| Discussion-only (Boundary `talk_about`) | Never selects |
++| LOW meaning | Offers, never connects |
++| Correction after return | Claire: back to Claire. OB-4 families unchanged. |
++| Yes after return | Binds to exactly the armed next action |
++| Clarification during handoff | Offer preserved (OB-3); "yes" next turn binds |
++| Stale handoff / decline | Nothing executes / offer released |
++| Active-work interruption | A direct Claire connection does not replace an armed Rhythm offer |
++| Kill switches | `null` → legacy only |
++
++The deterministic matrix is `capabilityConnect.ob5.test.ts` (44 cases) plus 5 new page-wiring guards in `oneBrainConsumers.test.ts`.
++
++## 11. Safety proofs
++
++| Proof | Result |
++|---|---|
++| False actions (a member store written by selection or offer turns) | **0.** The storage snapshot over every family turn is unchanged. |
++| Actions without authorization | **0.** Only an owner-armed, fresh, bound offer executes (`pendingBinding.executable`). Claire still writes only after **her own** member confirmation. |
++| False capability routes | **0 connected false routes in the matrix.** Catalog-only and LOW candidates are only *offered*. |
++| Ambiguous routes that correctly asked | Two-owner overlap → choice. Two matching projects → "which project". LOW → offer. |
++| Context-loss failures in the four connections | **0.** Every handoff carries the member's words and target. |
++| Results stranded without return | Claire, Board, Board → Research and Projects: **0**. Research from chat without an active project: **still stranded** (§13-8). |
++| Stale handoffs executed | **0** |
++| Existing work destroyed | **0.** Deferred owners are untouched; an armed Rhythm offer survives a Claire connection. |
++| Known limit | Boundary's stance contract marks only executable "talk about" as discussion. A *discussion* that names a connected owner ("I was reading about the board…") can receive an **offer**, never an action. This is recorded, and the next round should consider widening the stance contract in Boundary itself. |
++
++**Room divergence vs OB-4 baseline:** **0 / 285**. All OB-1 / OB-2 / OB-3 / OB-4 certification stays green.
++
++## 12. Specialist intelligence findings
++
++The full inventory is in `BRAIN_SPARK_ESTATE_INTELLIGENCE_INVENTORY.md`. Headlines:
++- **7 Board/advisor rosters, and no shared advisor registry.**
++  - Runtime Board = the reconstructed **seven** (RP-1 to RP-7).
++  - The legacy **twelve** survive for history and cards.
++  - A 20-member advisory model is still imported by the Boardroom UI.
++- **Two "Chambers".**
++  - Chamber of Momentum: 24 members; 19 deep-intelligence modules, **flag OFF**.
++  - Strategy Chamber: 11 domains, **only pricing and growth are full packs**, no LLM.
++- **Director specialist and research escalations are declared data only.** OB-5 connects Research at the Brief, not per Director.
++- **Dormant but built:**
++  - `buildCompanionTurnIntelligence`
++  - the Events prompt hint (orphan)
++  - founder governor and founder advisor board
++  - signal bus / learning (flags OFF)
++- **Stale self-descriptions** in `reconstructed/registry.ts`, `boardRuntimeAuthority.ts`, `conversationBoundary.ts` and `chamberExpertRegistry.ts`. The architecture ledger undercounts the Board.
++
++## 13. What Spark still cannot do from natural conversation, and why
++
++| # | Member says / needs | Why | Smallest connection |
++|---|---|---|---|
++| 1 | "I need to change how I describe my business." | **Capability exists, disconnected.** Claire's chat recognizer (`BUSINESS_PROFILE_NAV_RE`) is narrow, and also over-broad ("help me build my business" opens Claire). | Give Claire a recognizer built from her own member labels (`browseExploreLabels.EXPLORE_MEMBER_LABEL_BY_SOURCE`). Consume it in the read path. |
++| 2 | "My ideal client is different now." | **Duplicated owner.** The Client Avatar Builder and Claire's People-I-Help both own it. | A Founder decision on one owner. The read path then routes to it. |
++| 3 | "I need help making a big business decision." | **Knowledge unavailable.** The Board has no member-need recognizer, only its name and its own copy. | A need recognizer in the Board's own module (from its "use it when…" copy), read by the read path |
++| 4 | "I'm planning a webinar." | **No handoff.** `detectEventIntent` has no chat consumer; the Events doorway is menu-only. Chat turns go to generic Create. | Adapter: One Brain → `openCreateEventsDoorwayCore` with `isEventDomain` + the member's words |
++| 5 | "I need a strategy for this." / pricing | **No handoff.** The Strategy Chamber is button-only; `resolveStrategyOpenFromChat` opens the library. Pricing intelligence never reaches chat. | Adapter: `StrategiesPanel.beginChamberEntry` seeded with the request + strategy type (already recognized) |
++| 6 | "Help me plan today." | **Owner shadowed.** Work Recognition claims it as a Create "Document"; Plan My Day also loses context (opener id only). | Work Recognition yields when One Brain recognizes a non-Create owner; pass the request to Plan My Day |
++| 7 | "Make a mind map of my ideas." | **Owner shadowed** by Work Recognition before universal access | Same yield rule as #6 |
++| 8 | Research from chat, no active project | **No return.** The existing lookup needs `activeWorkProjectId` (pinned by tests). | A Founder decision to allow a topic-only conversation return |
++| 9 | "I want to do this every month." | **Context lost at Act.** The Remember owner titles it "I want to do this". "Every Monday…" goes to `attentionObligation` (duplicate owner). | Pass the active-topic referent to the Remember owner; settle the Rhythm vs `attentionObligation` owner |
++| 10 | Living Model Canvas | **Disconnected.** It opens only inside Claire. | Claire handoff kind `lmc` already exists; add an `lmc` open flag to the Claire handoff |
++| 11 | "Ask the board about hiring." | **Mis-route.** The Chamber step runs before the Board step (`classifyMemberIntent`), and the Chamber invite drops the sentence. | Reorder or make the ambiguity explicit; carry `sourceText` on the Chamber invite |
++| 12 | Director-level research / specialist escalation | **Declared, not wired** (`collaborationProfiles`) | Route a Director's `researchEscalation` through the Board → Research connection built here |
++| 13 | Send an email, write the calendar | **External integration missing** (OAuth scope; no email connection) | Out of scope (external construction) |
++| 14 | Share a file in chat | **Capability genuinely missing** in chat (no composer upload) | — |
++| 15 | Project Brain (LLM next action) from chat | **Disconnected**, and it duplicates the Project Homes engine | Decide on one next-step owner |
++
++## 14. Full-suite / typecheck / lint evidence
++
++Compared against the accepted OB-4 base (`b9ef5d6a`).
++
++| Check | Result |
++|---|---|
++| Full Vitest suite | OB-4: 20,882 tests / 459 failing → OB-5: 20,931 tests / 459 failing. **NEW failures: 0.** The two journal snapshot tests only appear under a different worktree path; they are the same tests. All 459 failures are pre-existing on OB-4. |
++| One Brain certification (`lib/oneBrainCertification`) | **279 / 279.** This is OB-1 to OB-4's 230, plus 44 OB-5 capability cases, plus 5 new page-wiring guards. |
++| Room divergence vs OB-4 baseline | **0 / 285** |
++| TypeScript (`tsc --noEmit`) | 353 errors, **identical multiset** to the baseline (0 new) |
++| ESLint (changed + new files) | **171 → 171 (0 new)** |
++
++**Intentional test updates (behaviour changed on purpose):**
++- `oneBrainConsumers.test.ts`: Claire's receipt recorder was added to the recorder allowlist. OB-5 guards were also added.
++- `conversationGate/jobFamilyComposition.ts` + 2 tests: the research-section signal moved from "gather and synthesize it automatically" (the fabricated-research instruction OB-5 removes) to the honest Research Library offer.
++
++**Also changed in One Brain's own lexicon:**
++- The bare-acceptance set gained "let's do that" / "do that", beside the existing "let's do it".
++- The brief requires "Okay, let's do that." to bind after a return. It previously read as an unrecognized tail, which is LOW confidence.
++
++## 15. Exact remaining connection gaps
++
++**By owner** (every row is one adapter over existing code, per §13):
++- **Events:** #4
++- **Strategy Chamber:** #5
++- **Plan My Day and VTS:** #6 and #7 (the Work Recognition yield rule)
++- **Rhythms:** #9
++- **LMC:** #10
++- **Chamber invite:** #11
++- **Director escalations:** #12
++- **Chat → Research return:** #8
++- **Claire recognizer:** #1
++- **Board need recognizer:** #3
++
++**Two ownership decisions for the Founder:**
++- Ideal client: Claire or the Client Avatar Builder (#2).
++- Rhythm or `attentionObligation` for "every Monday…" (#9).
++
++**One architecture decision:** widen Boundary's stance contract so discussion-vs-request covers non-executable capabilities (§11 known limit).
++
++## 16. Recommended OB-6 scope
++
++**"Connect the remaining owners" — finish CONNECT before KNOW.** The evidence says the highest-impact failures left are *connection* failures on owners that already exist (§13 #1–#11), and each is one adapter on the handoff/return contract built here.
++- Recommended order:
++  1. the Work Recognition yield rule (unblocks Plan My Day and VTS);
++  2. Events;
++  3. Strategy Chamber with the pricing domain;
++  4. the Rhythm referent;
++  5. Claire's and the Board's own need recognizers;
++  6. the Chamber invite `sourceText`.
++- Include the two Founder ownership decisions.
++- Unified member knowledge (the original OB-6 "KNOW" lens) is better as OB-7, once every owner is reachable.
++
++---
++
++## Final question
++
++*If the capability, specialist, knowledge or tool already exists somewhere in Spark Estate, can One Brain find it, get the member to it with the right context, use it appropriately, bring the result back, and continue the conversation?*
++
++**For Claire, the Board, Board → Research, and Projects: yes.** Each is found through its own existing recognizer, reached with the member's words, used within its own confirmation contract, and returned to the conversation where OB-3 and OB-4 can bind "do that" and "change it".
++
++**Elsewhere: not yet.** The exact broken connections are:
++- Events (no handoff)
++- Strategy Chamber (no handoff)
++- Plan My Day and VTS (shadowed by Work Recognition)
++- Rhythms (referent lost)
++- LMC (no chat route)
++- Chat → Research (returns only with an active project)
++- the Claire, Board and ideal-client recognizers (narrow or duplicated)
++- Director escalations (declared only)
++
++None needs a new brain, catalog or router: each is one adapter over code that already exists.
++
++*Verification: code trace plus deterministic certification. No browser run and no live model run.*
+diff --git a/lib/businessProfileFounder/claireChatHandoff.ts b/lib/businessProfileFounder/claireChatHandoff.ts
+new file mode 100644
+index 00000000..81ffc592
+--- /dev/null
++++ b/lib/businessProfileFounder/claireChatHandoff.ts
+@@ -0,0 +1,157 @@
++/**
++ * OB-5 — main chat → Claire topic handoff, and Claire → main chat return.
++ *
++ * Mirrors the established Business Estate deep-link pattern
++ * (lib/businessEstateSectionIntent.ts): sessionStorage carries only the
++ * transient hand-off between navigation and mount. No new storage model.
++ *
++ * - Handoff: One Brain names the member's words + profile area; Claire consumes
++ *   it on mount and answers through her EXISTING topic-handoff path
++ *   (`handoffFromArea` → `talkWithClaire`), exactly like the LMC handoff.
++ * - Return: when a member-CONFIRMED write commits while a chat handoff is
++ *   active, Claire leaves a one-shot note; main chat consumes it when the
++ *   member comes back and records it as the OB-4 receipt of what changed.
++ */
++
++import { recordReceipt } from "@/lib/conversationSession/receipts";
++import type { ConversationReceipt } from "@/lib/conversationSession/types";
++import type { Bp2ProfileAreaId } from "./profileNavigatorModel";
++import { BP2_PROFILE_AREAS } from "./profileNavigatorModel";
++
++const HANDOFF_KEY = "claire-chat-handoff-pending-v1";
++const RETURN_KEY = "claire-chat-return-pending-v1";
++const ACTIVE_KEY = "claire-chat-handoff-active-v1";
++
++export type ClaireChatHandoff = {
++  memberPrompt: string;
++  areaId: Bp2ProfileAreaId;
++  /** Where the member came from — Claire returns there. */
++  source: "main_chat";
++  requestedAt: string;
++};
++
++export type ClaireChatReturn = {
++  areaId: Bp2ProfileAreaId;
++  areaLabel: string;
++  /** Short member-facing summary of what was confirmed and saved. */
++  summary: string;
++  committedAt: string;
++};
++
++function storage(): Storage | null {
++  if (typeof window === "undefined") return null;
++  try {
++    return window.sessionStorage;
++  } catch {
++    return null;
++  }
++}
++
++function isArea(value: unknown): value is Bp2ProfileAreaId {
++  return BP2_PROFILE_AREAS.some((a) => a.id === value);
++}
++
++/** Chat side: name what Claire should pick up (call BEFORE opening her). */
++export function requestClaireChatHandoff(input: { memberPrompt: string; areaId: Bp2ProfileAreaId }): void {
++  const s = storage();
++  if (!s || !input.memberPrompt.trim()) return;
++  const handoff: ClaireChatHandoff = {
++    memberPrompt: input.memberPrompt.trim(),
++    areaId: input.areaId,
++    source: "main_chat",
++    requestedAt: new Date().toISOString(),
++  };
++  try {
++    s.setItem(HANDOFF_KEY, JSON.stringify(handoff));
++  } catch {
++    /* noop */
++  }
++}
++
++/** Claire side: consume the pending handoff once, on mount. */
++export function consumeClaireChatHandoff(): ClaireChatHandoff | null {
++  const s = storage();
++  if (!s) return null;
++  try {
++    const raw = s.getItem(HANDOFF_KEY);
++    if (!raw) return null;
++    s.removeItem(HANDOFF_KEY);
++    const parsed = JSON.parse(raw) as Partial<ClaireChatHandoff>;
++    if (!parsed.memberPrompt?.trim() || !isArea(parsed.areaId)) return null;
++    // Remember that this Claire visit came from chat (for the return).
++    s.setItem(ACTIVE_KEY, "1");
++    return {
++      memberPrompt: parsed.memberPrompt.trim(),
++      areaId: parsed.areaId,
++      source: "main_chat",
++      requestedAt: parsed.requestedAt ?? new Date().toISOString(),
++    };
++  } catch {
++    return null;
++  }
++}
++
++/** Claire side: a member-confirmed write committed. Only recorded for chat visits. */
++export function recordClaireChatReturn(input: { areaId: Bp2ProfileAreaId; summary: string }): void {
++  const s = storage();
++  if (!s) return;
++  try {
++    if (s.getItem(ACTIVE_KEY) !== "1") return;
++    const area = BP2_PROFILE_AREAS.find((a) => a.id === input.areaId);
++    const ret: ClaireChatReturn = {
++      areaId: input.areaId,
++      areaLabel: area?.label ?? "your business profile",
++      summary: input.summary.trim(),
++      committedAt: new Date().toISOString(),
++    };
++    s.setItem(RETURN_KEY, JSON.stringify(ret));
++  } catch {
++    /* noop */
++  }
++}
++
++/** Chat side: consume Claire's return once, when the member comes back. */
++export function consumeClaireChatReturn(): ClaireChatReturn | null {
++  const s = storage();
++  if (!s) return null;
++  try {
++    const raw = s.getItem(RETURN_KEY);
++    s.removeItem(ACTIVE_KEY);
++    if (!raw) return null;
++    s.removeItem(RETURN_KEY);
++    const parsed = JSON.parse(raw) as Partial<ClaireChatReturn>;
++    if (!isArea(parsed.areaId) || !parsed.summary?.trim()) return null;
++    return {
++      areaId: parsed.areaId,
++      areaLabel: parsed.areaLabel ?? "your business profile",
++      summary: parsed.summary.trim(),
++      committedAt: parsed.committedAt ?? new Date().toISOString(),
++    };
++  } catch {
++    return null;
++  }
++}
++
++export function formatClaireReturnMessage(ret: ClaireChatReturn): string {
++  return `Back from Claire. She saved this to ${ret.areaLabel}: ${ret.summary}\nIf that's not quite right, just tell me what to change.`;
++}
++
++/**
++ * OB-4 receipt for Claire's confirmed write, recorded when the member is back
++ * in chat (so "change it" binds to Claire's work on the next turn). Claire can
++ * revise in conversation (owner_supported); there is no rollback of a
++ * canonical write from chat, so undo is "none" — never a fake undo.
++ */
++export function recordClaireReturnReceipt(ret: ClaireChatReturn, turn: number): ConversationReceipt | null {
++  return recordReceipt({
++    ownerKey: "claire",
++    capability: "business_understanding",
++    operation: "update",
++    objectId: `business_understanding:${ret.areaId}`,
++    label: `${ret.areaLabel} (Claire)`,
++    committed: { area: ret.areaId, summary: ret.summary },
++    correction: "owner_supported",
++    undo: "none",
++    executedAtTurn: turn,
++  });
++}
+diff --git a/lib/companionPrompt.ts b/lib/companionPrompt.ts
+index c1920e81..5a5b73f9 100644
+--- a/lib/companionPrompt.ts
++++ b/lib/companionPrompt.ts
+@@ -28,6 +28,7 @@ import {
+   resolveOutputExecutionPosture,
+ } from "./createIntent/outputExecutionPosture";
+ import { SETTLED_DECISION_USE_BLOCK } from "./settledDecisionAuthority";
++import { buildCapabilityPromptBlock } from "./oneBrainCapability/projection";
+ 
+ // Spark Studio Companion — AI Routing Engine. This system prompt drives Shari:
+ // silently detect intent, category, and emotional state, then route to the
+@@ -60,10 +61,9 @@ Relief before action when overwhelmed: understand → orient → support → act
+ Never pretend something was saved. Clear My Mind items save only in the Clear My Mind panel. Chat discussion alone does NOT save.
+ ${BANNED_UI_REFERENCE_HINT}
+ 
+-# RESEARCH INTELLIGENCE (constitutional — you own research)
+-When current, external, or factual information would improve the answer — statistics, trends, news, competitors, pricing, comparisons, reviews, studies, regulations, market research, social trends, AI tools, local businesses, travel — gather and synthesize it automatically. The user never selects search engines, browsers, AI providers, models, or tools.
+-Never say you cannot browse, search, or access the internet. Never mention training data or knowledge cutoffs. Never expose implementation ("I'm searching", "I'm browsing", "I'm using…").
+-Deliver naturally: "I looked into…", "I found several…", "I compared their…" — clear guidance, not raw link dumps.
++# RESEARCH INTELLIGENCE (honest — sourced research runs in the Research Library)
++This chat reply has no live sources. When current, external, or factual information would improve the answer, give your best current understanding briefly and say plainly it is not freshly researched ("From what I know so far…"). Never write "I looked into…", "I found…", "I compared…" or cite sources unless research results are already in this conversation (RESEARCH RETURN). When sourced, current information matters, offer the Research Library — Spark opens it with the member's question.
++Never mention training data or knowledge cutoffs. Never expose implementation ("I'm searching", "I'm browsing", "I'm using…").
+ Only on actual temporary connectivity failure: "I'm having trouble reaching current online sources right now. I can still help based on what I already know, or we can try again in a moment."
+ Never ask the user to search the web or use another AI app. One conversation, one companion.
+ 
+@@ -203,6 +203,7 @@ FORBIDDEN after acceptance or mid-workflow: "What would you like help with?", "H
+ SEAMLESS TRANSITION: After they agree to open a feature, acknowledge it opened and give the first step IN that feature — do not ask how you can help again.
+ 
+ # ECOSYSTEM FEATURE INTELLIGENCE (never compete with built tools)
++The ESTATE CAPABILITIES block below is the authority for what exists, what each capability can do, and how the member reaches it. The examples here are conversational patterns only; where they differ, ESTATE CAPABILITIES wins.
+ When conversation alone is weaker than an existing feature, NAME the feature, explain why it fits, ask permission — stay in chat OR open beside chat. Never give generic substitutes:
+ - Too much on mind / mental clutter → **Clear My Mind** (not "make a list" in chat)
+ - Can't decide / stuck between options → **Decision Compass** (not pros-and-cons lecture)
+@@ -682,6 +683,11 @@ export function buildCompanionSystemPrompt(
+     );
+   }
+ 
++  // OB-5 — Estate capability awareness from the SAME read path One Brain uses
++  // (projected from the Estate's registries; authoritative over the
++  // conversational feature examples above).
++  blocks.push(buildCapabilityPromptBlock());
++
+   if (context.gatedSituationPromptBlock) {
+     blocks.push(context.gatedSituationPromptBlock);
+   }
+diff --git a/lib/conversationBoundaryLexicon.ts b/lib/conversationBoundaryLexicon.ts
+index 77cde59c..407abaa4 100644
+--- a/lib/conversationBoundaryLexicon.ts
++++ b/lib/conversationBoundaryLexicon.ts
+@@ -13,7 +13,7 @@
+ 
+ /** Generic affirmations that must not act without pending context. */
+ export const GENERIC_ACCEPTANCE_RE =
+-  /^(?:yes|yep|yeah|yup|ok(?:ay)?|sure|sounds good|that would help|works for me|perfect|i like it|that'?s good|that'?s fine|that works|looks good|correct|right|good|that one|use that|let'?s do it|please|please do|go ahead|proceed|count me in|let'?s go|(?:yes[,\s]+)?(?:let'?s\s+)?try it)\.?$/i;
++  /^(?:yes|yep|yeah|yup|ok(?:ay)?|sure|sounds good|that would help|works for me|perfect|i like it|that'?s good|that'?s fine|that works|looks good|correct|right|good|that one|use that|let'?s do it|let'?s do that|do that|please|please do|go ahead|proceed|count me in|let'?s go|(?:yes[,\s]+)?(?:let'?s\s+)?try it)\.?$/i;
+ 
+ export const CONFIRMATION_DECLINE_RE =
+   /^(?:no|nope|nah|not now|not yet|stay(?:\s+here)?|something else|keep talking|later)\b/i;
+diff --git a/lib/conversationBoundaryRoomGate.ts b/lib/conversationBoundaryRoomGate.ts
+index 222a6cb6..211a974b 100644
+--- a/lib/conversationBoundaryRoomGate.ts
++++ b/lib/conversationBoundaryRoomGate.ts
+@@ -14,6 +14,7 @@
+  */
+ 
+ import {
++  isMeaningHold,
+   resolveConversationBoundary,
+   type BoundaryPendingOwner,
+   type BoundaryPendingQuestion,
+@@ -386,3 +387,42 @@ export function resolveCorrectionBinding(input: {
+   if (receipt) return { kind: "check", reason: "stale", receipt };
+   return { kind: "none" };
+ }
++
++// ── OB-5 — capability CONNECT eligibility ─────────────────────────────────────
++
++/**
++ * Whether THIS turn may select a capability owner, read from Boundary's meaning
++ * contract (the gate is the one reader of the meaning fields). Capability
++ * selection (`lib/oneBrainCapability/selectCapability.ts`) consumes this — it
++ * never reads `relation` / `stance` / `meaningConfidence` itself.
++ *
++ * - `binding` / `correction`: OB-3 / OB-4 own the reply.
++ * - `relation`: the member is accepting / declining / correcting / clarifying /
++ *   unsure about Spark's last contribution — not asking for a capability.
++ * - `held_on_thread`: OB-2 holds the current thread.
++ * - `discussion`: Boundary's stance says the member is talking ABOUT it.
++ * - `eligible` with `lowMeaning`: a capability may be OFFERED, never connected.
++ */
++export type CapabilityTurnEligibility =
++  | { kind: "eligible"; lowMeaning: boolean }
++  | { kind: "not_eligible"; reason: "binding" | "correction" | "relation" | "held_on_thread" | "discussion" };
++
++const NON_REQUEST_RELATIONS: ReadonlySet<string> = new Set(["accept", "decline", "correct", "clarify", "unsure"]);
++
++export function capabilityTurnEligibility(input: {
++  decision: ConversationBoundaryDecision;
++  pendingBinding: PendingBinding | null;
++  correctionBinding: CorrectionBinding | null;
++}): CapabilityTurnEligibility {
++  const { decision } = input;
++  if (input.pendingBinding && input.pendingBinding.kind !== "none") return { kind: "not_eligible", reason: "binding" };
++  if (input.correctionBinding && input.correctionBinding.kind !== "none") {
++    return { kind: "not_eligible", reason: "correction" };
++  }
++  if (decision.relation && NON_REQUEST_RELATIONS.has(decision.relation)) {
++    return { kind: "not_eligible", reason: "relation" };
++  }
++  if (isMeaningHold(decision)) return { kind: "not_eligible", reason: "held_on_thread" };
++  if (decision.stance === "talk_about") return { kind: "not_eligible", reason: "discussion" };
++  return { kind: "eligible", lowMeaning: decision.meaningConfidence === "low" };
++}
+diff --git a/lib/conversationGate/conversationalTurnContract.test.ts b/lib/conversationGate/conversationalTurnContract.test.ts
+index ace15c1c..64c86cf9 100644
+--- a/lib/conversationGate/conversationalTurnContract.test.ts
++++ b/lib/conversationGate/conversationalTurnContract.test.ts
+@@ -115,7 +115,7 @@ describe("required semantic matrix — projection + composition", () => {
+       "AUTHORITATIVE CONTEXT (operational — answer from this, do not rediscover):",
+     );
+     expect(gated.promptBlock).toMatch(/retail price: \$65 \[settled\/current\]/);
+-    expect(system).not.toContain("gather and synthesize it automatically");
++    expect(system).not.toContain("offer the Research Library — Spark opens it with the member" /* OB-5: honest research section */);
+     expect(system).not.toContain(
+       "When the user wants to LEARN a concept (sales funnel, pricing",
+     );
+@@ -266,7 +266,7 @@ describe("required semantic matrix — projection + composition", () => {
+     expect(families.elevate).toBe("MODIFIER_ONLY");
+     expect(system).toContain("DO_NOT_ASSIGN_NEW_MISSION");
+     expect(COMPANION_SYSTEM_PROMPT).toContain(
+-      "gather and synthesize it automatically",
++      "offer the Research Library — Spark opens it with the member" /* OB-5: honest research section */,
+     );
+   });
+ 
+diff --git a/lib/conversationGate/jobFamilyComposition.test.ts b/lib/conversationGate/jobFamilyComposition.test.ts
+index d7684634..3f740e60 100644
+--- a/lib/conversationGate/jobFamilyComposition.test.ts
++++ b/lib/conversationGate/jobFamilyComposition.test.ts
+@@ -109,7 +109,7 @@ describe("conditionCompanionConstitutionForJob — whole sections", () => {
+     expect(families.wisdom).toBe("MODIFIER_ONLY");
+     expect(families.decisionConflict).toBe("DISABLED_AS_PRIMARY_JOB");
+     expect(families.missingInformation).toBe("DISABLED_AS_PRIMARY_JOB");
+-    expect(composed).not.toContain("gather and synthesize it automatically");
++    expect(composed).not.toContain("offer the Research Library — Spark opens it with the member" /* OB-5: honest research section */);
+     expect(composed).not.toContain(
+       "When the user wants to LEARN a concept (sales funnel, pricing",
+     );
+@@ -129,7 +129,7 @@ describe("conditionCompanionConstitutionForJob — whole sections", () => {
+       "RESEARCH_UNKNOWN",
+     );
+     expect(inspectJobFamilyComposition(composed).research).toBe("ENABLED");
+-    expect(composed).toContain("gather and synthesize it automatically");
++    expect(composed).toContain("offer the Research Library — Spark opens it with the member" /* OB-5: honest research section */);
+   });
+ 
+   it("reduces Elevate to tone-only when the job is already authorized", () => {
+diff --git a/lib/conversationGate/jobFamilyComposition.ts b/lib/conversationGate/jobFamilyComposition.ts
+index ebfc4c2c..a61b6204 100644
+--- a/lib/conversationGate/jobFamilyComposition.ts
++++ b/lib/conversationGate/jobFamilyComposition.ts
+@@ -39,9 +39,9 @@ export const JOB_FAMILY_INVENTORY: Record<
+ > = {
+   research: {
+     source: "lib/companionPrompt.ts COMPANION_SYSTEM_PROMPT",
+-    startMarker: "# RESEARCH INTELLIGENCE (constitutional — you own research)\n",
++    startMarker: "# RESEARCH INTELLIGENCE (honest — sourced research runs in the Research Library)\n",
+     endMarker: "# WORKSPACE OWNERSHIP & STATE TRANSPARENCY (mandatory)\n",
+-    purpose: "Auto-gather external facts, competitors, pricing, market research.",
++    purpose: "Current / external facts: honest best understanding in chat; sourced research via the Research Library.",
+     preserveIdentity: true,
+     canOmitAsPrimary: true,
+     compatibleSubpart:
+@@ -308,8 +308,10 @@ export function jobFamilyRequiresAskFirstSuspend(
+   return job === "ANSWER_FROM_KNOWN" || job === "PRODUCE_OUTPUT";
+ }
+ 
++// OB-5 — the research section is honest now (no fabricated "I looked into…");
++// its body signal is the Research Library offer.
+ const RESEARCH_ORIGINAL_SIGNAL =
+-  "gather and synthesize it automatically";
++  "offer the Research Library — Spark opens it with the member";
+ const TEACHING_ORIGINAL_SIGNAL =
+   "When the user wants to LEARN a concept (sales funnel, pricing, email marketing, ADHD patterns, etc.):";
+ const WISDOM_ORIGINAL_SIGNAL = "Never default to the fastest literal answer.";
+diff --git a/lib/conversationSession/ownership/pendingReply.ts b/lib/conversationSession/ownership/pendingReply.ts
+index b965f9b0..80e9cc5b 100644
+--- a/lib/conversationSession/ownership/pendingReply.ts
++++ b/lib/conversationSession/ownership/pendingReply.ts
+@@ -34,6 +34,8 @@ export type ArmPendingReplyInput = {
+   items?: { id: string; label: string }[];
+   authority?: "owner" | "model_text";
+   allowedValues?: string[];
++  /** OB-5 — capability handoff payload carried by this offer. */
++  handoff?: Record<string, unknown>;
+ };
+ 
+ function liveOwnership() {
+@@ -55,6 +57,7 @@ export function armPendingReply(input: ArmPendingReplyInput): OwnershipExpectedR
+     ...(input.optional ? { optional: true } : {}),
+     ...(input.items?.length ? { items: input.items } : {}),
+     authority: input.authority ?? "owner",
++    ...(input.handoff ? { handoff: input.handoff } : {}),
+   };
+   const current = liveOwnership();
+   if (current) {
+diff --git a/lib/conversationSession/ownership/types.ts b/lib/conversationSession/ownership/types.ts
+index 496c0504..b0708c40 100644
+--- a/lib/conversationSession/ownership/types.ts
++++ b/lib/conversationSession/ownership/types.ts
+@@ -60,6 +60,12 @@ export type OwnershipExpectedReply = {
+    * text merely detected in an assistant reply ("model_text") never can.
+    */
+   authority?: "owner" | "model_text";
++  /**
++   * OB-5 — what the receiving capability owner gets if this offer is accepted
++   * (member's words, target object, return destination). Plain data; the
++   * payload shape is owned by `lib/oneBrainCapability/handoffs.ts`.
++   */
++  handoff?: Record<string, unknown>;
+ };
+ 
+ /** Typed continuation payloads — avoid loose bags where practical. */
+diff --git a/lib/conversationSession/receiptCorrection.ts b/lib/conversationSession/receiptCorrection.ts
+index 83c1c2bf..fc1cf977 100644
+--- a/lib/conversationSession/receiptCorrection.ts
++++ b/lib/conversationSession/receiptCorrection.ts
+@@ -23,8 +23,12 @@ export type ReceiptCorrectionOutcome =
+   | "undo_failed"
+   | "OWNER_CORRECTION_NOT_SUPPORTED";
+ 
+-/** Owners whose correction is applied inside their own layer (not here). */
+-const OWNER_LAYER_HANDLES = new Set(["remember"]);
++/**
++ * Owners whose correction is applied inside their own layer (not here):
++ * Remember (frictionless layer) and — OB-5 — Claire (the page returns the
++ * correction to Claire through the same chat → Claire topic handoff).
++ */
++const OWNER_LAYER_HANDLES = new Set(["remember", "claire"]);
+ 
+ export function resolveReceiptCorrectionReply(
+   binding: CorrectionBinding | null,
+diff --git a/lib/oneBrainCapability/connections.ts b/lib/oneBrainCapability/connections.ts
+new file mode 100644
+index 00000000..702e8790
+--- /dev/null
++++ b/lib/oneBrainCapability/connections.ts
+@@ -0,0 +1,219 @@
++/**
++ * OB-5 — the adapter table: how One Brain reaches each EXISTING owner, what
++ * that owner can actually do, and where its result goes.
++ *
++ * Every row is a TRACED fact about code that already exists (evidence cites
++ * the entry point); no row describes a capability or adds vocabulary — names
++ * and purposes come from the source registries via `./readPath.ts`.
++ *
++ * `handoff`:
++ *   - "claire_topic" | "board_invite" | "research_launch" | "project_next_move"
++ *       One Brain connects the turn itself (OB-5 connections).
++ *   - "owner_seam"
++ *       An existing page seam still routes this owner. One Brain records the
++ *       selection and DEFERS (retirement table in the OB-5 report).
++ */
++
++export type OneBrainCapabilityId =
++  | "claire"
++  | "board"
++  | "research"
++  | "projects"
++  | "events"
++  | "strategy_chamber"
++  | "create"
++  | "plan_my_day"
++  | "reminders"
++  | "rhythms"
++  | "visual_thinking"
++  | "client_avatars"
++  | "lmc";
++
++export type CapabilityOwnerMode =
++  /** Writes member state, only after the member confirms (owner's contract). */
++  | "acts_with_confirmation"
++  /** Writes member state directly from a clear request (owner's contract). */
++  | "acts"
++  /** Thinks / recommends / explains; writes nothing on its own. */
++  | "advises"
++  /** Opens a place; the member does the work there. */
++  | "navigates";
++
++export type CapabilityHandoffKind =
++  | "claire_topic"
++  | "board_invite"
++  | "research_launch"
++  | "project_next_move"
++  | "owner_seam";
++
++export type CapabilityReturnPath = "main_chat" | "originating_room" | "room_only" | "none";
++
++export type CapabilityConnectionStatus = "connected" | "partially_connected" | "disconnected";
++
++export type CapabilityConnection = {
++  ownerKey: string;
++  mode: CapabilityOwnerMode;
++  handoff: CapabilityHandoffKind;
++  returnPath: CapabilityReturnPath;
++  status: CapabilityConnectionStatus;
++  /** How the member gets there (member-facing, short). */
++  reach: string;
++  /** What the owner receives at handoff. */
++  contextCarried: readonly string[];
++  /** The honest limit Spark states instead of claiming. */
++  cannot?: string;
++  /** Repository evidence (entry point / return reader). */
++  evidence: string;
++};
++
++export const CAPABILITY_CONNECTIONS: Record<OneBrainCapabilityId, CapabilityConnection> = {
++  claire: {
++    ownerKey: "claire",
++    mode: "acts_with_confirmation",
++    handoff: "claire_topic",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "ask to update your business profile; Claire opens in My Business Estate with what you said",
++    contextCarried: ["member's words", "profile area", "source: main chat"],
++    evidence:
++      "CompanionPageClient openProfileDestinationCore('my-business-estate') → ProfileDestinationHost → BusinessProfileBp2aPrototype.talkWithClaire (claireTopicHandoff.handoffFromArea); return: claireChatHandoff.recordClaireReturn → conversation receipt",
++  },
++  board: {
++    ownerKey: "board",
++    mode: "advises",
++    handoff: "board_invite",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "Spark invites the Board; your words seed the decision",
++    contextCarried: ["member's words (seed the Board decision)", "source: chat invite"],
++    cannot: "The Board advises; it does not set your next step or decide for you.",
++    evidence:
++      "CompanionPageClient pendingBoardInvite → createEmptyBoardIntakeDraft({source:'chat_invite'}); return: lib/oneBrainCapability/returns.ts boardReturnForConversation (certifiedV2BoardContextProjection)",
++  },
++  research: {
++    ownerKey: "research",
++    mode: "advises",
++    handoff: "research_launch",
++    returnPath: "main_chat",
++    status: "partially_connected",
++    reach: "Spark opens the Research Library with your question",
++    contextCarried: ["member's question", "what 'this' refers to (active topic)", "member decisions in play"],
++    cannot:
++      "Research runs in the Research Library, not in chat. Findings come back into this conversation only while a project is active.",
++    evidence:
++      "lib/researchLibrary/conversationResearchLaunch.ts stageConversationResearch; return: conversationResearchReturn.ts activeConversationResearchReturn (needs activeWorkProjectId)",
++  },
++  projects: {
++    ownerKey: "projects",
++    mode: "advises",
++    handoff: "project_next_move",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "name the project; Spark answers with its grounded next step and can open its Project Home",
++    contextCarried: ["member's words", "the named saved project"],
++    cannot: "Spark suggests a next step only when the project has enough in it to reason from.",
++    evidence:
++      "lib/projectHomes/homeActions.ts resolveProjectHomeNextMove; lib/workspaceProjectLookup.ts searchProjects; open: openProjectHomesPrototypeCore('detail')",
++  },
++  events: {
++    ownerKey: "events",
++    mode: "acts_with_confirmation",
++    handoff: "owner_seam",
++    returnPath: "room_only",
++    status: "partially_connected",
++    reach: "Create → Events",
++    contextCarried: ["member's words (generic Create discovery only)"],
++    cannot: "From chat, an event starts in general Create; the Events guide opens from the Create menu.",
++    evidence:
++      "detectEventIntent has no chat consumer; openCreateEventsDoorwayCore is menu-only (CompanionPageClient onOpenEvents); chat event sentences land in Work Recognition Create",
++  },
++  strategy_chamber: {
++    ownerKey: "strategy",
++    mode: "advises",
++    handoff: "owner_seam",
++    returnPath: "originating_room",
++    status: "partially_connected",
++    reach: "Strategies → Strategy Chamber",
++    contextCarried: [],
++    cannot: "The Strategy Chamber opens from Strategies; chat cannot start it with your question yet.",
++    evidence: "StrategiesPanel beginChamberEntry (button only); resolveStrategyOpenFromChat opens the ADHD strategy library, not the Chamber",
++  },
++  create: {
++    ownerKey: "create",
++    mode: "acts_with_confirmation",
++    handoff: "owner_seam",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "ask to create or write something",
++    contextCarried: ["member's words", "discovery answers"],
++    evidence: "Work Recognition first refusal → startFreshCreateFromEstate (CompanionPageClient)",
++  },
++  plan_my_day: {
++    ownerKey: "day_designer",
++    mode: "acts_with_confirmation",
++    handoff: "owner_seam",
++    returnPath: "main_chat",
++    status: "partially_connected",
++    reach: "say 'plan my day'",
++    contextCarried: [],
++    evidence: "continuity destination my_day → openPlanMyDayCore (opener id only); Day Designer in chat for 'what should today look like'",
++  },
++  reminders: {
++    ownerKey: "reminder",
++    mode: "acts",
++    handoff: "owner_seam",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "say 'remind me …' with a time",
++    contextCarried: ["member's words", "time"],
++    cannot: "A reminder can't be edited in place from chat; Spark can remove it and set it again.",
++    evidence: "frictionlessActionLayer buildExecutableRememberDecision / resolveReminderTurn; receipt recordReminderReceipt (OB-4)",
++  },
++  rhythms: {
++    ownerKey: "remember",
++    mode: "acts_with_confirmation",
++    handoff: "owner_seam",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "say what you want to do every day, week or month",
++    contextCarried: ["member's words", "cadence", "time"],
++    cannot: "Spark can't yet tell what 'this' means in 'do this every month' — name the thing.",
++    evidence: "remindersVsRhythms/conversationPending.ts; receipt + owner correction (OB-4)",
++  },
++  visual_thinking: {
++    ownerKey: "visual_thinking",
++    mode: "navigates",
++    handoff: "owner_seam",
++    returnPath: "main_chat",
++    status: "partially_connected",
++    reach: "ask to see it visually or open the Visual Thinking Studio",
++    contextCarried: ["member's words"],
++    evidence: "universalAccess visual-thinking (after Work Recognition); visualThinkingContinuation menu",
++  },
++  client_avatars: {
++    ownerKey: "client_avatars",
++    mode: "acts_with_confirmation",
++    handoff: "owner_seam",
++    returnPath: "originating_room",
++    status: "connected",
++    reach: "talk about who your ideal client is",
++    contextCarried: ["member's words"],
++    evidence: "detectClientAvatarExploration → Client Avatar Builder (writes People I Help)",
++  },
++  lmc: {
++    ownerKey: "lmc",
++    mode: "advises",
++    handoff: "owner_seam",
++    returnPath: "room_only",
++    status: "disconnected",
++    reach: "My Business Estate → Living Model",
++    contextCarried: [],
++    cannot: "The Living Model opens inside My Business Estate; chat can't open it directly yet.",
++    evidence: "BusinessProfileBp2aPrototype lmcOpen toggle; no chat seam",
++  },
++};
++
++/** Capabilities One Brain connects itself (the rest defer to their seams). */
++export function isOneBrainConnected(id: OneBrainCapabilityId): boolean {
++  return CAPABILITY_CONNECTIONS[id].handoff !== "owner_seam";
++}
+diff --git a/lib/oneBrainCapability/handoffs.ts b/lib/oneBrainCapability/handoffs.ts
+new file mode 100644
+index 00000000..4c24c545
+--- /dev/null
++++ b/lib/oneBrainCapability/handoffs.ts
+@@ -0,0 +1,195 @@
++/**
++ * OB-5 — context handoff builders. Pure: they decide WHAT to say and WHAT the
++ * receiving owner gets; the page executes (opens the room, arms the offer)
++ * with its existing functions. Nothing here opens, saves or executes.
++ *
++ * The handoff payload rides on the ONE pending record (OB-3 spine
++ * `expectedReply.handoff`) so "yes" / "do that" binds to exactly this offer,
++ * and a stale offer never executes.
++ */
++
++import { BOARD_PERSPECTIVE_INVITE } from "@/lib/conversationContinuity/resolveContinuityGate";
++import { loadMemberProjectHomesFromStore, resolveProjectHomeNextMove } from "@/lib/projectHomes/homeActions";
++import { getActiveProjects } from "@/lib/companionProjectsStore";
++import { scoreProjectMatch, searchProjects } from "@/lib/workspaceProjectLookup";
++import type { Bp2ProfileAreaId } from "@/lib/businessProfileFounder/profileNavigatorModel";
++import type { CapabilitySelection } from "./selectCapability";
++import type { OneBrainCapabilityId } from "./connections";
++import { capabilityProjection } from "./readPath";
++
++/** What the receiving owner gets. Never the whole conversation. */
++export type CapabilityHandoffPayload =
++  | {
++      kind: "claire_topic";
++      memberRequest: string;
++      areaId: Bp2ProfileAreaId;
++      sourceRoom: "main_chat";
++      returnTo: "main_chat";
++    }
++  | {
++      kind: "research_launch";
++      memberRequest: string;
++      /** Where the question came from (main chat or a Board discussion). */
++      sourceRoom: "main_chat" | "board";
++      sourceId?: string;
++      returnTo: "main_chat" | "board";
++    }
++  | {
++      kind: "project_home";
++      memberRequest: string;
++      projectId: string;
++      projectName: string;
++      sourceRoom: "main_chat";
++      returnTo: "main_chat";
++    }
++  | {
++      kind: "choice";
++      memberRequest: string;
++      options: OneBrainCapabilityId[];
++    };
++
++/** The ONE pending bind key family for One Brain capability offers. */
++export const CAPABILITY_BIND_PREFIX = "capability:";
++
++export type CapabilityTurnPlan =
++  /** Connect now (Claire: the member asked to update their profile). */
++  | { kind: "execute"; id: OneBrainCapabilityId; payload: CapabilityHandoffPayload; ack: string }
++  /** Reply and arm a pending offer the member can accept. */
++  | {
++      kind: "offer";
++      id: OneBrainCapabilityId;
++      reply: string;
++      bindKey: string;
++      payload: CapabilityHandoffPayload;
++      items?: { id: string; label: string }[];
++    }
++  /** Board: reuse the existing Board invite (pendingBoardInvite + "board_invite"). */
++  | { kind: "board_invite"; reply: string; sourceText: string }
++  /** Reply only (a question back, or an honest limit). Nothing is armed. */
++  | { kind: "reply"; id: OneBrainCapabilityId | null; reply: string };
++
++/**
++ * Claire's area for the member's words: the People-I-Help area when the
++ * existing Client Avatar recognizer fires; otherwise My Business (Claire
++ * resolves the rest in conversation — she owns the subject).
++ */
++export function claireAreaForRequest(detectsPeopleIHelp: boolean): Bp2ProfileAreaId {
++  return detectsPeopleIHelp ? "people-i-help" : "my-business";
++}
++
++export function planCapabilityTurn(input: {
++  selection: CapabilitySelection;
++  userText: string;
++  /** Existing Client Avatar recognizer result (for Claire's area). */
++  peopleIHelp?: boolean;
++}): CapabilityTurnPlan | null {
++  const { selection } = input;
++  const memberRequest = input.userText.trim();
++  if (selection.kind === "none" || selection.kind === "defer") return null;
++
++  if (selection.kind === "ask") {
++    const [a, b] = selection.options.map((o) => capabilityProjection(o.id));
++    return {
++      kind: "offer",
++      id: a.id,
++      reply: `I can help with that two ways — ${a.name} or ${b.name}. Which would you like?`,
++      bindKey: `${CAPABILITY_BIND_PREFIX}choice`,
++      payload: { kind: "choice", memberRequest, options: [a.id, b.id] },
++      items: [
++        { id: a.id, label: a.name },
++        { id: b.id, label: b.name },
++      ],
++    };
++  }
++
++  const confirm = selection.kind === "confirm";
++  switch (selection.id) {
++    case "claire": {
++      const payload: CapabilityHandoffPayload = {
++        kind: "claire_topic",
++        memberRequest,
++        areaId: claireAreaForRequest(Boolean(input.peopleIHelp)),
++        sourceRoom: "main_chat",
++        returnTo: "main_chat",
++      };
++      if (confirm) {
++        return {
++          kind: "offer",
++          id: "claire",
++          reply: "Claire keeps your business profile. Want me to open her in My Business Estate with what you just said?",
++          bindKey: `${CAPABILITY_BIND_PREFIX}claire`,
++          payload,
++        };
++      }
++      return {
++        kind: "execute",
++        id: "claire",
++        payload,
++        ack: "Opening Claire in My Business Estate — she'll pick up with what you just said.",
++      };
++    }
++    case "board":
++      return { kind: "board_invite", reply: BOARD_PERSPECTIVE_INVITE, sourceText: memberRequest };
++    case "research":
++      return {
++        kind: "offer",
++        id: "research",
++        reply:
++          "That deserves real sources rather than my best guess. Want me to open the Research Library with your question?",
++        bindKey: `${CAPABILITY_BIND_PREFIX}research`,
++        payload: { kind: "research_launch", memberRequest, sourceRoom: "main_chat", returnTo: "main_chat" },
++      };
++    case "projects":
++      return planProjectTurn(memberRequest, selection.recognition.detail?.projectQuery ?? null);
++    default:
++      return null;
++  }
++}
++
++/**
++ * Projects: find the SAVED project the member means, then answer with the
++ * Project Homes next-step engine (read-only) and offer its Project Home.
++ * No project → a short question, never a guess.
++ */
++export function planProjectTurn(memberRequest: string, projectQuery: string | null): CapabilityTurnPlan | null {
++  const candidates = projectQuery
++    ? searchProjects(projectQuery, 3).filter((p) => scoreProjectMatch(p, projectQuery) >= 85)
++    : getActiveProjects().slice(0, 4);
++  if (!candidates.length) return null; // nothing saved to talk about — existing flows handle it
++  if (candidates.length > 1) {
++    const names = candidates.slice(0, 3).map((p) => `“${p.name}”`);
++    return {
++      kind: "reply",
++      id: "projects",
++      reply: `Which project do you mean — ${names.slice(0, -1).join(", ")}${names.length > 1 ? " or " : ""}${names[names.length - 1]}?`,
++    };
++  }
++  const project = candidates[0];
++  const home = loadMemberProjectHomesFromStore().find((h) => h.id === project.id || h.companionProjectId === project.id);
++  const move = home ? resolveProjectHomeNextMove(home) : null;
++  const payload: CapabilityHandoffPayload = {
++    kind: "project_home",
++    memberRequest,
++    projectId: project.id,
++    projectName: project.name,
++    sourceRoom: "main_chat",
++    returnTo: "main_chat",
++  };
++  const reply = move
++    ? `For “${project.name}”, the next move I'd suggest: **${move.title}**.${move.reason ? ` ${move.reason}` : ""} Want me to open its Project Home?`
++    : `I don't know enough about “${project.name}” yet to suggest a grounded next step. Want me to open its Project Home so we can add what's going on?`;
++  return { kind: "offer", id: "projects", reply, bindKey: `${CAPABILITY_BIND_PREFIX}projects`, payload };
++}
++
++/** The handoff payload an accepted choice resolves to (the member named one). */
++export function planChoiceAcceptance(
++  payload: Extract<CapabilityHandoffPayload, { kind: "choice" }>,
++  chosen: OneBrainCapabilityId,
++): CapabilityTurnPlan | null {
++  if (!payload.options.includes(chosen)) return null;
++  const recognition = { id: chosen, strength: "owner" as const, recognizer: "member_choice" };
++  return planCapabilityTurn({
++    selection: { kind: "route", id: chosen, recognition },
++    userText: payload.memberRequest,
++  });
++}
+diff --git a/lib/oneBrainCapability/projection.ts b/lib/oneBrainCapability/projection.ts
+new file mode 100644
+index 00000000..91793eff
+--- /dev/null
++++ b/lib/oneBrainCapability/projection.ts
+@@ -0,0 +1,209 @@
++/**
++ * OB-5 — capability PROJECTION (names, purposes, connection facts) read from
++ * the Estate's existing registries. Import-light on purpose: the server
++ * prompt builder imports this without the client-side owner recognizers.
++ * See `./readPath.ts` for the full read path.
++ */
++
++import { BP2_PROFILE_AREAS } from "@/lib/businessProfileFounder/profileNavigatorModel";
++import { BOARD_ROOM_ENTRANCE_COPY, BOARD_ROOM_PLACE_NAME } from "@/lib/board/visualFoundation/boardRoomEntranceCopy";
++import { getChamberMemberById } from "@/lib/chamber/chamberMemberRegistry";
++import { APP_FEATURES, type AppFeatureId } from "@/lib/appFeatureKnowledge";
++import { MY_DAY_AND_WORK_DESTINATIONS } from "@/lib/estate/myDayAndWorkNavigation";
++import { capabilityById } from "@/lib/estateCapabilityRegistry/catalog";
++import { listStrategyTypes } from "@/lib/strategyChamber/intelligence/registry";
++import { CAPABILITY_CONNECTIONS, type CapabilityConnection, type OneBrainCapabilityId } from "./connections";
++
++/** Where a projected fact came from (registry + id), for provenance. */
++export type CapabilitySource = { registry: string; id: string };
++
++/** The projected, read-only view One Brain and the model share. */
++export type CapabilityProjection = {
++  id: OneBrainCapabilityId;
++  name: string;
++  purpose: string;
++  /** When the owner itself says to use it (owner copy), if it says. */
++  whenToUse?: string;
++  sources: CapabilitySource[];
++  connection: CapabilityConnection;
++};
++
++// ── Projection (names / purposes read from the source registries) ───────────
++
++export function feature(id: AppFeatureId) {
++  return APP_FEATURES.find((f) => f.id === id) ?? null;
++}
++
++function place(id: string) {
++  return MY_DAY_AND_WORK_DESTINATIONS.find((d) => d.id === id) ?? null;
++}
++
++function catalog(id: string) {
++  return capabilityById(id);
++}
++
++function project(id: OneBrainCapabilityId): Omit<CapabilityProjection, "connection"> {
++  switch (id) {
++    case "claire":
++      return {
++        id,
++        name: "Claire (My Business Estate)",
++        purpose: `Keeps Spark's understanding of your business — ${BP2_PROFILE_AREAS.map((a) => a.label).join(", ")}.`,
++        sources: [{ registry: "businessProfileFounder/profileNavigatorModel", id: "BP2_PROFILE_AREAS" }],
++      };
++    case "board":
++      return {
++        id,
++        name: BOARD_ROOM_PLACE_NAME,
++        purpose: BOARD_ROOM_ENTRANCE_COPY.howItWorksWhat,
++        whenToUse: BOARD_ROOM_ENTRANCE_COPY.howItWorksWhen,
++        sources: [{ registry: "board/visualFoundation/boardRoomEntranceCopy", id: "howItWorks" }],
++      };
++    case "research": {
++      const c = catalog("research.current");
++      return {
++        id,
++        name: place("research-library")?.label ?? "Research",
++        purpose: c?.purpose ?? c?.description ?? "Research a question with sources.",
++        sources: [
++          { registry: "estateCapabilityRegistry", id: "research.current" },
++          { registry: "estate/myDayAndWorkNavigation", id: "research-library" },
++        ],
++      };
++    }
++    case "projects": {
++      const f = feature("projects");
++      return {
++        id,
++        name: f?.name ?? "Projects",
++        purpose: f?.howTo ?? "Your projects and their next steps.",
++        sources: [
++          { registry: "appFeatureKnowledge", id: "projects" },
++          { registry: "estateCapabilityRegistry", id: "momentum.projects" },
++        ],
++      };
++    }
++    case "events": {
++      const m = getChamberMemberById("events");
++      return {
++        id,
++        name: m?.displayName ?? "Events",
++        purpose: m?.specialty ?? "Events",
++        sources: [{ registry: "chamber/chamberMemberRegistry", id: "events" }],
++      };
++    }
++    case "strategy_chamber":
++      return {
++        id,
++        name: "Strategy Chamber",
++        purpose: `Structured strategy thinking: ${listStrategyTypes()
++          .map((t) => t.name)
++          .join(", ")}.`,
++        sources: [{ registry: "strategyChamber/intelligence/registry", id: "STRATEGY_TYPES" }],
++      };
++    case "create": {
++      const f = feature("create");
++      return {
++        id,
++        name: f?.name ?? "Create",
++        purpose: f?.howTo ?? "Make something together.",
++        sources: [{ registry: "appFeatureKnowledge", id: "create" }],
++      };
++    }
++    case "plan_my_day": {
++      const f = feature("plan-my-day");
++      return {
++        id,
++        name: f?.name ?? "Plan My Day",
++        purpose: f?.howTo ?? "Decide what today holds.",
++        sources: [{ registry: "appFeatureKnowledge", id: "plan-my-day" }],
++      };
++    }
++    case "reminders":
++      return {
++        id,
++        name: place("reminders")?.label ?? "Reminders",
++        purpose: "A one-time reminder at the time you choose.",
++        sources: [{ registry: "estate/myDayAndWorkNavigation", id: "reminders" }],
++      };
++    case "rhythms":
++      return {
++        id,
++        name: place("rhythms")?.label ?? "Rhythms",
++        purpose: "Something you do again and again — every day, week or month.",
++        sources: [{ registry: "estate/myDayAndWorkNavigation", id: "rhythms" }],
++      };
++    case "visual_thinking":
++      return {
++        id,
++        name: place("cartographers-studio")?.label ?? "Visual Thinking Studio",
++        purpose: catalog("visual.model")?.purpose ?? "See your thinking laid out visually.",
++        sources: [
++          { registry: "estate/myDayAndWorkNavigation", id: "cartographers-studio" },
++          { registry: "estateCapabilityRegistry", id: "visual.model" },
++        ],
++      };
++    case "client_avatars": {
++      const f = feature("client-avatars");
++      return {
++        id,
++        name: f?.name ?? "Client Avatars",
++        purpose: f?.howTo ?? "Who you help, one question at a time.",
++        sources: [{ registry: "appFeatureKnowledge", id: "client-avatars" }],
++      };
++    }
++    case "lmc":
++      return {
++        id,
++        name: "Living Model Canvas",
++        purpose: BOARD_ROOM_ENTRANCE_COPY.livingModelNote,
++        sources: [{ registry: "board/visualFoundation/boardRoomEntranceCopy", id: "livingModelNote" }],
++      };
++  }
++}
++
++export function capabilityProjection(id: OneBrainCapabilityId): CapabilityProjection {
++  return { ...project(id), connection: CAPABILITY_CONNECTIONS[id] };
++}
++
++export function listCapabilityProjections(): CapabilityProjection[] {
++  return (Object.keys(CAPABILITY_CONNECTIONS) as OneBrainCapabilityId[]).map(capabilityProjection);
++}
++
++// ── Model projection (the same source, compact) ──────────────────────────────
++
++/** First sentence of an owner's own copy (the projection stays compact). */
++function firstSentence(text: string): string {
++  const t = text.trim();
++  const m = t.match(/^.*?[.!?](?=\s|$)/);
++  return (m ? m[0] : `${t}.`).trim();
++}
++
++const MODE_LINE: Record<CapabilityConnection["mode"], string> = {
++  acts_with_confirmation: "can change things after you confirm",
++  acts: "can set this up directly",
++  advises: "thinks it through with you; changes nothing on its own",
++  navigates: "opens a place for you to work",
++};
++
++/**
++ * The smallest useful projection for the model prompt: what exists, what it
++ * is for, whether it can act or only advise, how the member gets there, and
++ * the honest limit. Replaces hand-written feature lists as the authority for
++ * Estate capability awareness.
++ */
++export function buildCapabilityPromptBlock(): string {
++  const lines = listCapabilityProjections().map((p) => {
++    const c = p.connection;
++    const reach =
++      c.status === "disconnected"
++        ? `not reachable from chat yet (${c.reach})`
++        : c.reach;
++    return `- ${p.name}: ${firstSentence(p.purpose)} It ${MODE_LINE[c.mode]}. Reach: ${reach}.${c.cannot ? ` Limit: ${c.cannot}` : ""}`;
++  });
++  return [
++    "ESTATE CAPABILITIES (authoritative — read from the Estate's registries; overrides any feature list elsewhere in this prompt):",
++    ...lines,
++    "You cannot open, save, send or change anything yourself — Spark's owners do, and only through their own confirmation. Never claim a capability acted unless the conversation shows it did. For features not listed here use APP FEATURE KNOWLEDGE; never invent a capability.",
++  ].join("\n");
++}
+diff --git a/lib/oneBrainCapability/readPath.ts b/lib/oneBrainCapability/readPath.ts
+new file mode 100644
+index 00000000..0aa8d190
+--- /dev/null
++++ b/lib/oneBrainCapability/readPath.ts
+@@ -0,0 +1,201 @@
++/**
++ * OB-5 — ONE capability read path for One Brain.
++ *
++ * NOT another catalog. Every name, purpose and recognizer below is READ from
++ * the Estate's existing authoritative registries and owner modules:
++ *
++ *   - capability catalog      lib/estateCapabilityRegistry (consult + entries)
++ *   - Estate knowledge        lib/estateBrain/knowledgeRegistry (via search)
++ *   - app feature knowledge   lib/appFeatureKnowledge (APP_FEATURES)
++ *   - My Day & Work places    lib/estate/myDayAndWorkNavigation
++ *   - Board Room canon copy   lib/board/visualFoundation/boardRoomEntranceCopy
++ *   - Claire's area model     lib/businessProfileFounder/profileNavigatorModel
++ *   - Strategy Chamber types  lib/strategyChamber/intelligence/registry
++ *   - Chamber member cards    lib/chamber/chamberMemberRegistry
++ *
++ * and each owner's OWN recognizer (the function its existing seam already
++ * uses). The only thing this module adds is the wiring: which registry entry
++ * and which recognizer belong to which existing owner, plus the traced facts
++ * about how One Brain reaches that owner and where its result goes (the
++ * adapter table in `./connections.ts`). No member-need vocabulary is added.
++ */
++
++import { BOARD_ROOM_ENTRANCE_COPY } from "@/lib/board/visualFoundation/boardRoomEntranceCopy";
++import { consultEstateCapabilities } from "@/lib/estateCapabilityRegistry";
++import { matchStrategyTypesFromText } from "@/lib/strategyChamber/intelligence/registry";
++import { detectBusinessEstateNavIntent, detectBusinessProfileNavIntent } from "@/lib/businessEstateNavIntent";
++import { detectClientAvatarExploration } from "@/lib/clientAvatarOffer";
++import { classifyMemberIntent } from "@/lib/memberIntent/classifyMemberIntent";
++import { detectEventIntent } from "@/lib/eventsIntelligence/detectEventIntent";
++import { resolveExecutableRequest } from "@/lib/memberIntent/executableRequest";
++import { resolveExplicitCapabilityIntent } from "@/lib/universalAccess/resolveExplicitCapabilityIntent";
++import { extractProjectQuery } from "@/lib/workspaceIntent";
++import { classifyRememberIntent } from "@/lib/rhythms/fromContent";
++import type { OneBrainCapabilityId } from "./connections";
++import { feature } from "./projection";
++
++export type { OneBrainCapabilityId } from "./connections";
++export {
++  buildCapabilityPromptBlock,
++  capabilityProjection,
++  listCapabilityProjections,
++  type CapabilityProjection,
++  type CapabilitySource,
++} from "./projection";
++
++/**
++ * One recognition by an existing owner recognizer. `owner` = the owner's own
++ * seam recognizer fired (authoritative for that owner); `catalog` = only the
++ * shared catalog consult matched (weaker — a candidate, not a claim).
++ */
++export type CapabilityRecognition = {
++  id: OneBrainCapabilityId;
++  strength: "owner" | "catalog";
++  /** Which existing recognizer fired (file:function). */
++  recognizer: string;
++  /** Owner-specific detail the recognizer produced (project query, area…). */
++  detail?: Record<string, string>;
++};
++
++// ── Recognition (each owner's EXISTING recognizer) ───────────────────────────
++
++const CATALOG_TO_CAPABILITY: Record<string, OneBrainCapabilityId> = {
++  "research.current": "research",
++  "research.known": "research",
++  "research.deep": "research",
++};
++
++/** Catalog consult score at which a catalog match is a usable candidate. */
++const CATALOG_CANDIDATE_MIN = 60;
++
++
++/**
++ * Run the existing owner recognizers on the member's text. Pure reads — no
++ * owner state is written. Order is irrelevant; selection ranks by strength.
++ */
++export function recognizeCapabilities(text: string): CapabilityRecognition[] {
++  const t = text.trim();
++  if (!t) return [];
++  const out: CapabilityRecognition[] = [];
++  const add = (r: CapabilityRecognition) => {
++    if (!out.some((o) => o.id === r.id && o.strength === r.strength)) out.push(r);
++  };
++
++  // Claire — the seam that already opens My Business Estate from chat.
++  if (detectBusinessEstateNavIntent(t)) {
++    add({
++      id: "claire",
++      strength: "owner",
++      recognizer: "lib/businessEstateNavIntent.ts:detectBusinessEstateNavIntent",
++      detail: { intent: detectBusinessProfileNavIntent(t) ? "business_profile" : "business_estate" },
++    });
++  }
++  if (detectClientAvatarExploration(t)) {
++    add({ id: "client_avatars", strength: "owner", recognizer: "lib/clientAvatarOffer.ts:detectClientAvatarExploration" });
++  }
++
++  // Member-intent classifier (continuity gate): Board / Project / New document.
++  let bucket: string | null = null;
++  try {
++    bucket = classifyMemberIntent({ userText: t } as Parameters<typeof classifyMemberIntent>[0]).bucket;
++  } catch {
++    bucket = null;
++  }
++  if (bucket === "board_member") {
++    add({ id: "board", strength: "owner", recognizer: "lib/memberIntent/classifyMemberIntent.ts:board_member" });
++  }
++  if (bucket === "new_document") {
++    add({ id: "create", strength: "owner", recognizer: "lib/memberIntent/classifyMemberIntent.ts:new_document" });
++  }
++
++  // Projects — the existing project-name extractor (and the project bucket).
++  const projectQuery = extractProjectQuery(t);
++  if (projectQuery || bucket === "project") {
++    add({
++      id: "projects",
++      strength: "owner",
++      recognizer: projectQuery
++        ? "lib/workspaceIntent.ts:extractProjectQuery"
++        : "lib/memberIntent/classifyMemberIntent.ts:project",
++      detail: projectQuery ? { projectQuery } : undefined,
++    });
++  }
++
++  // Events Intelligence's own goal detector.
++  if (detectEventIntent(t).isClearEventGoal) {
++    add({ id: "events", strength: "owner", recognizer: "lib/eventsIntelligence/detectEventIntent.ts" });
++  }
++
++  // Strategy Chamber's own entry signals.
++  const strategy = matchStrategyTypesFromText(t)[0];
++  if (strategy) {
++    add({
++      id: "strategy_chamber",
++      strength: "owner",
++      recognizer: "lib/strategyChamber/intelligence/registry.ts:matchStrategyTypesFromText",
++      detail: { strategyType: strategy.type.id },
++    });
++  }
++
++  // Remember owner — the executable-request authority (Boundary's own stance
++  // source), else the Remember owner's content classifier.
++  const executable = resolveExecutableRequest(t);
++  const named = new Set(executable.actions.map((a) => a.capability));
++  const remember = named.size ? null : classifyRememberIntent(t);
++  if (named.has("reminder") || remember === "reminder") {
++    add({ id: "reminders", strength: "owner", recognizer: "lib/memberIntent/executableRequest.ts | lib/rhythms/fromContent.ts:classifyRememberIntent" });
++  }
++  if (named.has("rhythm") || remember === "rhythm") {
++    add({ id: "rhythms", strength: "owner", recognizer: "lib/memberIntent/executableRequest.ts | lib/rhythms/fromContent.ts:classifyRememberIntent" });
++  }
++
++  // Universal access — explicit capability opens (visual thinking, plan my day…).
++  const universal = resolveExplicitCapabilityIntent(t);
++  if (universal?.capabilityId === "visual-thinking") {
++    add({ id: "visual_thinking", strength: "owner", recognizer: "lib/universalAccess:visual-thinking" });
++  }
++  if (universal?.capabilityId === "plan-my-day") {
++    add({ id: "plan_my_day", strength: "owner", recognizer: "lib/universalAccess:plan-my-day" });
++  }
++
++  // App feature knowledge — Plan My Day's own match patterns.
++  if (feature("plan-my-day")?.match.some((re) => re.test(t))) {
++    add({ id: "plan_my_day", strength: "owner", recognizer: "lib/appFeatureKnowledge.ts:plan-my-day" });
++  }
++
++  // Shared capability catalog consult — a candidate only.
++  for (const m of consultEstateCapabilities(t, { limit: 3 })) {
++    const id = CATALOG_TO_CAPABILITY[m.entry.id];
++    if (id && m.score >= CATALOG_CANDIDATE_MIN) {
++      add({ id, strength: "catalog", recognizer: `lib/estateCapabilityRegistry:${m.entry.id}` });
++    }
++  }
++
++  // Board Room canon — the member used one of the Board's OWN phrases for what
++  // it is for ("several perspectives"): adjacent content-word pairs of the
++  // Founder-approved "how it works" copy. A candidate, never a claim.
++  if (!out.some((o) => o.id === "board") && usesOwnerPhrase(t, BOARD_ROOM_ENTRANCE_COPY.howItWorksWhat)) {
++    add({
++      id: "board",
++      strength: "catalog",
++      recognizer: "lib/board/visualFoundation/boardRoomEntranceCopy.ts:howItWorksWhat",
++    });
++  }
++
++  return out;
++}
++
++const PHRASE_STOP = new Set(["that", "with", "this", "something", "your", "place", "room", "stay", "charge"]);
++
++/** True when the text contains an adjacent content-word pair from the owner's copy. */
++function usesOwnerPhrase(text: string, ownerCopy: string): boolean {
++  const words = ownerCopy.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
++  const hay = ` ${text.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ")} `;
++  for (let i = 0; i + 1 < words.length; i += 1) {
++    const [a, b] = [words[i], words[i + 1]];
++    if (a.length < 5 || b.length < 5 || PHRASE_STOP.has(a) || PHRASE_STOP.has(b)) continue;
++    if (hay.includes(` ${a} ${b} `)) return true;
++  }
++  return false;
++}
++
+diff --git a/lib/oneBrainCapability/returns.ts b/lib/oneBrainCapability/returns.ts
+new file mode 100644
+index 00000000..5013c4c0
+--- /dev/null
++++ b/lib/oneBrainCapability/returns.ts
+@@ -0,0 +1,139 @@
++/**
++ * OB-5 — return architecture: where an owner's result goes after a handoff.
++ *
++ * No new result store. Returns are PROJECTIONS over the owners' own records
++ * (the Research-return pattern, `conversationResearchReturn.ts`):
++ *
++ *   - Board  → the Board's discussion record (`listBoardDirectorDiscussions`)
++ *              through the certified projection the Board already exposes
++ *              (`buildCertifiedV2BoardContextProjection`). Only discussions the
++ *              member started FROM CHAT (`sourceContext.source === "chat_invite"`).
++ *   - Claire → a one-shot note Claire leaves when a member-CONFIRMED write
++ *              commits (`claireChatHandoff.ts`); on return the page records it
++ *              as the OB-4 receipt so "change it" binds to Claire's work.
++ *
++ * The next useful action (if any) is armed on the ONE pending record (OB-3)
++ * so "okay, let's do that" binds to exactly it. The Board sets no next step
++ * (BC-6): the only next action derived here is researching the evidence the
++ * Board itself said is missing.
++ */
++
++import { listBoardDirectorDiscussions } from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
++import { buildCertifiedV2BoardContextProjection } from "@/lib/board/contextTransfer/certifiedV2BoardContextProjection";
++import { findResearchCollectionsBySourceEntity } from "@/lib/researchLibrary/persistence";
++import { buildResearchReturnPackage } from "@/lib/researchLibrary/conversationResearchReturn";
++import type { CapabilityHandoffPayload } from "./handoffs";
++
++export type BoardReturn = {
++  discussionId: string;
++  /** What was discussed (the decision in the member's framing). */
++  discussed: string;
++  /** The member's own settled decision, if they made one. */
++  memberDecision: string | null;
++  decisionStatus: "decided" | "deferred" | "evidence_needed" | "reopen_required" | "unresolved";
++  /** Strongest dissent the Board recorded (kept distinct from the decision). */
++  dissent: string | null;
++  /** What the Board said is still unresolved. */
++  unresolved: string[];
++  /** The one next action One Brain may offer (research the missing evidence). */
++  nextAction: { label: string; handoff: Extract<CapabilityHandoffPayload, { kind: "research_launch" }> } | null;
++  updatedAt: string;
++};
++
++/**
++ * The newest Board discussion started from main chat, updated at/after
++ * `sinceIso` (the handoff time), as a compact return. Null when there is none
++ * or it is not a certified discussion (no fabricated summary).
++ */
++export function boardReturnForConversation(sinceIso: string | null): BoardReturn | null {
++  const records = listBoardDirectorDiscussions()
++    .filter((r) => r.sourceContext?.source === "chat_invite")
++    .filter((r) => !sinceIso || (r.updatedAt ?? "") >= sinceIso)
++    .sort((a, b) => ((b.updatedAt ?? "") > (a.updatedAt ?? "") ? 1 : -1));
++  for (const record of records) {
++    const projection = buildCertifiedV2BoardContextProjection(record);
++    if (!projection) continue;
++    const opportunity = record.certifiedSynthesis?.researchOpportunity ?? null;
++    const unresolved = [...projection.unresolvedEvidence].filter((u) => u.trim());
++    const researchQuestion =
++      opportunity?.boundedQuestion?.trim() ||
++      record.sharedHandoff?.evidenceRequest?.evidenceNeeded?.trim() ||
++      (projection.decisionStatus === "evidence_needed" ? unresolved[0] : "") ||
++      "";
++    return {
++      discussionId: projection.discussionId,
++      discussed: projection.issueFraming,
++      memberDecision: projection.memberSettledDecision ?? null,
++      decisionStatus: projection.decisionStatus,
++      dissent: projection.materialDissent ?? null,
++      unresolved,
++      nextAction: researchQuestion
++        ? {
++            label: `Research: ${researchQuestion}`,
++            handoff: {
++              kind: "research_launch",
++              memberRequest: researchQuestion,
++              sourceRoom: "board",
++              sourceId: projection.discussionId,
++              returnTo: "main_chat",
++            },
++          }
++        : null,
++      updatedAt: projection.lastUpdatedAt,
++    };
++  }
++  return null;
++}
++
++/** The smallest useful member-facing return. Never the transcript. */
++export function formatBoardReturnMessage(ret: BoardReturn): string {
++  const lines = [`Back from the Board. You brought: “${ret.discussed}”.`];
++  if (ret.memberDecision) lines.push(`You decided: ${ret.memberDecision}`);
++  else if (ret.decisionStatus === "deferred") lines.push("You chose to hold the decision for now.");
++  else lines.push("You haven't settled it yet — the decision stays yours.");
++  if (ret.dissent) lines.push(`Strongest pushback: ${ret.dissent}`);
++  if (ret.unresolved.length) lines.push(`Still open: ${ret.unresolved.slice(0, 2).join("; ")}`);
++  if (ret.nextAction) {
++    lines.push(`Want me to take “${ret.nextAction.handoff.memberRequest}” to Research?`);
++  }
++  return lines.join("\n");
++}
++
++/** Model context for the turns after a Board return (labelled, compact). */
++export function formatBoardReturnHint(ret: BoardReturn): string {
++  return [
++    "BOARD RETURN (the member's own Board discussion, started from this chat — do not re-summarize unless asked):",
++    `Discussed: ${ret.discussed}`,
++    `Member decision: ${ret.memberDecision ?? "(not settled — the decision is the member's)"}`,
++    ret.dissent ? `Strongest dissent: ${ret.dissent}` : "",
++    ret.unresolved.length ? `Unresolved: ${ret.unresolved.join("; ")}` : "",
++    "The Board advises; it set no next step. Never present the Board's view as the member's decision.",
++  ]
++    .filter(Boolean)
++    .join("\n");
++}
++
++export type BoardResearchReturn = {
++  question: string;
++  synthesis: string | null;
++  sourcedCount: number;
++  uncertainties: string[];
++};
++
++/**
++ * Research → Board: the newest Research collection launched FROM this Board
++ * discussion, projected through Research's own return package (sourced
++ * findings stay distinct from member / Spark material). Null when none.
++ */
++export function researchReturnForBoard(discussionId: string): BoardResearchReturn | null {
++  const pool = findResearchCollectionsBySourceEntity("board", discussionId);
++  if (!pool.length) return null;
++  const newest = pool.reduce((a, b) => ((b.updatedAt ?? "") > (a.updatedAt ?? "") ? b : a));
++  const pkg = buildResearchReturnPackage(newest);
++  return {
++    question: pkg.question,
++    synthesis: pkg.synthesis,
++    sourcedCount: pkg.sourcedFindings.length,
++    uncertainties: pkg.uncertainties,
++  };
++}
+diff --git a/lib/oneBrainCapability/selectCapability.ts b/lib/oneBrainCapability/selectCapability.ts
+new file mode 100644
+index 00000000..8b065053
+--- /dev/null
++++ b/lib/oneBrainCapability/selectCapability.ts
+@@ -0,0 +1,105 @@
++/**
++ * OB-5 — capability selection: the CONNECT step of the One Brain turn.
++ *
++ * Boundary already decided WHAT the member is doing, and OB-3 / OB-4 decided
++ * what a reply binds to. This decides WHICH EXISTING capability owner is
++ * relevant — once per turn, from the same Boundary decision (read through the
++ * One Brain gate's `capabilityTurnEligibility`) plus the read path's
++ * recognitions. It adds no meaning classifier: request-vs-discussion is
++ * Boundary's stance, a hold on the current thread is Boundary's hold, and LOW
++ * certainty is Boundary's meaning certainty.
++ *
++ * Output kinds:
++ *   - route   One Brain connects the owner (Claire / Board / Research / Projects).
++ *   - confirm Meaning was LOW (or only a catalog candidate): offer, never connect.
++ *   - ask     Two owners fit equally: a short choice, nothing runs.
++ *   - defer   An existing seam owns this capability; One Brain records only.
++ *   - none    No capability, or the turn belongs to a binding / hold / discussion.
++ *
++ * Selection itself never writes, opens or executes anything.
++ */
++
++import type { ConversationBoundaryDecision } from "@/lib/conversationBoundary";
++import { isBoundaryMeaningHoldEnabled } from "@/lib/conversationBoundaryMeaning";
++import {
++  capabilityTurnEligibility,
++  type CorrectionBinding,
++  type PendingBinding,
++} from "@/lib/conversationBoundaryRoomGate";
++import { isOneBrainConnected, type OneBrainCapabilityId } from "./connections";
++import { recognizeCapabilities, type CapabilityRecognition } from "./readPath";
++
++export type CapabilitySelection =
++  | { kind: "route"; id: OneBrainCapabilityId; recognition: CapabilityRecognition }
++  | { kind: "confirm"; id: OneBrainCapabilityId; recognition: CapabilityRecognition }
++  | { kind: "ask"; options: [CapabilityRecognition, CapabilityRecognition] }
++  | { kind: "defer"; id: OneBrainCapabilityId; recognition: CapabilityRecognition }
++  | {
++      kind: "none";
++      reason:
++        | "pending_binding"
++        | "correction"
++        | "relation"
++        | "held_on_thread"
++        | "discussion"
++        | "no_capability";
++    };
++
++/** Kill switch: OB-5 capability connection (default on). */
++export function isCapabilityConnectEnabled(): boolean {
++  if (!isBoundaryMeaningHoldEnabled()) return false;
++  if (typeof process === "undefined") return true;
++  return process.env.NEXT_PUBLIC_ONE_BRAIN_CAPABILITY_CONNECT !== "0";
++}
++
++export function resolveCapabilitySelection(input: {
++  decision: ConversationBoundaryDecision;
++  userText: string;
++  pendingBinding: PendingBinding | null;
++  correctionBinding: CorrectionBinding | null;
++}): CapabilitySelection | null {
++  if (!isCapabilityConnectEnabled()) return null;
++  // Boundary's meaning, read through the One Brain gate (the one reader).
++  const eligibility = capabilityTurnEligibility(input);
++  if (eligibility.kind === "not_eligible") {
++    const reason =
++      eligibility.reason === "binding" ? "pending_binding" : eligibility.reason;
++    return { kind: "none", reason };
++  }
++
++  const recognitions = recognizeCapabilities(input.userText);
++  const owner = recognitions.filter((r) => r.strength === "owner");
++  const pool = owner.length ? owner : recognitions.filter((r) => r.strength === "catalog");
++  if (!pool.length) return { kind: "none", reason: "no_capability" };
++
++  // A recognizer that extracted the object it acts on (a named project, a
++  // strategy type, a profile intent) is more specific than one that did not.
++  const specific = pool.filter((r) => r.detail && Object.keys(r.detail).length > 0);
++  const ranked = distinctById(specific.length ? specific : pool);
++
++  const connected = ranked.filter((r) => isOneBrainConnected(r.id));
++  const deferred = ranked.filter((r) => !isOneBrainConnected(r.id));
++
++  // A catalog-only candidate never overrides an owner seam's own recognition.
++  if (!owner.length && deferred.length) {
++    return { kind: "defer", id: deferred[0].id, recognition: deferred[0] };
++  }
++  if (connected.length >= 2) {
++    return { kind: "ask", options: [connected[0], connected[1]] };
++  }
++  if (connected.length === 1) {
++    // Another existing owner claims the same words equally: never guess.
++    if (deferred.length) return { kind: "ask", options: [connected[0], deferred[0]] };
++    const chosen = connected[0];
++    if (eligibility.lowMeaning || chosen.strength === "catalog") {
++      return { kind: "confirm", id: chosen.id, recognition: chosen };
++    }
++    return { kind: "route", id: chosen.id, recognition: chosen };
++  }
++  return { kind: "defer", id: deferred[0].id, recognition: deferred[0] };
++}
++
++function distinctById(list: CapabilityRecognition[]): CapabilityRecognition[] {
++  const seen = new Set<OneBrainCapabilityId>();
++  return list.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
++}
+diff --git a/lib/oneBrainCertification/capabilityConnect.ob5.test.ts b/lib/oneBrainCertification/capabilityConnect.ob5.test.ts
+new file mode 100644
+index 00000000..5c9dcfee
+--- /dev/null
++++ b/lib/oneBrainCertification/capabilityConnect.ob5.test.ts
+@@ -0,0 +1,584 @@
++// @vitest-environment jsdom
++/**
++ * OB-5 — Capability CONNECT certification.
++ *
++ * Production chain, as the page runs it (app/companion/CompanionPageClient):
++ *   captureBoundaryPreTurnSnapshot → resolveTurnBoundaryDecision
++ *   → resolvePendingBinding / resolveCorrectionBinding (OB-3 / OB-4)
++ *   → resolveCapabilitySelection (read path: existing registries + owner
++ *     recognizers; meaning via the gate's capabilityTurnEligibility)
++ *   → planCapabilityTurn → the page executes with the owner's EXISTING entry
++ *     point (arms the offer on the ONE pending record, or connects).
++ * Observers are language-free where possible: selection kind, plan kind, the
++ * pending record, the handoff payload, and what member storage holds.
++ *
++ * Every member sentence below names NO room.
++ */
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { getOrCreateConversationSpine } from "@/lib/conversationSession/spine";
++import { resetConversationSessionMemoryForTests } from "@/lib/conversationSession/store";
++import { captureBoundaryPreTurnSnapshot, resolveTurnBoundaryDecision } from "@/lib/conversationBoundaryInputs";
++import {
++  capabilityTurnEligibility,
++  resolveCorrectionBinding,
++  resolvePendingBinding,
++} from "@/lib/conversationBoundaryRoomGate";
++import type { ConversationBoundaryDecision } from "@/lib/conversationBoundary";
++import {
++  armPendingReply,
++  notePendingReplyHeld,
++  readPendingReply,
++  releasePendingReply,
++} from "@/lib/conversationSession/ownership/pendingReply";
++import { readReceipt } from "@/lib/conversationSession/receipts";
++import { resolveReceiptCorrectionReply } from "@/lib/conversationSession/receiptCorrection";
++import { resolveCapabilitySelection, type CapabilitySelection } from "@/lib/oneBrainCapability/selectCapability";
++import {
++  CAPABILITY_BIND_PREFIX,
++  planCapabilityTurn,
++  planChoiceAcceptance,
++  type CapabilityHandoffPayload,
++  type CapabilityTurnPlan,
++} from "@/lib/oneBrainCapability/handoffs";
++import { buildCapabilityPromptBlock, listCapabilityProjections } from "@/lib/oneBrainCapability/projection";
++import { CAPABILITY_CONNECTIONS } from "@/lib/oneBrainCapability/connections";
++import {
++  boardReturnForConversation,
++  formatBoardReturnMessage,
++  researchReturnForBoard,
++} from "@/lib/oneBrainCapability/returns";
++import {
++  consumeClaireChatHandoff,
++  consumeClaireChatReturn,
++  recordClaireChatReturn,
++  recordClaireReturnReceipt,
++  requestClaireChatHandoff,
++} from "@/lib/businessProfileFounder/claireChatHandoff";
++import { detectClientAvatarExploration } from "@/lib/clientAvatarOffer";
++import { saveProject } from "@/lib/companionProjectsStore";
++import { stageConversationResearch } from "@/lib/researchLibrary/conversationResearchLaunch";
++import { consumePendingContextualResearch, saveResearchCollectionRecord } from "@/lib/researchLibrary/persistence";
++import {
++  createEmptyBoardIntakeDraft,
++  upsertBoardDirectorDiscussion,
++} from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
++import { createBoardDiscussionFromCertifiedDelivery } from "@/lib/board/delivery/createBoardDiscussionFromCertifiedDelivery";
++import type { CertifiedBoardDelivery } from "@/lib/board/delivery/types";
++import { buildMockSynthesisResult } from "@/lib/board/reconstructed/synthesis/synthesisFixtures";
++import { assembleBoardSynthesisRequest } from "@/lib/board/reconstructed/synthesis/assembleSynthesisInput";
++import { createBoardDeliberationSession } from "@/lib/board/reconstructed/orchestration/sparkBoardOrchestrator";
++import { SYNTHESIS_CERT_PRICING } from "@/lib/board/reconstructed/certification/synthesisCertCases";
++import { resetDecisionLedgerForTests } from "@/lib/decisionLedger";
++
++const HOLD = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
++const CONNECT = "NEXT_PUBLIC_ONE_BRAIN_CAPABILITY_CONNECT";
++const saved: Record<string, string | undefined> = {};
++beforeEach(() => {
++  for (const k of [HOLD, CONNECT]) {
++    saved[k] = process.env[k];
++    delete process.env[k];
++  }
++  localStorage.clear();
++  sessionStorage.clear();
++  resetConversationSessionMemoryForTests();
++  resetDecisionLedgerForTests();
++  getOrCreateConversationSpine();
++});
++afterEach(() => {
++  for (const k of [HOLD, CONNECT]) {
++    if (saved[k] === undefined) delete process.env[k];
++    else process.env[k] = saved[k];
++  }
++});
++
++type TurnResult = {
++  decision: ConversationBoundaryDecision;
++  selection: CapabilitySelection | null;
++  plan: CapabilityTurnPlan | null;
++  accepted: CapabilityHandoffPayload | null;
++};
++
++/** One member turn through the One Brain CONNECT chain, as the page runs it. */
++function turn(text: string, n: number, lastAssistantText = ""): TurnResult {
++  const snap = captureBoundaryPreTurnSnapshot();
++  const decision = resolveTurnBoundaryDecision({ userText: text, turn: n - 1, lastAssistantText, snapshot: snap });
++  const pb = resolvePendingBinding({ decision, pending: snap.pendingOwner, currentTurn: n });
++  if (pb?.kind === "preserve") notePendingReplyHeld(n);
++  if (pb?.kind === "release") releasePendingReply("member_declined");
++  const cb = resolveCorrectionBinding({ decision, pending: snap.pendingOwner, receipt: snap.receipt, currentTurn: n });
++  const selection = resolveCapabilitySelection({ decision, userText: text, pendingBinding: pb, correctionBinding: cb });
++  // (a) accepted capability offer — executes exactly the armed handoff
++  if (pb?.kind === "bind" && pb.executable && pb.bindKey.startsWith(CAPABILITY_BIND_PREFIX)) {
++    const payload = (readPendingReply()?.handoff ?? null) as CapabilityHandoffPayload | null;
++    releasePendingReply("capability_handoff_accepted");
++    if (payload?.kind === "choice" && pb.scope.length === 1) {
++      const plan = planChoiceAcceptance(payload, pb.scope[0] as never);
++      return { decision, selection, plan, accepted: null };
++    }
++    return { decision, selection, plan: null, accepted: payload };
++  }
++  const plan = selection
++    ? planCapabilityTurn({ selection, userText: text, peopleIHelp: detectClientAvatarExploration(text) })
++    : null;
++  if (plan?.kind === "offer") {
++    armPendingReply({
++      bindKey: plan.bindKey,
++      offeredAtTurn: n,
++      handoff: plan.payload as unknown as Record<string, unknown>,
++      ...(plan.items ? { items: plan.items } : {}),
++    });
++  }
++  if (plan?.kind === "board_invite") armPendingReply({ bindKey: "board_invite", offeredAtTurn: n });
++  return { decision, selection, plan, accepted: null };
++}
++
++const kindOf = (s: CapabilitySelection | null) =>
++  !s ? "null" : s.kind === "none" ? `none:${s.reason}` : s.kind === "ask" ? `ask:${s.options.map((o) => o.id).join("/")}` : `${s.kind}:${s.id}`;
++
++/** Member stores One Brain must never write during selection / offer turns. */
++const MEMBER_STORES = [
++  "companion-business-profile-v1",
++  "companion-ideal-clients-v1",
++  "companion-projects-v1",
++  "companion-reminders-v1",
++  "spark.board.director-discussions.v1",
++  "companion-research-library-collections-v1",
++];
++const memberSnapshot = () => MEMBER_STORES.map((k) => localStorage.getItem(k)).join("\u0001");
++
++// ── Fixtures ────────────────────────────────────────────────────────────────
++
++function seedProject(name: string, nextStep?: string) {
++  const created = saveProject({ name, goal: `Finish ${name}` } as never).find((p) => p.name === name)!;
++  if (!nextStep) return created;
++  // The member's own chosen next step (Project Homes' "Your Next Step").
++  saveProject({
++    id: created.id,
++    nextStepSuggestion: nextStep,
++    nextStepSuggestionSource: "user",
++    nextStepSuggestionReason: "You chose this.",
++  } as never);
++  return created;
++}
++
++function certifiedChatBoardRecord() {
++  const draft = createEmptyBoardIntakeDraft([], { source: "chat_invite" });
++  draft.decision = "Should I hire a VA while cash is tight?";
++  const session = createBoardDeliberationSession({ memberMessage: draft.decision, materialDimensions: {} });
++  const request = assembleBoardSynthesisRequest({
++    ...session,
++    firstPassResults: SYNTHESIS_CERT_PRICING.firstPasses,
++    phase: "STOP_REVIEW",
++    stopReviewResult: { outcome: "READY_FOR_SYNTHESIS", rationale: "test" },
++  });
++  const synthesis = {
++    ...buildMockSynthesisResult(request),
++    leadingPosition: "test_first" as const,
++    strongestDissent: "Runway risk if the hire does not free revenue time.",
++    researchOpportunity: {
++      directorReasoningId: "economic-survivability" as const,
++      boundedQuestion: "What do part-time VAs for coaches cost per month?",
++      decisionHinge: "Whether the hire pays for itself.",
++    },
++  };
++  const delivery: CertifiedBoardDelivery = {
++    synthesis,
++    memberFacingText: "The Board examined the hire.",
++    presentation: {
++      headline: "Hire question",
++      strongestCase: "Test first.",
++      memberAgencyLine: "You decide.",
++      nextUsefulAction: "",
++      primaryText: "The Board examined the hire.",
++      continuationPrompts: [],
++    },
++    directorSummaries: [],
++  } as unknown as CertifiedBoardDelivery;
++  const record = createBoardDiscussionFromCertifiedDelivery(draft, delivery);
++  upsertBoardDirectorDiscussion(record);
++  return record;
++}
++
++// ── 1. The canonical read path ───────────────────────────────────────────────
++
++describe("One capability read path — projected from existing registries", () => {
++  it("every projection cites its source registry and a traced connection", () => {
++    const projections = listCapabilityProjections();
++    expect(projections.length).toBe(Object.keys(CAPABILITY_CONNECTIONS).length);
++    for (const p of projections) {
++      expect(p.sources.length, p.id).toBeGreaterThan(0);
++      expect(p.name.trim(), p.id).not.toBe("");
++      expect(p.purpose.trim(), p.id).not.toBe("");
++      expect(p.connection.evidence.trim(), p.id).not.toBe("");
++    }
++  });
++
++  it("the model prompt is derived from the SAME projection, compact, and never grants authority", () => {
++    const block = buildCapabilityPromptBlock();
++    for (const p of listCapabilityProjections()) expect(block).toContain(p.name);
++    expect(block.length).toBeLessThan(4500);
++    expect(block).toMatch(/You cannot open, save, send or change anything yourself/);
++    // Disconnected capability is stated honestly, not as reachable.
++    expect(block).toMatch(/Living Model Canvas:.*not reachable from chat yet/);
++  });
++
++  it("the main prompt no longer instructs fabricated research", async () => {
++    const { researchIntelligenceHintForChat } = await import("@/lib/researchIntelligence");
++    const hint = researchIntelligenceHintForChat("Research competitors for my coaching business");
++    expect(hint).not.toMatch(/you own research/i);
++    expect(hint).toMatch(/Never write "I looked into/);
++    expect(hint).toMatch(/Research Library/);
++  });
++});
++
++// ── 2. Required families (no room named) ─────────────────────────────────────
++
++describe("Claire — Business Understanding", () => {
++  it.each(["Help me update my business profile.", "I need to update what my business does."])(
++    "%s → connects Claire with the member's words",
++    (text) => {
++      const before = memberSnapshot();
++      const r = turn(text, 1);
++      expect(kindOf(r.selection)).toBe("route:claire");
++      expect(r.plan?.kind).toBe("execute");
++      const payload = r.plan?.kind === "execute" ? r.plan.payload : null;
++      expect(payload).toMatchObject({ kind: "claire_topic", memberRequest: text, areaId: "my-business", returnTo: "main_chat" });
++      expect(memberSnapshot()).toBe(before); // opening Claire writes nothing
++    },
++  );
++
++  it("GAP (recorded): 'I need to change how I describe my business.' — no existing Claire recognizer claims it", () => {
++    const r = turn("I need to change how I describe my business.", 1);
++    expect(kindOf(r.selection)).toBe("none:no_capability");
++  });
++
++  it("DUPLICATE OWNER (recorded): 'My ideal client is different now.' — Client Avatar Builder's own recognizer claims it; One Brain defers, never guesses Claire", () => {
++    const r = turn("My ideal client is different now.", 1);
++    expect(r.selection?.kind).toBe("defer");
++    expect(r.plan).toBeNull();
++  });
++
++  it("handoff is one-shot and carries only the words + area; Claire's return is recorded only for a chat visit", () => {
++    requestClaireChatHandoff({ memberPrompt: "Help me update my business profile.", areaId: "my-business" });
++    const got = consumeClaireChatHandoff();
++    expect(got).toMatchObject({ memberPrompt: "Help me update my business profile.", areaId: "my-business", source: "main_chat" });
++    expect(consumeClaireChatHandoff()).toBeNull();
++    recordClaireChatReturn({ areaId: "my-business", summary: "You now run small-group coaching." });
++    const back = consumeClaireChatReturn();
++    expect(back).toMatchObject({ areaLabel: "My Business", summary: "You now run small-group coaching." });
++    expect(consumeClaireChatReturn()).toBeNull();
++    // A Claire visit that did NOT come from chat leaves no return.
++    recordClaireChatReturn({ areaId: "my-business", summary: "x" });
++    expect(consumeClaireChatReturn()).toBeNull();
++  });
++
++  it("correction after return goes back to Claire (owner-supported); undo is never faked", () => {
++    requestClaireChatHandoff({ memberPrompt: "Help me update my business profile.", areaId: "my-business" });
++    consumeClaireChatHandoff();
++    recordClaireChatReturn({ areaId: "my-business", summary: "You now run small-group coaching." });
++    const back = consumeClaireChatReturn()!;
++    recordClaireReturnReceipt(back, 1);
++    expect(readReceipt()).toMatchObject({ ownerKey: "claire", correction: "owner_supported", undo: "none" });
++    const before = memberSnapshot();
++    // Next turn: a correction binds to Claire's receipt (fresh) — Claire applies it.
++    const snap = captureBoundaryPreTurnSnapshot();
++    const text = "No, make it one-to-one coaching instead.";
++    const decision = resolveTurnBoundaryDecision({ userText: text, turn: 1, lastAssistantText: "Back from Claire.", snapshot: snap });
++    const cb = resolveCorrectionBinding({ decision, pending: snap.pendingOwner, receipt: snap.receipt, currentTurn: 2 });
++    expect(cb?.kind).toBe("correct_receipt");
++    expect(resolveReceiptCorrectionReply(cb)).toBeNull(); // the page returns it to Claire
++    expect(resolveCapabilitySelection({ decision, userText: text, pendingBinding: null, correctionBinding: cb })).toMatchObject({
++      kind: "none",
++      reason: "correction",
++    });
++    expect(memberSnapshot()).toBe(before); // nothing written from chat
++  });
++});
++
++describe("Board", () => {
++  it("'What does the board think about this?' → the EXISTING Board invite, member words kept", () => {
++    const r = turn("What does the board think about this?", 1);
++    expect(kindOf(r.selection)).toBe("route:board");
++    expect(r.plan).toMatchObject({ kind: "board_invite", sourceText: "What does the board think about this?" });
++    expect(readPendingReply()?.bindKey).toBe("board_invite");
++  });
++
++  it("'I want several perspectives on this.' → the Board's own phrase: offered (confirm), not connected", () => {
++    const r = turn("I want several perspectives on this.", 1);
++    expect(kindOf(r.selection)).toBe("confirm:board");
++    expect(r.plan?.kind).toBe("board_invite"); // the invite IS an offer — nothing opens until "yes"
++  });
++
++  it("GAP (recorded): 'I need help making a big business decision.' — no Board recognizer; One Brain does not guess", () => {
++    expect(kindOf(turn("I need help making a big business decision.", 1).selection)).toBe("none:no_capability");
++  });
++
++  it("Board result RETURNS: smallest structured result; decision stays the member's; next action armed", () => {
++    const since = new Date(Date.now() - 60_000).toISOString();
++    const record = certifiedChatBoardRecord();
++    const back = boardReturnForConversation(since)!;
++    expect(back).not.toBeNull();
++    expect(back.discussionId).toBe(record.id);
++    expect(back.discussed).toMatch(/hire a VA/);
++    expect(back.memberDecision).toBeNull(); // the Board never decides for the member
++    expect(back.nextAction?.handoff).toMatchObject({
++      kind: "research_launch",
++      sourceRoom: "board",
++      sourceId: record.id,
++      memberRequest: "What do part-time VAs for coaches cost per month?",
++    });
++    const msg = formatBoardReturnMessage(back);
++    expect(msg).toMatch(/Back from the Board/);
++    expect(msg).toMatch(/decision stays yours/);
++    expect(msg).not.toMatch(/test_first|leadingPosition/);
++    // Only discussions started from chat, and only since the handoff.
++    expect(boardReturnForConversation(new Date(Date.now() + 60_000).toISOString())).toBeNull();
++  });
++
++  it("'Okay, let's do that.' after the Board return binds to exactly the offered next action (OB-3)", () => {
++    const record = certifiedChatBoardRecord();
++    const back = boardReturnForConversation(null)!;
++    armPendingReply({
++      bindKey: `${CAPABILITY_BIND_PREFIX}research`,
++      offeredAtTurn: 3,
++      handoff: back.nextAction!.handoff as unknown as Record<string, unknown>,
++    });
++    const r = turn("Okay, let's do that.", 4, formatBoardReturnMessage(back));
++    expect(r.accepted).toMatchObject({ kind: "research_launch", sourceRoom: "board", sourceId: record.id });
++    expect(readPendingReply()).toBeNull();
++  });
++
++  it("stale Board return offer never executes", () => {
++    certifiedChatBoardRecord();
++    const back = boardReturnForConversation(null)!;
++    armPendingReply({ bindKey: `${CAPABILITY_BIND_PREFIX}research`, offeredAtTurn: 3, handoff: back.nextAction!.handoff as never });
++    const r = turn("Okay, let's do that.", 6, "something else");
++    expect(r.accepted).toBeNull();
++  });
++});
++
++describe("Board → Research → Board", () => {
++  it("research launched from a Board discussion carries the Board origin and comes back to that Board", () => {
++    const record = certifiedChatBoardRecord();
++    saveResearchCollectionRecord({
++      id: "col-1",
++      title: "VA cost",
++      topic: "VA cost",
++      purpose: "VA cost",
++      researchQuestion: "What do part-time VAs for coaches cost per month?",
++      intendedOutcome: null,
++      sourceExperience: "board",
++      sourceEntityId: record.id,
++      returnContext: `board:${record.id}:hire`,
++      sourceSelectionIds: [],
++      researchSessionIds: [],
++      summary: "Most part-time VAs cost $600–$1,200 a month.",
++      findings: [],
++      facts: [], themes: [], examples: [], options: [], comparisons: [], recommendations: [],
++      implications: [], risks: [], cautions: [], questions: [], conflicts: [], uncertainties: ["Rates vary by region."],
++      gaps: [],
++      createdAt: new Date().toISOString(),
++      updatedAt: new Date().toISOString(),
++    } as never);
++    const back = researchReturnForBoard(record.id);
++    expect(back).toMatchObject({
++      question: "What do part-time VAs for coaches cost per month?",
++      synthesis: "Most part-time VAs cost $600–$1,200 a month.",
++      sourcedCount: 0,
++    });
++    expect(researchReturnForBoard("other-discussion")).toBeNull();
++  });
++});
++
++describe("Research", () => {
++  it.each(["Research this before I decide.", "Find out whether this is actually true."])(
++    "%s → offered (catalog candidate), 'yes' stages the member's own question",
++    (text) => {
++      const r = turn(text, 1);
++      expect(kindOf(r.selection)).toBe("confirm:research");
++      expect(r.plan).toMatchObject({ kind: "offer", bindKey: `${CAPABILITY_BIND_PREFIX}research` });
++      const yes = turn("yes", 2, (r.plan as { reply: string }).reply);
++      expect(yes.accepted).toMatchObject({ kind: "research_launch", memberRequest: text, sourceRoom: "main_chat" });
++      stageConversationResearch({ memberRequest: text });
++      expect(consumePendingContextualResearch()?.researchQuestion).toBe(text);
++    },
++  );
++
++  it("'What evidence do we have?' → no guess", () => {
++    expect(kindOf(turn("What evidence do we have?", 1).selection)).toBe("none:no_capability");
++  });
++});
++
++describe("Projects", () => {
++  it("names the saved project, answers with its grounded next step IN CHAT, offers its Project Home", () => {
++    const p = seedProject("Spring Launch", "Email the ten warm leads");
++    const before = memberSnapshot();
++    const r = turn("Help me figure out what to do next on my launch project.", 1);
++    expect(kindOf(r.selection)).toBe("route:projects");
++    expect(r.plan?.kind).toBe("offer");
++    const reply = (r.plan as { reply: string }).reply;
++    expect(reply).toContain("Spring Launch");
++    expect(reply).toContain("Email the ten warm leads");
++    expect(memberSnapshot()).toBe(before); // read-only answer
++    const yes = turn("Okay, let's do that.", 2, reply);
++    expect(yes.accepted).toMatchObject({ kind: "project_home", projectId: p.id, projectName: "Spring Launch" });
++  });
++
++  it("no grounded step → says so honestly (never filler advice)", () => {
++    seedProject("Website Refresh");
++    const r = turn("I need to work on my website project.", 1);
++    expect((r.plan as { reply: string }).reply).toMatch(/don't know enough about “Website Refresh”/);
++  });
++
++  it("two matching projects → asks which, arms nothing", () => {
++    seedProject("Website Refresh");
++    seedProject("Website Launch Pages");
++    const r = turn("I need to work on my website project.", 1);
++    expect(r.plan?.kind).toBe("reply");
++    expect(readPendingReply()).toBeNull();
++  });
++
++  it("no saved project → defers to existing flows (no invented project)", () => {
++    const r = turn("I need to work on my website project.", 1);
++    expect(r.plan).toBeNull();
++  });
++
++  it("'What's holding up my project?' with one active project → that project", () => {
++    seedProject("Spring Launch", "Email the ten warm leads");
++    const r = turn("What's holding up my project?", 1);
++    expect((r.plan as { reply: string }).reply).toContain("Spring Launch");
++  });
++});
++
++describe("Other owners — discovered, deferred to their existing seams (no new routing)", () => {
++  it.each([
++    ["Help me with my event.", "defer:events"],
++    ["I need help with my pricing.", "defer:strategy_chamber"],
++    ["Help me create a client onboarding guide.", "defer:create"],
++    ["Remind me tomorrow to call Susan.", "defer:reminders"],
++    ["I want to do this every month.", "defer:rhythms"],
++    ["Can you map this out visually?", "defer:visual_thinking"],
++  ])("%s → %s", (text, expected) => {
++    const r = turn(text, 1);
++    expect(kindOf(r.selection)).toBe(expected);
++    expect(r.plan).toBeNull();
++  });
++
++  it.each([
++    ["I'm planning a webinar.", "none:no_capability"],
++    ["I need a strategy for this.", "none:no_capability"],
++  ])("GAP (recorded): %s → %s", (text, expected) => {
++    expect(kindOf(turn(text, 1).selection)).toBe(expected);
++  });
++
++  it("KNOWN SHADOW (recorded): 'Help me plan today.' — Plan My Day recognized, but Create's recognizer also claims it", () => {
++    const r = turn("Help me plan today.", 1);
++    expect(r.selection?.kind).toBe("defer");
++  });
++});
++
++// ── 3. Safety families ───────────────────────────────────────────────────────
++
++describe("Safety: ambiguity, discussion, unsupported, questions, stale, clarification, interruption", () => {
++  it("two connected owners fit → a short choice; choosing one plans exactly that owner", () => {
++    seedProject("Spring Launch");
++    const r = turn("Update my business profile for my launch project.", 1);
++    expect(r.selection?.kind).toBe("ask");
++    expect(r.plan).toMatchObject({ kind: "offer", bindKey: `${CAPABILITY_BIND_PREFIX}choice` });
++    const choice = (r.plan as { payload: CapabilityHandoffPayload }).payload;
++    expect(choice.kind).toBe("choice");
++    const plan = planChoiceAcceptance(choice as Extract<CapabilityHandoffPayload, { kind: "choice" }>, "claire");
++    expect(plan?.kind).toBe("execute");
++    expect(planChoiceAcceptance(choice as never, "board")).toBeNull(); // not offered → never
++  });
++
++  it("discussion-only (Boundary stance talk_about) never selects a capability", () => {
++    const decision = { decision: "continue_current_topic", confidence: "high", evidence: [], relation: "none", stance: "talk_about", meaningConfidence: "high" } as ConversationBoundaryDecision;
++    expect(capabilityTurnEligibility({ decision, pendingBinding: null, correctionBinding: null })).toEqual({
++      kind: "not_eligible",
++      reason: "discussion",
++    });
++    expect(resolveCapabilitySelection({ decision, userText: "Help me update my business profile.", pendingBinding: null, correctionBinding: null })).toMatchObject({ kind: "none", reason: "discussion" });
++  });
++
++  it("LOW meaning never connects — it offers", () => {
++    const decision = { decision: "switch_topic", confidence: "high", evidence: [], relation: "none", stance: "none", meaningConfidence: "low" } as ConversationBoundaryDecision;
++    const s = resolveCapabilitySelection({ decision, userText: "Help me update my business profile.", pendingBinding: null, correctionBinding: null });
++    expect(s?.kind).toBe("confirm");
++    const plan = planCapabilityTurn({ selection: s!, userText: "Help me update my business profile." });
++    expect(plan?.kind).toBe("offer");
++  });
++
++  it("unsupported request → no capability claimed; the prompt says Spark can't send anything itself", () => {
++    const before = memberSnapshot();
++    expect(kindOf(turn("Can you send an email to my client for me?", 1).selection)).toBe("none:no_capability");
++    expect(buildCapabilityPromptBlock()).toMatch(/cannot open, save, send/);
++    expect(memberSnapshot()).toBe(before);
++  });
++
++  it("capability question → no route; the model answers from the projection", () => {
++    expect(kindOf(turn("What can you do?", 1).selection)).toBe("none:no_capability");
++    expect(buildCapabilityPromptBlock()).toMatch(/Reach:/);
++  });
++
++  it("clarification during a handoff keeps the offer (OB-3 preserve); 'yes' next turn still binds", () => {
++    const r = turn("Research this before I decide.", 1);
++    const offer = (r.plan as { reply: string }).reply;
++    const q = turn("What would that do?", 2, offer);
++    expect(q.selection?.kind).toBe("none");
++    expect(readPendingReply()?.bindKey).toBe(`${CAPABILITY_BIND_PREFIX}research`);
++    const yes = turn("yes", 3, "It looks for sources and brings them back.");
++    expect(yes.accepted?.kind).toBe("research_launch");
++  });
++
++  it("stale handoff: 'yes' two turns later never executes", () => {
++    turn("Research this before I decide.", 1);
++    const late = turn("yes", 3, "Anyway, how is your week going?");
++    expect(late.accepted).toBeNull();
++  });
++
++  it("decline releases the capability offer; nothing runs", () => {
++    const r = turn("Research this before I decide.", 1);
++    const no = turn("No thanks.", 2, (r.plan as { reply: string }).reply);
++    expect(no.accepted).toBeNull();
++    expect(readPendingReply()).toBeNull();
++  });
++
++  it("active work is not destroyed: a direct Claire connection does not replace an armed Rhythm offer", () => {
++    armPendingReply({ bindKey: "remember_offer", offeredAtTurn: 1 });
++    const r = turn("Help me update my business profile.", 2, "Want me to set up that Rhythm?");
++    expect(r.plan?.kind).toBe("execute");
++    expect(readPendingReply()?.bindKey).toBe("remember_offer");
++  });
++
++  it("kill switches: capability connect off, or One Brain meaning hold off → legacy seams only", () => {
++    process.env[CONNECT] = "0";
++    expect(turn("Help me update my business profile.", 1).selection).toBeNull();
++    delete process.env[CONNECT];
++    process.env[HOLD] = "0";
++    expect(turn("Help me update my business profile.", 1).selection).toBeNull();
++  });
++
++  it("0 false actions across every family turn above (selection + offer write no member store)", () => {
++    seedProject("Spring Launch", "Email the ten warm leads");
++    const before = memberSnapshot();
++    const texts = [
++      "Help me update my business profile.",
++      "What does the board think about this?",
++      "I want several perspectives on this.",
++      "Research this before I decide.",
++      "Help me figure out what to do next on my launch project.",
++      "Help me with my event.",
++      "I need help with my pricing.",
++      "Help me create a client onboarding guide.",
++      "Help me plan today.",
++      "Remind me tomorrow to call Susan.",
++      "I want to do this every month.",
++      "Can you map this out visually?",
++      "Can you send an email to my client for me?",
++      "What can you do?",
++    ];
++    texts.forEach((t, i) => turn(t, i + 1));
++    expect(memberSnapshot()).toBe(before);
++  });
++});
+diff --git a/lib/oneBrainCertification/oneBrainConsumers.test.ts b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+index fc85eafd..eeebccb4 100644
+--- a/lib/oneBrainCertification/oneBrainConsumers.test.ts
++++ b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+@@ -139,7 +139,13 @@ describe("OB-2 One Brain consumers", () => {
+     expect(writers).toEqual([]);
+     const recorders = files.filter((f) => /\brecordReceipt\(/.test(read(f))).sort();
+     expect(recorders).toEqual(
+-      ["lib/conversationSession/receipts.ts", "lib/reminderIntelligence.ts", "lib/remindersVsRhythms/conversationPending.ts"].sort(),
++      [
++        "lib/conversationSession/receipts.ts",
++        "lib/reminderIntelligence.ts",
++        "lib/remindersVsRhythms/conversationPending.ts",
++        // OB-5 — Claire records the receipt of her member-confirmed write.
++        "lib/businessProfileFounder/claireChatHandoff.ts",
++      ].sort(),
+     );
+   });
+ 
+@@ -157,4 +163,54 @@ describe("OB-2 One Brain consumers", () => {
+     const declarers = files.filter((f) => f !== GATE && /\bacceptsUnknown\b/.test(read(f)));
+     expect(declarers).toEqual([]);
+   });
++
++  it("OB-5: ONE capability selection per turn, computed after the bindings and consumed before the legacy seams", () => {
++    const page = read("app/companion/CompanionPageClient.tsx");
++    expect(page.match(/\bresolveCapabilitySelection\(/g)?.length).toBe(1);
++    const callers = files.filter((f) => /\bresolveCapabilitySelection\(/.test(read(f)));
++    expect(callers.sort()).toEqual(["app/companion/CompanionPageClient.tsx", "lib/oneBrainCapability/selectCapability.ts"].sort());
++    const idxSelection = page.indexOf("resolveCapabilitySelection(");
++    const idxCorrection = page.indexOf("resolveCorrectionBinding(");
++    const idxConnect = page.indexOf("planCapabilityTurn({");
++    const idxBusinessSeam = page.indexOf("detectBusinessEstateNavIntent(trimmed) &&");
++    const idxContinuity = page.indexOf('continuityGate.action === "board_invite"');
++    expect(idxSelection).toBeGreaterThan(idxCorrection);
++    expect(idxConnect).toBeGreaterThan(idxSelection);
++    expect(idxBusinessSeam).toBeGreaterThan(idxConnect);
++    expect(idxContinuity).toBeGreaterThan(idxConnect);
++  });
++
++  it("OB-5: capability selection reads Boundary meaning only through the gate", () => {
++    const sel = read("lib/oneBrainCapability/selectCapability.ts");
++    expect(sel).toMatch(/capabilityTurnEligibility\(/);
++    expect(read(GATE)).toMatch(/export function capabilityTurnEligibility\(/);
++  });
++
++  it("OB-5: capability offers are armed on the ONE pending record and only an owner-armed, bound offer executes", () => {
++    const page = read("app/companion/CompanionPageClient.tsx");
++    expect(page).toMatch(/pendingBinding\.executable &&\s*\n\s*pendingBinding\.bindKey\.startsWith\(CAPABILITY_BIND_PREFIX\)/);
++    expect(page).toMatch(/armPendingReply\(\{\s*\n\s*bindKey: plan\.bindKey,/);
++  });
++
++  it("OB-5: connections use the owners' existing entry points and return paths", () => {
++    const page = read("app/companion/CompanionPageClient.tsx");
++    expect(page).toMatch(/requestClaireChatHandoff\([\s\S]{0,160}openProfileDestinationCore\("my-business-estate"\)/);
++    expect(page).toMatch(/onReturnToSource=\{goBackToChat\}/);
++    expect(page).toMatch(/onResearch=\{openResearchFromBoardCore\}/);
++    expect(page).toMatch(/onReturnToBoard=\{returnToBoardFromResearch\}/);
++    expect(page).toMatch(/boardReturnForConversation\(/);
++    expect(page).toMatch(/consumeClaireChatReturn\(\)/);
++    const claire = read("components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx");
++    expect(claire).toMatch(/consumeClaireChatHandoff\(\)[\s\S]{0,600}talkWithClaire\(/);
++    expect(claire).toMatch(/recordClaireChatReturn\(/);
++    expect(read("lib/companionPrompt.ts")).toMatch(/buildCapabilityPromptBlock\(\)/);
++  });
++
++  it("OB-5: no new router — the read path adds no member vocabulary of its own", () => {
++    const readPath = read("lib/oneBrainCapability/readPath.ts");
++    // recognition = existing owner recognizers + the catalog consult + the Board's own copy
++    expect(readPath).not.toMatch(/new RegExp\(\s*["'`]\\b(?:help|need|want)/);
++    const regexLiterals = readPath.match(/\/[^/\n]{6,}\/[gimsuy]*\.test\(/g) ?? [];
++    expect(regexLiterals).toEqual([]);
++  });
+ });
+diff --git a/lib/researchIntelligence.ts b/lib/researchIntelligence.ts
+index 28e73560..badf775a 100644
+--- a/lib/researchIntelligence.ts
++++ b/lib/researchIntelligence.ts
+@@ -116,11 +116,12 @@ export function extractResearchTopic(text: string): string | null {
+ export function researchIntelligenceHintForChat(userText: string): string {
+   const topic = extractResearchTopic(userText);
+   return [
+-    "RESEARCH INTELLIGENCE (constitutional — you own research):",
++    "RESEARCH INTELLIGENCE (sourced research runs in Spark's Research Library — this chat reply has no live sources):",
+     topic ? `Topic: ${topic}.` : "User needs current, external, or factual information.",
+-    "Activate automatically — the user never selects search engines, browsers, AI providers, models, or tools.",
+-    "Gather, compare, and synthesize findings into clear actionable guidance — not raw link dumps.",
+-    'Natural openers: "I looked into…", "I found several…", "I compared their…"',
++    "The user never selects search engines, browsers, AI providers, models, or tools.",
++    'Give your best current understanding briefly and say plainly it is not freshly researched (e.g. "From what I know so far…").',
++    'Never write "I looked into…", "I found…", "I compared…" or cite sources unless research results are already in this conversation (RESEARCH RETURN).',
++    "When sourced, current information matters, offer the Research Library — Spark opens it with the member's question.",
+     `FORBIDDEN disclaimers: ${FORBIDDEN_RESEARCH_DISCLAIMERS.slice(0, 5).join("; ")}; never mention training data or knowledge cutoffs.`,
+     'FORBIDDEN meta: "I\'m searching", "I\'m browsing", "I\'m using…", "I\'m calling…", "I\'m switching models".',
+     `Connectivity failure only: "${RESEARCH_CONNECTIVITY_FAILURE_MESSAGE}"`,
+-- 
+2.43.0
+
