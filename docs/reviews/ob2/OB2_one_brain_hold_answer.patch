@@ -1,0 +1,4947 @@
+From 6b48a4bc9b755233f4568d2bca7855ce2cb0e3d8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 13:13:57 +0000
+Subject: [PATCH] feat(boundary): OB-2 hold-and-answer convergence through One
+ Brain
+
+Rooms ask Boundary + permitsFor (via roomTurnVerdict) before storing or
+advancing; clarify/ask/unsure/correct/bare-yes-to-open-question hold and the
+specialist explains its own question. Boundary transition reconciled with
+meaning. Kill switch NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0 restores OB-1
+behavior (proved cell-for-cell).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0162D2EyVC24X9wVgoMdDuJm
+---
+ app/companion/CompanionPageClient.tsx         |   10 +-
+ components/companion/StrategiesPanel.tsx      |    3 +-
+ .../board/BoardDirectorDiscussionIntake.tsx   |   32 +-
+ .../BusinessProfileBp2aPrototype.tsx          |   13 +-
+ .../BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md   |  397 +++
+ docs/reviews/ob2/divergence_baseline.json     | 2146 +++++++++++++++++
+ .../boardDirectorDiscussion.intake.test.ts    |    6 +-
+ .../boardDirectorDiscussion.ts                |   79 +-
+ .../orchestration/boardMemberQuestions.ts     |   71 +-
+ .../round3f5ConversationalTurns.test.tsx      |   22 +-
+ .../claireConfirmationTurn.ts                 |   45 +
+ lib/conversationBoundary.ts                   |   69 +-
+ lib/conversationBoundaryMeaning.ts            |  115 +-
+ lib/conversationBoundaryRoomGate.ts           |  202 ++
+ .../routeTurnToOwner.ts                       |    6 +-
+ lib/createEstate/entranceUnderstanding.ts     |   44 +-
+ .../submitCurrentFocusResponse.ts             |    5 +-
+ lib/day-designer/dayMessages.ts               |   56 +
+ lib/day-designer/index.ts                     |   15 +-
+ .../eventsEntranceUnderstanding.ts            |    8 +-
+ .../applyEventConversationalAnswer.ts         |  101 +-
+ lib/oneBrainCertification/bakeoff.ob1.test.ts |    6 +-
+ lib/oneBrainCertification/corpus.ts           |   50 +
+ .../oneBrainConsumers.test.ts                 |   95 +
+ .../roomDivergence.ob1.test.ts                |   75 +-
+ lib/oneBrainCertification/roomDrivers.ts      |   52 +-
+ .../roomHold.ob2.test.ts                      |  239 ++
+ .../shadowIsolation.test.ts                   |   74 -
+ lib/strategyApplyCoach.ts                     |   57 +-
+ lib/strategyChamber/guidedJourney.ts          |   28 +
+ .../createTurnRelationship.ts                 |    9 +-
+ 31 files changed, 3966 insertions(+), 164 deletions(-)
+ create mode 100644 docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md
+ create mode 100644 docs/reviews/ob2/divergence_baseline.json
+ create mode 100644 lib/businessProfileFounder/claireConfirmationTurn.ts
+ create mode 100644 lib/conversationBoundaryRoomGate.ts
+ create mode 100644 lib/oneBrainCertification/oneBrainConsumers.test.ts
+ create mode 100644 lib/oneBrainCertification/roomHold.ob2.test.ts
+ delete mode 100644 lib/oneBrainCertification/shadowIsolation.test.ts
+
+diff --git a/app/companion/CompanionPageClient.tsx b/app/companion/CompanionPageClient.tsx
+index d0a17cf0..0ed78b46 100644
+--- a/app/companion/CompanionPageClient.tsx
++++ b/app/companion/CompanionPageClient.tsx
+@@ -1531,6 +1531,7 @@ import {
+   captureBoundaryPreTurnSnapshot,
+   resolveTurnBoundaryDecision,
+ } from "@/lib/conversationBoundaryInputs";
++import { isMeaningHold } from "@/lib/conversationBoundary";
+ import { applyConversationBoundaryToActiveWork } from "@/lib/conversationBoundaryApplyActiveWork";
+ import {
+   conversationScope,
+@@ -16602,7 +16603,10 @@ export default function CompanionPageClient() {
+     // already claimed it for another owner (emotional interrupt, topic switch,
+     // cancel, a pending question, or a return to a suspended topic). Computed
+     // once here and READ by each acceptance site; no new ownership state.
++    // OB-2 — a turn Boundary HOLDS on the current thread (the member asked,
++    // needs a clarification, is unsure, or corrected Spark) is Boundary's too.
+     const boundaryClaimedTurn =
++      isMeaningHold(turnBoundaryDecision) ||
+       turnBoundaryDecision.decision === "interrupt_and_suspend" ||
+       turnBoundaryDecision.decision === "switch_topic" ||
+       turnBoundaryDecision.decision === "cancel_current_workflow" ||
+@@ -16795,7 +16799,9 @@ export default function CompanionPageClient() {
+       isConfirmationAcceptance(trimmed) ||
+       isConfirmationDecline(trimmed) ||
+       Boolean(pendingClientAvatarOffer && isClientAvatarOfferAcceptance(trimmed));
+-    if (!confirmationReply) {
++    // OB-2 — asking what the offer means (or any One Brain hold) must not
++    // silently drop the armed offer; the member can still answer it next turn.
++    if (!confirmationReply && !isMeaningHold(turnBoundaryDecision)) {
+       setAwaitingUserConfirmation(null);
+     }
+     const latencyProfiler = new CompanionLatencyProfiler(
+@@ -20658,7 +20664,7 @@ export default function CompanionPageClient() {
+       }
+       const assistantContent = result.plan
+         ? "Here's a gentle plan for today — change anything you like."
+-        : (result.question ?? "Got it.");
++        : (result.holdReply ?? result.question ?? "Got it.");
+       finishLocalChatTurn(assistantContent);
+       finishLatencyTurn({ localReply: true });
+       return;
+diff --git a/components/companion/StrategiesPanel.tsx b/components/companion/StrategiesPanel.tsx
+index 8a89fec4..66f5cd8e 100644
+--- a/components/companion/StrategiesPanel.tsx
++++ b/components/companion/StrategiesPanel.tsx
+@@ -424,7 +424,8 @@ export function StrategiesPanel({
+     const patch = applyGuidedJourneyAnswer(item, trimmed);
+     updateStrategyWorkItem(workItemId, patch);
+     setWorkTick((n) => n + 1);
+-    if (wasOpening && item.entryReason === "unsure" && onAsk) {
++    // OB-2 — a held turn (One Brain) sets no decision statement; don't hand it off.
++    if (wasOpening && patch.decisionStatement && item.entryReason === "unsure" && onAsk) {
+       onAsk(
+         `I'm in the Strategy Chamber. Here's what I'm working with: ${trimmed}. Help me choose the best place to begin.`,
+       );
+diff --git a/components/companion/board/BoardDirectorDiscussionIntake.tsx b/components/companion/board/BoardDirectorDiscussionIntake.tsx
+index e34c389d..36193f45 100644
+--- a/components/companion/board/BoardDirectorDiscussionIntake.tsx
++++ b/components/companion/board/BoardDirectorDiscussionIntake.tsx
+@@ -20,7 +20,7 @@ import { THOMAS_ELLISON_DIRECTOR_ID } from "@/lib/board/visibleDirectors";
+ import {
+   advanceDecisionToReview,
+   advanceDraftToReady,
+-  answerBoardIntakeStep,
++  boardIntakeTurn,
+   archiveInProgressBoardIntakeDraft,
+   boardConveneBlockedReason,
+   canBeginBoardDiscussion,
+@@ -214,6 +214,8 @@ export function BoardDirectorDiscussionIntake({
+   const [confirmStartOver, setConfirmStartOver] = useState(false);
+   const [editStep, setEditStep] = useState<BoardIntakeStep | null>(null);
+   const [selectionError, setSelectionError] = useState<string | null>(null);
++  /** OB-2: Board's reply when One Brain holds the question (member asked, is unsure, …). */
++  const [intakeHoldReply, setIntakeHoldReply] = useState<string | null>(null);
+   const [deliberationError, setDeliberationError] = useState<string | null>(null);
+   /**
+    * J1 correction — a deliberation that could not complete gets its own state
+@@ -538,7 +540,13 @@ export function BoardDirectorDiscussionIntake({
+     try {
+       if (editStep && isQuestionIntakeStep(editStep)) {
+         const editing = { ...draft, currentStep: editStep };
+-        const merged = answerBoardIntakeStep(editing, answer);
++        const editTurn = boardIntakeTurn(editing, answer);
++        if (editTurn.holdReply) {
++          setIntakeHoldReply(editTurn.holdReply);
++          setAnswer("");
++          return;
++        }
++        const merged = editTurn.draft;
+         const restored: BoardDiscussionIntakeDraft = {
+           ...merged,
+           currentStep: "review",
+@@ -550,9 +558,11 @@ export function BoardDirectorDiscussionIntake({
+         return;
+       }
+ 
+-      const next = answerBoardIntakeStep(draft, answer);
++      const turn = boardIntakeTurn(draft, answer);
+       setAnswer("");
+-      persistDraft(next);
++      setIntakeHoldReply(turn.holdReply);
++      if (turn.holdReply) return;
++      persistDraft(turn.draft);
+     } finally {
+       submitLockRef.current = false;
+       setSubmitting(false);
+@@ -569,8 +579,11 @@ export function BoardDirectorDiscussionIntake({
+     if (!draft.decision.trim() && !answer.trim()) return;
+     let next = draft;
+     if (draft.currentStep === "decision" && answer.trim()) {
+-      next = answerBoardIntakeStep(draft, answer);
++      const turn = boardIntakeTurn(draft, answer);
+       setAnswer("");
++      setIntakeHoldReply(turn.holdReply);
++      if (turn.holdReply) return;
++      next = turn.draft;
+     }
+     persistDraft(advanceDecisionToReview(next));
+   }
+@@ -1968,6 +1981,15 @@ export function BoardDirectorDiscussionIntake({
+         Board Discussion · Step {stepNum} of 4
+       </p>
+       <h2 className="boardroom-title">{prompt}</h2>
++      {intakeHoldReply ? (
++        <p
++          className="boardroom-purpose"
++          data-testid="board-director-intake-hold-reply"
++          role="status"
++        >
++          {intakeHoldReply}
++        </p>
++      ) : null}
+       <p className="boardroom-purpose">
+         One question at a time. Optional details can be skipped.
+         {isReconstructedRosterDraft(draft) ? "" : " The Chair is optional."}
+diff --git a/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx b/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx
+index 1f9a9568..7e1a135c 100644
+--- a/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx
++++ b/components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx
+@@ -1,6 +1,7 @@
+ "use client";
+ 
+ import Image from "next/image";
++import { resolveClaireConfirmationTurn } from "@/lib/businessProfileFounder/claireConfirmationTurn";
+ import { useSearchParams } from "next/navigation";
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { LmcSurface } from "@/components/lmc/LmcSurface";
+@@ -522,8 +523,18 @@ export function BusinessProfileBp2aPrototype({
+       }
+ 
+       if (pendingConfirmation && pendingCandidate) {
+-        const outcome = parseMemberConfirmationResponse(pendingCandidate, memberLine);
+         const subjectChange = memberChangedSubjectDuringConfirmation(memberLine);
++        // OB-2 — One Brain: a question / "what do you mean?" / "not sure" holds
++        // the candidate instead of falling into the decline branch below.
++        const confirmTurn = subjectChange
++          ? null
++          : resolveClaireConfirmationTurn(pendingCandidate, memberLine);
++        if (confirmTurn?.kind === "hold") {
++          setTurns((t) => [...t, { role: "claire", text: confirmTurn.reply }]);
++          return;
++        }
++        const outcome =
++          confirmTurn?.outcome ?? parseMemberConfirmationResponse(pendingCandidate, memberLine);
+ 
+         if (outcomePermitsCanonicalWrite(outcome)) {
+           const fromPrice =
+diff --git a/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md b/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md
+new file mode 100644
+index 00000000..470082e4
+--- /dev/null
++++ b/docs/reviews/BRAIN_SPARK_ESTATE_OB2_RETURN_REPORT.md
+@@ -0,0 +1,397 @@
++# BRAIN SPARK ESTATE™ — OB-2 Return Report
++## Hold-and-Answer Convergence Through One Brain
++
++**Status:** Complete and certified locally. **Not pushed, not merged, not deployed.** `main` is untouched. OB-3 has not been started.
++
++**Outcome.** Every room in scope now asks One Brain (Boundary → `permitsFor`) before it stores the member's words or moves forward. When the member asks something, asks what Spark meant, says "I don't know, help me", corrects Spark, or gives a bare "Yes." to an open question, the room holds. It explains its own question in its own words, and the question stays pending for the next turn.
++
++In the real-room certification matrix, divergence fell from **61 of 120 cells (OB-1) to 8 of 120**, and to **4 of 165** once the brief's extra phrasings and distress are included. Every remaining divergence is the Rhythm correction defect, which OB-4 owns.
++
++With the kill switch set to `0`, the matrix reproduces the OB-1 baseline **exactly**.
++
++---
++
++## 1. Verified starting point
++
++| Check | Result |
++|---|---|
++| Accepted OB-1 SHA `c1110a89fadfb676313cf91b40b67906b912a72c` | **Exists** (`git cat-file -t` = commit). It is on `ob1/boundary-meaning-shadow`, and its parent is R0 `0e354024`. |
++| Contains the OB-1 contract, corpus, divergence baseline and `permitsFor` | **Yes.** It has `lib/conversationBoundaryMeaning.ts` (with `permitsFor`), `lib/conversationBoundaryLexicon.ts`, `lib/oneBrainCertification/{corpus,evaluate,roomDrivers}.ts` and `docs/reviews/ob1/divergence_baseline.json`. |
++| Material difference from the OB-1 report | None found |
++| Base used | **Exactly `c1110a89`.** Not `main`. |
++
++## 2. OB-2 branch
++
++| | |
++|---|---|
++| Branch | `ob2/one-brain-hold-answer`, created from `c1110a89` |
++| Ending SHA | *Given in the chat reply and the delivery copy of this report. A commit cannot contain its own SHA.* |
++| Pushed | **No.** Pushing any branch in this repository triggers a Vercel preview, and the brief asks for no push until the Founder authorizes one after local certification. A patch or review pack is delivered alongside this report. |
++
++## 3. Files changed
++
++About 30 files, including tests and data.
++
++**One Brain (Boundary)**
++
++| File | What changed |
++|---|---|
++| `lib/conversationBoundary.ts` | Transition reconciliation (§4); `MEANING_HOLD_EVIDENCE`; `isMeaningHold()` |
++| `lib/conversationBoundaryMeaning.ts` | Kill switch `isBoundaryMeaningHoldEnabled()`. New `pause_for_person` obligation. `permitsFor` gains `pendingQuestionOwnsInput` and `pendingQuestionOptional` (§5). Six structural reader refinements, each certified with a paraphrase family (§10). |
++| `lib/conversationBoundaryRoomGate.ts` | **New.** `roomTurnVerdict()` is the single gate every room calls. `renderRoomHoldReply()` frames the room's own copy and contains no language rules and no domain content. |
++
++**Rooms.** Each room gets a thin gate call plus its own specialist copy:
++
++| File | Room |
++|---|---|
++| `lib/board/boardDiscussion/boardDirectorDiscussion.ts` (`boardIntakeTurn`), `components/companion/board/BoardDirectorDiscussionIntake.tsx`, `lib/conversationContinuity/routeTurnToOwner.ts` | Board intake |
++| `lib/board/reconstructed/orchestration/boardMemberQuestions.ts` | Board meeting |
++| `lib/eventsIntelligence/applyEventConversationalAnswer.ts`, `lib/eventsEstate/eventsEntranceUnderstanding.ts`, `lib/currentFocus/submitCurrentFocusResponse.ts` | Events |
++| `lib/strategyApplyCoach.ts` | Strategy Apply |
++| `lib/strategyChamber/guidedJourney.ts`, `components/companion/StrategiesPanel.tsx` | Strategy Chamber |
++| `lib/day-designer/dayMessages.ts` (`dayDesignerTurn`), `lib/day-designer/index.ts`, `app/companion/CompanionPageClient.tsx` (reply line) | Day Designer (Plan My Day) |
++| `lib/createEstate/entranceUnderstanding.ts` | Create entrance; Work Recognition inherits it |
++| `lib/businessProfileFounder/claireConfirmationTurn.ts` (new), `components/prototype/businessProfileBp2a/BusinessProfileBp2aPrototype.tsx` | Claire confirmation |
++| `app/companion/CompanionPageClient.tsx` (turn claim + legacy-clear guard), `lib/universalCreation/createTurnRelationship.ts` | Main chat |
++
++**Certification** (reuses the OB-1 harness; the drivers still call real production step functions and the observer stays language-free):
++
++| File | Change |
++|---|---|
++| `lib/oneBrainCertification/roomDrivers.ts` | Three new situations: the brief's exact "I don't know. Help me…" and "No, that's not what I meant.", plus distress alone. The Claire confirmation driver now calls the new production entry. The Work Recognition observer is now structural (§8). |
++| `roomDivergence.ob1.test.ts` | Kill-switch-off equals the OB-1 baseline; kill-switch-on equals the OB-2 baseline |
++| `roomHold.ob2.test.ts` | **New.** Specialist explanation per room, then resume on a real answer, plus kill-switch checks |
++| `oneBrainConsumers.test.ts` | **New.** Replaces OB-1's shadow-isolation test |
++| `corpus.ts` | `OB2_ADDITIONS`: 37 cases |
++| `bakeoff.ob1.test.ts` | Gates now include `OB2_ADDITIONS` |
++| `docs/reviews/ob2/divergence_baseline.json` | New baseline |
++
++**Two existing tests updated, with the reason written inline:**
++- **`lib/board/round3f5ConversationalTurns.test.tsx` (12/13).** "Why are you asking me that?" now reaches the asking Director verbatim as `memberAskedYou`, through the certified R3F-5B question-to-Director seam. It previously arrived as `newMemberInformation`. The harness now records both channels. The test's intent ("the member's words go to the Board verbatim and never become a decision") is unchanged and still asserted.
++- **`lib/board/boardDiscussion/boardDirectorDiscussion.intake.test.ts`.** The fixture answer "Why" to "Why does it matter now?" was a bare question word. It is replaced with a real answer ("Timing matters"). The test's intent (prior answers and Directors persist) is unchanged.
++
++## 4. Boundary reconciliation (exact)
++
++`resolveConversationBoundary` now returns `reconcileTransitionWithMeaning(transition, meaning, input)`, unless the kill switch is `0`. There are two rules; everything else keeps the unchanged OB-1 transition.
++
++**Rule 1 — hold, don't switch or answer.**
++- **Condition:** all of the following hold:
++  - there is a live thread (a pending question or offer, armed items, an executed item, an unresolved topic, or active work);
++  - `meaningConfidence = high`;
++  - `relation ∈ {clarify, ask, unsure, correct}`;
++  - the transition is anything other than `cancel_current_workflow` or `return_to_suspended_topic`.
++- **Result:** `continue_current_topic` (confidence high), with evidence `meaning_hold` appended.
++- **Emotion:** "I'm frustrated. What do you mean?" was `interrupt_and_suspend` and is now `continue_current_topic` + `meaning_hold`. Affect stays a modifier.
++- **Distress with no relation is unchanged.** "I'm falling apart. I can't do this." stays `interrupt_and_suspend` (distressed, `relation none`).
++
++**Rule 2 — a yes or no is not an answer to an open question.**
++- **Condition:** all of the following hold:
++  - the transition was `answer_pending_question`;
++  - `relation ∈ {accept, decline}`;
++  - the pending question does not expect yes/no and is not a decision slot;
++  - none of the owner's own affordances match the reply.
++- **Result:** `unclear` (low), with evidence `meaning_not_an_answer`.
++
++**Consumers of the reconciliation (main chat):**
++- **`CompanionPageClient`:** `boundaryClaimedTurn` also counts `isMeaningHold(decision)`, so a held turn is Boundary's and no fast-path "yes" handler can take it.
++- **`CompanionPageClient`:** the legacy "not a yes/no → drop the armed offer" clear is **skipped** on a hold. This was the OB-0 B-5 defect: asking what an offer means no longer loses the offer.
++- **`createTurnRelationship`:** a Create discovery answer requires `!isMeaningHold(decision)`.
++- **Continuity gate:** for `continue_current_topic` it already keeps Create intact (fall-through), so nothing is parked or destroyed on a hold.
++
++**Transition differential against OB-1** (300 inputs: the whole corpus + holdout + OB-2 additions, and every driver situation in every context):
++- **202 identical.**
++- **98 changed, all carrying an OB-2 marker:**
++  - 95 × `meaning_hold`: `switch_topic→continue` 57, `unclear→continue` 30, `answer_pending→continue` 5, `interrupt→continue` 3;
++  - 3 × `meaning_not_an_answer`: `answer_pending→unclear`.
++- **0 unexplained changes** (asserted).
++
++## 5. The `permitsFor` consumer architecture
++
++```
++member text + the room's pending question (plain data)
++        │
++        ▼
++roomTurnVerdict()                          lib/conversationBoundaryRoomGate.ts
++  ├─ resolveConversationBoundary(...)      One Brain: relation · stance · affect · binding · confidence
++  ├─ permitsFor(decision, { pendingQuestionOwnsInput: true, pendingQuestionOptional, answerAffordanceValid })
++  └─ verdict: proceed | skip | hold(obligation)
++        │
++        ▼
++room: proceed → its own domain validation, then store / advance exactly as before
++      skip    → its own existing skip path (optional questions only)
++      hold    → store nothing, advance nothing, keep the question;
++                renderRoomHoldReply(verdict, ROOM'S OWN copy {question, meaning, help})
++```
++
++**Rules inside the gate.** These are general; none is per room.
++
++| Rule | Behavior |
++|---|---|
++| Store / advance | `proceed` only when `permitsFor(...).mayStoreAsAnswer` is true: `relation none`, HIGH confidence, not cancel/return/interrupt, and the owner's affordance has not rejected it |
++| Skip | A declined **optional** question produces `skip` |
++| Yes/no question | A HIGH `accept`/`decline` is the answer → `proceed` (Claire confirmation) |
++| `acceptsQuestions` | The room's question invites a question as its answer, so a HIGH `ask` proceeds. Used by Board intake's first step and the Strategy Chamber opening. |
++| `hasCorrectionSpecialist` | A HIGH `correct` goes to the room's own correction specialist. Used by Claire's confirmation contract ("modified"). |
++| `acceptsUnknown` (+ `unknownWithHelp`) | The room's own answer affordance accepts "I don't know" as information. The gate returns an **`unknown` verdict** (with a `helpRequested` flag) and the room applies its own semantics. **Board meeting:** a settled unknown the Directors reason with, with help riding along (R3F-5B, Founder-certified). **Events:** pause the question and come back later; a help request still holds and helps. |
++| `openingInvitation` | An opening invitation (Strategy Chamber's first question, Board intake's "decision, situation, or question") accepts anything the member offers. It holds only for a request to explain the invitation, or for distress. |
++| Room question + "No, <content>" | A room asked a question, not an offer, so "No, I don't have savings set aside." answers it. `decline_with_content` proceeds. It stays LOW (check) in main chat, where offers exist. |
++| Everything else | `hold`, with `explain_own_last_contribution`, `answer_question`, `help_with_pending`, `apply_or_confirm_correction`, `acknowledge_and_release`, `pause_for_person` or `check_meaning` |
++
++**`permitsFor` changes** (the contract is unchanged; these are additive):
++- `mayStoreAsAnswer` also holds when `pendingQuestionOwnsInput`, meaning the text arrived in the room's dedicated answer box. There, a substantive answer often *looks* like a transition "switch", and that must not block it. Cancel, return and interrupt still block.
++- A declined optional question gets `mayAdvance` (skip). A decline always releases the pending item.
++- The new obligation `pause_for_person` applies when the transition is `interrupt_and_suspend` with `relation none` (distress or detour).
++
++**The gate never decides from room vocabulary. Boundary never contains a domain explanation.** Every explanation string lives in the room's own module (§6).
++
++## 6. Rooms converged
++
++| Room | Entry now gated | Specialist copy (owned by the room) | Also changed |
++|---|---|---|---|
++| Main chat (Boundary) | `resolveConversationBoundary` reconciliation | — (the model answers in chat) | Turn claim, legacy-clear guard, Create grant |
++| Claire — confirmation pending | `resolveClaireConfirmationTurn` → Claire's contract | "I'm checking before I save anything…" | A question no longer falls into the decline branch that dropped the candidate |
++| Board intake | `boardIntakeTurn` (and `answerBoardIntakeStep` delegates to it) | Per step: decision / why now / options / concerns | The UI shows the hold reply under the question. The chat sticky-intake route returns the hold reply. "Start with decision only" is gated. |
++| Board meeting | `applyBoardMemberAnswers` | The asking **Director** replies through the existing `memberAskedYou` seam | The Board's local clarification/correction detection is replaced (legacy only with the switch off). "I don't know" stays a **settled unknown** through One Brain's `unknown` verdict. Questions embedded beside a real answer still travel with the answer (3F-5B); One Brain judges the statement part. |
++| Events | `applyEventConversationalAnswer` (entrance, chat and Current Focus all call it) | Per foundation section (event type, purpose, audience, …), with a section-label fallback | A hold writes **nothing** to the event record. A plain "I don't know (yet)" is One Brain's `unknown`, which Events applies as its certified defer (pause, next question). "…help me figure it out" holds and helps. Events keeps only its domain dispositions. |
++| Strategy Apply | `processStrategyApplyTurn` | Per question (problem / better / constraints), with a strategy fallback | The local `isWorkflowConceptQuestion` is replaced |
++| Strategy Chamber | `applyGuidedJourneyAnswer` | Opening vs. later questions | A hold changes only Shari's reflection. A held opening is no longer handed to chat. |
++| Day Designer (Plan My Day) | `dayDesignerTurn` / `processDayDesignerMessage` | Per step (time / energy / environment / priorities) | The chat shows the hold reply; a hold never builds a plan |
++| Create entrance | `advanceEntranceUnderstanding` | Per discovery slot (goal / obstacle / outcome / context) | Create's `signalPatterns` pass through as owner affordances |
++| Work Recognition | Inherits Create entrance (same step function) | Create's slot copy | — |
++
++**Verified green and not rewritten:** Claire conversation (write path), Reminder intake, Rhythm offer pending, VTS menu.
++
++## 7. Divergence before and after
++
++| Matrix | Cells | Diverging |
++|---|---|---|
++| OB-1 baseline (8 situations × 15 rooms) | 120 | **61** |
++| OB-2, same 8 situations | 120 | **8** |
++| OB-2, plus "I don't know. Help me…", "No, that's not what I meant." and distress | 165 | **4** |
++| OB-2 with `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0` | 120 | **Every observed room behavior identical to OB-1, cell for cell** (asserted) |
++
++**One documented room expectation.** Board meeting declares `acceptsUnknown`. For the two unsure situations, its expected outcome is therefore "stored as a settled unknown and moved on", not a hold (R3F-5B, Founder-certified). In the drivers this is declared as data (`acceptsUnknown: true`), not inferred.
++
++The OB-2 matrix, with One Brain on:
++
++| Room | clarify | ask | unsure | don't-know+help | correct | not-what-I-meant | bare yes | decline | frustrated+clarify | distress | real answer |
++|---|---|---|---|---|---|---|---|---|---|---|---|
++| Main Boundary | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Claire conversation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Claire confirmation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Board intake | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Board meeting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Events | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Strategy Apply | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Strategy Chamber | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Day Designer | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Reminder intake | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Rhythm — offer pending | ✅ | ✅ | ✅ | ✅ | ❌ P | ❌ P | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Rhythm — just executed | ✅ | ✅ | ✅ | ✅ | ❌ XP | ❌ XP | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Create entrance | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| Work Recognition | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++| VTS menu | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
++
++## 8. Remaining divergences and why
++
++- **Rhythm owner, corrections (4 cells).** "No, that's wrong. I said Tuesday." and "No, that's not what I meant." are still read by the Remember owner's own decline rule. The pending offer is released and the executed Rhythm is not corrected. **This is intentionally OB-4** (brief §4). Fixing it needs the receipt/correction execution path, not a hold.
++- **An observer correction, not a behavior claim.** The OB-1 Work Recognition driver counted "advanced" as "the reply text changed". It now checks whether the stored journey session changed, which is structural and language-free.
++  - With the switch off, the corrected observer still reproduces the OB-1 baseline exactly, because the old behavior really did change the session.
++  - With the switch on, Work Recognition stores nothing and keeps the same question (also shown in `roomHold.ob2.test.ts`).
++
++## 9. Duplicate-authority audit (modified room paths)
++
++| Room / path | Local decision still present | Class | Note |
++|---|---|---|---|
++| Boundary transition | Emotional precedence over a relation | **REPLACED** | A HIGH relation now wins; affect is a modifier |
++| Main chat | Legacy clear of the armed offer on "not a yes/no" | **REPLACED** on holds | Still clears on genuinely unrelated turns (OB-3 unifies it) |
++| Main chat | ~20 fast-path "yes" binders (`isBareGenericAcceptance`, invites, VTS menu…) | **DEFER → OB-3** | They cannot take a held turn (`boundaryClaimedTurn` covers holds). Binding unification is OB-3. |
++| Main chat | Decision Ledger "yes" skipped when Boundary claims the turn (OB-0 B-10) | **DEFER → OB-3** | Unchanged; still unreproduced |
++| Create (chat) | `DETOUR_QUESTION_RE` ("?" ⇒ not an answer) beside the grant | **DEFER → OB-3** | Only ever more restrictive (it can hold, never store) |
++| Create (chat) | `bareContinue` (a bare yes continues the Create flow) | **DEFER → OB-3** | Create-flow continuation, not storage of "yes" as a discovery answer |
++| Claire confirmation | `memberChangedSubjectDuringConfirmation` runs before the gate | **DEFER → OB-3** | A topic switch is transition/pending territory |
++| Claire confirmation | `parseMemberConfirmationResponse` (yes/no/partial/modify) | **KEEP** (specialist) after the gate | Claire's write-contract semantics; runs only when One Brain says `proceed` |
++| Claire prototype | `/unsure\|not sure…/ → setMemberCameInUncertain` | **DEFER** | A tone flag only; stores and advances nothing |
++| Board intake | `isSubstantiveBoardAdvisoryQuestion` | **KEEP** | Domain routing of a stored decision |
++| Board meeting | `detectConversationalMove`, `detectHelpRequest` | **REPLACED** | Used only when the kill switch is `0` |
++| Board meeting | `extractMemberQuestion` (which Director is named) | **KEEP** | Specialist referent resolution; One Brain judges the remainder |
++| Board meeting | `classifyMemberBoardResponseKind` (factual unknown: "no revenue yet") | **KEEP** | Runs only on `proceed`; a factual unknown is a real answer |
++| Board meeting | Treating "I don't know" as a settled unknown | **KEEP (affordance), meaning REPLACED** | One Brain decides the member doesn't know (`unknown` verdict); the Board decides what an unknown means for the Directors |
++| Board meeting | Sentence-punctuation split (embedded question beside an answer) | **KEEP** | 3F-5B structure; no vocabulary; One Brain judges the statement part |
++| Events | "I don't know (yet)" → defer | **Meaning REPLACED, semantics KEPT** | One Brain's `unknown` verdict; Events applies its certified defer |
++| Events | `detectDisposition` "I don't know" → defer, "later/not now" → skip | **REPLACED** | Used only when the kill switch is `0` |
++| Events | organizer-holds-info / not-my-responsibility / redirect-to-work | **KEEP** | Event-domain meanings, run only on `proceed` |
++| Events | `applyCorrections` (duration/headcount/"moved from X to Y") | **KEEP** | Domain correction of values inside an answer |
++| Strategy Apply | `isWorkflowConceptQuestion` | **REPLACED** | Used only when the kill switch is `0` |
++| Strategy Chamber | `answerIntake` epistemic tagging | **KEEP** | Specialist |
++| Day Designer | `parseMinutes/Energy/Environment` | **KEEP** | Domain value parsing |
++| Create entrance | `SOP_TEXT_RE`, `signalPatterns` | **KEEP** | Domain routing / owner affordances |
++| Work Recognition | `isSimpleAffirmation` (typed ready-line yes), `isExplicitNavigationIntent` | **DEFER → OB-3** | Binding and navigation |
++| **Current Focus — non-event Create path** | `applyAnswerToRuntimeCreationRecord` stores any reply | **DEFER — gap** | Not in OB-2 scope and not in the OB-1 baseline. **It still stores a clarification as an answer.** Recommended for OB-3 or an OB-2.1 add-on (the same one-call gate). |
++
++`oneBrainConsumers.test.ts` enforces the structure:
++- only the room gate calls `permitsFor` or reads the meaning fields;
++- rooms import the meaning module only for the kill switch;
++- every converged room entry calls `roomTurnVerdict`;
++- production never imports the certification harness or the evaluation-only model read.
++
++## 10. Adversarial results
++
++Pending context as noted. "Room verdict" is what a converged room does.
++
++| Member turn | Context | relation | stance | affect | conf. | obligation | store | advance | pending kept | exec | room verdict |
++|---|---|---|---|---|---|---|---|---|---|---|---|
++| Yes, but what do you mean by that? | open Q | clarify | none | none | high | explain | ✗ | ✗ | ✓ | ✗ | hold · explain |
++| No, wait — why are you asking me that? | open Q | ask | none | none | high | answer_question | ✗ | ✗ | ✓ | ✗ | hold · answer |
++| I don't know, but I think maybe women over 50. | open Q | unsure | none | none | **low** | check_meaning | ✗ | ✗ | ✓ | ✗ | hold · "is that your answer?" |
++| I'm overwhelmed, but can you explain this first? | open Q | clarify | none | strained | high | explain | ✗ | ✗ | ✓ | ✗ | hold · explain (gentle) |
++| That's not what I said. Why did you change it? | executed | ask | none | none | high | answer_question | ✗ | ✗ | ✓ | ✗ | hold · answer |
++| Okay, maybe. What happens if I say yes? | exec. offer | ask | none | none | high | answer_question | ✗ | ✗ | ✓ | ✗ | (main chat) hold |
++| Yes. | open Q | accept | act | none | **low** | check_meaning | ✗ | ✗ | ✓ | ✗ | hold · check |
++| Yes. | confirmation | accept | act | none | high | — | — | — | — | ✗ | **proceed** (it is the answer) |
++| Not now. | optional Q | decline | none | none | high | release | ✗ | ✓ (skip) | ✗ | ✗ | **skip** |
++| Not now. | exec. offer | decline | none | none | high | release | ✗ | ✗ | ✗ (released) | ✗ | (main chat) |
++| Can you help me figure that out? | open Q | unsure | none | none | high | help | ✗ | ✗ | ✓ | ✗ | hold · help |
++| I was thinking about doing that. | open Q | none | talk_about | none | high | domain | ✓ | ✓ | ✗ | ✗ | proceed (an answer) |
++| Do it. | exec. offer | accept | act | none | high | execute | ✗ | ✗ | ✗ | **✓** (fresh armed offer) | (main chat) |
++| What would happen if I did it? | exec. offer | ask | talk_about | none | high | answer_question | ✗ | ✗ | ✓ | ✗ | (main chat) hold |
++
++**Reader refinements found by this pass and the full-suite run.** Each is structural and certified with a paraphrase family in `OB2_ADDITIONS` (37 cases). No room vocabulary was added.
++
++| Refinement | Example | Reading |
++|---|---|---|
++| A tentative answer inside uncertainty | "…, but I think / maybe / probably <3+ words>" | **LOW** — check meaning; don't discard it and don't store it |
++| A help request put as a question while something is pending | "Can you help me figure that out?" | **unsure** |
++| The loose decline tokens ("no", "later", "stay", "not yet") only decline when they are the clause | "**No revenue yet** — we launch in March." | an answer, not a decline |
++| A decline token plus real content | "Nope, never been to one before." | **LOW** (in a room's answer box it proceeds as the answer) |
++| A pseudo-cleft statement is not a question | "What I'm doing isn't working." / "What we need is…" | **none** (an answer) |
++| A weak "no, I …" correction (turnRecovery's broad pattern only) yields to an explicit decline clause | "No, I don't have savings set aside." | Not a HIGH correction of Spark |
++
++## 11. False-execution proof
++
++| Gate | Result |
++|---|---|
++| OB-1 corpus (145): every HIGH reading equals the human label | **Green (100% HIGH precision)** |
++| OB-1 holdout (43) | **Green (100%)** |
++| OB-2 additions (37) | **Green (100%)** |
++| False execution authorizations: corpus / holdout / OB-2 additions, with and without transition gating | **0 / 0 / 0** |
++| Adversarial set | The only `mayExecute` is "Do it." to a fresh, armed offer, which is correct |
++| Rooms | **No room executes anything new.** A hold writes nothing (Events record unchanged, asserted). `permitsFor` still authorizes only a fresh armed offer, which no room in OB-2 has. |
++| Model tier | None. Approach A only; production never imports the evaluation read (enforced). |
++
++## 12. Kill switch — `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD`
++
++- **Default (unset or anything but `0`):** One Brain hold/store/advance is on.
++- **`=0`: restores the previous behavior.** It bypasses exactly these:
++  1. Boundary transition reconciliation, so the transition is OB-1 byte-identical;
++  2. the page's hold turn claim and legacy-clear guard (`isMeaningHold` is never true);
++  3. Create's hold refusal;
++  4. `roomTurnVerdict`, which always returns `proceed`;
++  5. the three rooms' legacy readers come back: Board meeting `detectConversationalMove`/`detectHelpRequest`, Events `detectDisposition` (unsure/skip), Strategy Apply `isWorkflowConceptQuestion`.
++- **Proof:** with the switch at `0`, every room's observed behavior equals the committed OB-1 baseline exactly (120/120 cells), and `roomHold.ob2.test.ts` checks the switch per room.
++- **It does not bypass:** the six OB-2 reader refinements. They only change *meaning* readings, which are consumed only by the gate and the reconciliation, and both are bypassed.
++- **Scope:** one environment variable, read in one function (`isBoundaryMeaningHoldEnabled`). No flag system.
++
++## 13. Test, typecheck and lint evidence
++
++| # | Check | Result |
++|---|---|---|
++| 1–3 | OB-1 corpus, holdout, HIGH-precision gate | **Green** (plus OB-2 additions) |
++| 4 | False executions | **0** |
++| 5 | Real-room divergence baseline | **Updated deliberately:** 61/120 → 8/120 (4/165 with extras); OB-1 reproduced exactly with the switch off |
++| 6 | Boundary snapshot purity (`conversationBoundaryPreTurnSnapshot`) | **Green** (full suite) |
++| 7 | Existing Boundary suites | **Green** (full suite) |
++| 8 | Directly affected room suites | Board, Events, Strategy, Day Designer, Create entrance, Work Recognition, Claire, continuity, executable intent — see the full-suite row |
++| 9 | **Full suite, OB-1 base vs OB-2** | OB-1: 20,665 tests, 459 failing. OB-2: **20,683 tests, 459 failing. Failing-id set identical: 0 new, 0 fixed.** (The first OB-2 run found 17 new failures in converged rooms; all were resolved, see §15, before this final run. 13 corpus cases were added afterwards and pass their own gate suite.) |
++| 10 | `tsc --noEmit` | **353 vs 353; identical (file, code) multiset, 0 new** |
++| 11 | ESLint on every changed file | **Identical to OB-1 per file and rule** (175 vs 175 pre-existing findings in large files such as `CompanionPageClient`, 0 new). New files are clean. |
++| 12 | Duplicate-authority audit | §9 (enforced by `oneBrainConsumers.test.ts`) |
++| 13 | Kill-switch tests | Green (§12) |
++| 14 | Transition differential for cases OB-2 is **not** meant to change | 202/300 identical; all 98 changes carry OB-2 markers; **0 unexplained** |
++
++`next build` was not run. `next.config.ts` ignores type errors at build time, so `tsc` is the stronger check, and no build configuration changed.
++
++## 14. Founder preview test (after you authorize a push)
++
++**Sentence:** "I don't know what you mean. Can you explain that before we keep going?"
++
++| Where | How to get to the pending question | Expect |
++|---|---|---|
++| Main chat | Ask Spark to "help me write an email to my client"; wait for "Who is receiving this email?" | Spark explains in chat; the email stays in progress; answering next ("my accountant") continues the email |
++| Claire | Profile → My Business Profile; say "My workshop costs $150."; wait for Claire's confirmation question | Claire explains that she's checking before saving; **nothing is saved or dropped**; "Yes" next turn saves |
++| Board intake | Welcome Home → Guidance → Board Room → start a discussion; answer step 1; at "Why does it matter now?" type the sentence | A Board explanation appears under the question; still Step 2 of 4; your text is not in the draft |
++| Events | Events entrance → "I'm hosting an online event." → at the first foundation question | Events explains that question; the same question is asked again; nothing is added to the event |
++| Strategy | Strategy Chamber → start → answer the opening → at the next question | Shari's reflection explains the question; the same question remains |
++| Create | Create entrance → "I want to create a client onboarding guide" → at the first discovery question | Create explains the question; same question; nothing recorded |
++| Plan My Day | In chat say "plan my day" → at any Day Designer question | Plan My Day explains; the same step remains; no plan is built |
++| Reminder intake | "Remind me to call Susan" → at "When would you like me to remind you?" | Holds and re-asks; nothing saved (already green in OB-1) |
++
++In every room:
++1. Spark treats it as a request for clarification.
++2. It explains **its own** question.
++3. It doesn't save the words.
++4. It doesn't move on.
++5. The question stays.
++6. The next turn can answer it.
++
++Also try "I'm falling apart. I can't do this.": the pause is kept and the place is saved.
++
++## 15. Not verified
++
++- **No live browser or preview run.** Not pushed (§2). The React surfaces were changed minimally (a hold message and early returns), but they were not rendered in a browser this round.
++- The main-chat `handleSend` ordering was not replayed end to end. Its seams are covered by unit tests and the Boundary differential.
++- Deterministic rooms (Board intake, Day Designer, Strategy, Events, Create) **cannot answer arbitrary factual questions**. For `answer_question` they answer from their own "why this question" copy and hold. Main chat and Board meeting answer through the model and the Directors.
++- **Current Focus non-event Create path** still stores any reply (§9 gap).
++- **A design tension resolved in favor of Founder-certified behavior (Founder may wish to confirm):**
++  - The brief's generic rule is "unsure → help, don't store".
++  - Two rooms have certified designs where "I don't know" *is* meaningful information: the Board (settled unknown, R3F-5B) and Events (pause and come back).
++  - One Brain still decides that the member doesn't know. Those two rooms declare `acceptsUnknown` and apply their own semantics.
++  - Every other room holds and helps.
++- **The first full-suite run found 17 new failures,** all in converged rooms (Board R3F-5/5B/5C, Events defer/skip, Strategy Chamber opening, Board intake fixture). All 17 were resolved:
++  - by the affordance options above;
++  - by the two structural reader refinements (pseudo-cleft, weak correction yields to decline);
++  - by the two inline-documented test updates (§3).
++
++## 16. Adversarial self-review
++
++| Question | Answer |
++|---|---|
++| Did I create nine new brains? | No. One gate function; rooms pass plain data and render their own copy. No room reads meaning fields (enforced). |
++| Did Boundary absorb domain explanations? | No. Every explanation string is in the room module; the renderer only frames. |
++| Does any room still decide meaning on its own? | Only where listed as KEEP (domain) or DEFER (OB-3/OB-4, §9). The three replaced readers run only with the switch off. |
++| Did I phrase-patch? | No room vocabulary was added. Six reader refinements are structural and certified with paraphrase families plus negative controls, and HIGH precision stayed at 100%. |
++| Could a hold lose work? | No. Held turns store nothing and keep the question. The page's legacy clear no longer drops an armed offer on a hold. Events writes nothing. |
++| Could a hold trap the member? | No. A real answer on the next turn proceeds (tested per room). An optional question can be declined (skip). Cancel and return still leave. Low confidence asks one short check. |
++| Did emotion become exclusive again? | No. Relation wins; `distressed` + no relation still interrupts. |
++| Can LOW confidence store, advance or execute? | No. |
++| False execution? | 0 across all gates. |
++| Is the kill switch real? | Yes. OB-1 is reproduced exactly with it off. |
++| Did unrelated behavior change? | The transition changes only where OB-2 markers say so (differential). Full suite: see §13. |
++
++## 17. Recommended OB-3 scope — not implemented
++
++**OB-3 — One pending authority (binding unification).**
++1. **Generalize the Boundary snapshot** into `pendingOwnerSnapshot`, reading the spine's `ownership.expectedReply`, with an optional `items[]` for enumerated offers.
++2. **Route every "yes / modification / partial / decline" binder** through Boundary + `permitsFor.mayExecute` / `executableScope`:
++   - the ~20 main-chat fast paths;
++   - Board/Chamber invites;
++   - the VTS menu;
++   - Work Recognition's ready-line;
++   - Create's `bareContinue`.
++3. **Arm pending offers only on the spine**, with turn provenance and expiry. Stop regex-arming from model text.
++4. **Fold in:**
++   - Claire's subject-change check and the Decision Ledger B-10 case (reproduce it first);
++   - the remaining legacy confirmation clear;
++   - the Current Focus non-event Create gap, which is the same one-call gate if it stays in OB-2.x.
++
++**Not in OB-3:** the Rhythm Tuesday correction and receipts (OB-4), capabilities (OB-5), the KNOW lens (OB-6).
++
++**Founder proof:**
++- offer → unrelated turn → "yes" does nothing;
++- offer → "yes, but at 4" modifies;
++- offer → "what does that mean?" → "yes" still works;
++- after a reload, "yes" does nothing.
++
++---
++
++*OB-2 complete. Certified locally. Not pushed. Not merged. Not deployed. OB-3 not started.*
+diff --git a/docs/reviews/ob2/divergence_baseline.json b/docs/reviews/ob2/divergence_baseline.json
+new file mode 100644
+index 00000000..e378f383
+--- /dev/null
++++ b/docs/reviews/ob2/divergence_baseline.json
+@@ -0,0 +1,2146 @@
++[
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "unclear"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "unclear"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "answer_pending_question"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "continue_current_topic"
++  }
++ },
++ {
++  "room": "Main Boundary (S4)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "interrupt_and_suspend"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (conversation)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "no_write"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "modified"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "confirmed"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "unrecognized"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "modified"
++  }
++ },
++ {
++  "room": "Claire (confirmation pending)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "held"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "review"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "options"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board intake",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "importance"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "answered/unknown"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "answered/information"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "answered/unknown"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Board meeting",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "asked"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "skip"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Events",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "answered"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "q1"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Apply",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "q0"
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Strategy Chamber",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "complete"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "complete"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Day Designer (Plan My Day)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "priorities"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "confirm"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Reminder intake",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "ask"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S4-correct",
++  "diverges": true,
++  "divergentFields": [
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": true,
++  "divergentFields": [
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (offer pending)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S4-correct",
++  "diverges": true,
++  "divergentFields": [
++   "executed",
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "frictionless:estate_concierge"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": true,
++  "divergentFields": [
++   "executed",
++   "pendingPreserved"
++  ],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "frictionless:reminder"
++  }
++ },
++ {
++  "room": "Rhythm owner (just executed)",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": null,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "chat_api"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Create entrance",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": true,
++   "executed": false,
++   "pendingPreserved": false,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "Work Recognition",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": false,
++   "executed": false,
++   "pendingPreserved": true,
++   "note": "question"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S1-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S2-ask",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S3-unsure",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S4-correct",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S5-bare-yes",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "open:decision-tree"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S6-decline",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S7-strained-clarify",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S8-answer",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": true,
++   "storedAsAnswer": null,
++   "executed": true,
++   "pendingPreserved": false,
++   "note": "open:mind-map"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S3b-dont-know-help",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S4b-not-what-i-meant",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ },
++ {
++  "room": "VTS menu",
++  "situation": "S9-distress",
++  "diverges": false,
++  "divergentFields": [],
++  "observed": {
++   "advanced": false,
++   "storedAsAnswer": null,
++   "executed": false,
++   "pendingPreserved": null,
++   "note": "unresolved"
++  }
++ }
++]
+\ No newline at end of file
+diff --git a/lib/board/boardDiscussion/boardDirectorDiscussion.intake.test.ts b/lib/board/boardDiscussion/boardDirectorDiscussion.intake.test.ts
+index e4d9db42..4c3e95fa 100644
+--- a/lib/board/boardDiscussion/boardDirectorDiscussion.intake.test.ts
++++ b/lib/board/boardDiscussion/boardDirectorDiscussion.intake.test.ts
+@@ -91,10 +91,12 @@ describe("Board intake state machine", () => {
+     let d = createEmptyBoardIntakeDraft(["board-chair"]);
+     d = answerBoardIntakeStep(d, "Decision");
+     expect(d.selectedDirectorIds).toEqual(["board-chair"]);
+-    d = answerBoardIntakeStep(d, "Why");
++    // OB-2: a bare "Why" is a question to Spark, not an answer to "Why does it
++    // matter now?" — One Brain holds it. The fixture uses a real answer instead.
++    d = answerBoardIntakeStep(d, "Timing matters");
+     expect(d.decision).toBe("Decision");
+     d = answerBoardIntakeStep(d, "A\nB");
+-    expect(d.importance).toBe("Why");
++    expect(d.importance).toBe("Timing matters");
+     d = answerBoardIntakeStep(d, "Risk");
+     expect(d.options).toEqual(["A", "B"]);
+     expect(d.selectedDirectorIds).toEqual(["board-chair"]);
+diff --git a/lib/board/boardDiscussion/boardDirectorDiscussion.ts b/lib/board/boardDiscussion/boardDirectorDiscussion.ts
+index 8c38df45..1d9d6e3b 100644
+--- a/lib/board/boardDiscussion/boardDirectorDiscussion.ts
++++ b/lib/board/boardDiscussion/boardDirectorDiscussion.ts
+@@ -37,6 +37,7 @@ import {
+   resolveAddressNameForBoard,
+   type BoardPersonalizationOptions,
+ } from "@/lib/board/resolveBoardAddressName";
++import { renderRoomHoldReply, roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
+ import {
+   checkResolvedBriefContinuity,
+   resolveBoardSubjectBrief,
+@@ -623,12 +624,86 @@ export function parseOptionsAnswer(raw: string): string[] {
+ }
+ 
+ /**
+- * Merge one answer into the draft and advance exactly one step.
+- * Never jumps backward. Concerns → review (not decision).
++ * Board's own words about each intake question (specialist copy). One Brain
++ * decides WHAT the member is doing; Board explains its own question.
++ */
++const BOARD_INTAKE_QUESTION_COPY: Record<
++  "decision" | "importance" | "options" | "concerns",
++  { meaning: string; help: string }
++> = {
++  decision: {
++    meaning:
++      "I'm asking what you'd like the Board to think through with you — a decision you're facing, a situation, or a question about your business.",
++    help: "It can be rough. Something like “Should I raise my prices?” or “Whether to hire my first assistant” is plenty to start.",
++  },
++  importance: {
++    meaning:
++      "I'm asking why this decision matters right now — what's pushing on it, or what happens if it waits. It helps the Directors weigh it the way you would.",
++    help: "Think about what changed recently, or what it's costing you to leave it undecided. One sentence is enough.",
++  },
++  options: {
++    meaning:
++      "I'm asking which paths you're already weighing, so the Directors examine your real choices rather than inventing their own.",
++    help: "List whatever is on the table, even half-formed — “keep going as is” counts as an option.",
++  },
++  concerns: {
++    meaning:
++      "I'm asking what already worries you about this, so the Board can take those concerns seriously instead of talking past them.",
++    help: "Name whatever makes you hesitate — money, time, how people will react. There are no wrong worries.",
++  },
++};
++
++/**
++ * OB-2 — one intake turn through One Brain. Boundary + `permitsFor` decide
++ * whether the member's words are an answer; Board stores/advances only then.
++ * A declined optional question skips; a hold leaves the draft untouched and
++ * returns Board's reply.
++ */
++export function boardIntakeTurn(
++  draft: BoardDiscussionIntakeDraft,
++  answer: string,
++): { draft: BoardDiscussionIntakeDraft; holdReply: string | null } {
++  const trimmed = answer.trim();
++  if (!trimmed || !isQuestionIntakeStep(draft.currentStep)) {
++    return { draft: applyBoardIntakeAnswer(draft, answer), holdReply: null };
++  }
++  const step = draft.currentStep;
++  const question = currentIntakePrompt({ currentStep: step });
++  const verdict = roomTurnVerdict({
++    userText: trimmed,
++    // The decision step invites "a decision, situation, or question".
++    question: {
++      text: question,
++      optional: step !== "decision",
++      acceptsQuestions: step === "decision",
++      openingInvitation: step === "decision",
++    },
++  });
++  if (verdict.kind === "skip") return { draft: skipBoardIntakeStep(draft), holdReply: null };
++  if (verdict.kind === "hold") {
++    return {
++      draft,
++      holdReply: renderRoomHoldReply(verdict, { question, ...BOARD_INTAKE_QUESTION_COPY[step] }),
++    };
++  }
++  return { draft: applyBoardIntakeAnswer(draft, answer), holdReply: null };
++}
++
++/**
++ * Merge one answer into the draft and advance exactly one step — only when One
++ * Brain permits it (see `boardIntakeTurn`); a held turn returns the draft
++ * unchanged. Never jumps backward. Concerns → review (not decision).
+  */
+ export function answerBoardIntakeStep(
+   draft: BoardDiscussionIntakeDraft,
+   answer: string,
++): BoardDiscussionIntakeDraft {
++  return boardIntakeTurn(draft, answer).draft;
++}
++
++function applyBoardIntakeAnswer(
++  draft: BoardDiscussionIntakeDraft,
++  answer: string,
+ ): BoardDiscussionIntakeDraft {
+   const trimmed = answer.trim();
+   if (!trimmed) return draft;
+diff --git a/lib/board/reconstructed/orchestration/boardMemberQuestions.ts b/lib/board/reconstructed/orchestration/boardMemberQuestions.ts
+index f31a3f43..7ec6e7a5 100644
+--- a/lib/board/reconstructed/orchestration/boardMemberQuestions.ts
++++ b/lib/board/reconstructed/orchestration/boardMemberQuestions.ts
+@@ -12,6 +12,8 @@
+  * and never writes anything outside the meeting.
+  */
+ 
++import { isBoundaryMeaningHoldEnabled } from "@/lib/conversationBoundaryMeaning";
++import { roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
+ import type { DirectorFirstPassResult } from "../firstPass/directorFirstPassResult";
+ import { toDirectAddress } from "../synthesis/memberLanguage";
+ import type { ReconstructedDirectorReasoningId } from "../types";
+@@ -472,22 +474,64 @@ export function applyBoardMemberAnswers(
+       };
+     }
+ 
+-    // Founder retest — a turn confused about THIS question's wording, or one
+-    // saying the Board's premise is wrong, carries no answer at all: the
+-    // pending need remains unmet exactly as a pure question-to-Director
+-    // does. Routed through the SAME addressed-reply path (`memberQuestion` /
+-    // `memberQuestionAddressedTo`) rather than a new mechanism — the
+-    // Director who raised this question is the one who clarifies or
+-    // reconsiders the premise, replying via the existing `memberAskedYou`
+-    // seam. Never folded into evidence or a settled unknown.
+-    const move = detectConversationalMove(hasInformation ? remainder : raw);
+-    if (move === "clarification_request" || move === "correction") {
++    // OB-2 — One Brain decides what the member is doing with this question.
++    // Boundary + permitsFor judge the member's own words (the informational
++    // remainder when a Director-addressed question sentence was set aside);
++    // Board no longer reads clarification / correction / help itself. A held
++    // turn keeps the question open and routes it to the asking Director
++    // through the existing addressed-reply seam (`memberAskedYou`).
++    if (!isBoundaryMeaningHoldEnabled()) {
++      // Kill switch (NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0): the pre-OB-2 Board
++      // reading, byte-for-byte, so rollback restores the previous behavior.
++      const move = detectConversationalMove(hasInformation ? remainder : raw);
++      if (move === "clarification_request" || move === "correction") {
++        heldOpenIds.add(q.id);
++        return {
++          ...q,
++          memberQuestion: raw,
++          memberQuestionAddressedTo: extracted?.addressedDirectorId ?? q.askedBy[0]?.directorReasoningId,
++          ...(move === "clarification_request" ? { clarificationRequested: true as const } : { correctionNoted: true as const }),
++        };
++      }
++    }
++    // Board's affordance: "I don't know" is information (a settled unknown the
++    // Directors reason with), and a help request rides along with it.
++    // 3F-5B: questions embedded alongside a real answer travel WITH the answer to
++    // the Directors. One Brain therefore judges the statement part when there is
++    // one (sentence punctuation only); a turn that is only a question is judged whole.
++    const judged = hasInformation ? remainder : raw;
++    const statementPart = judged
++      .split(/(?<=[.!?])\s+/)
++      .filter((sentence) => !/\?\s*["')\]]*$/.test(sentence.trim()))
++      .join(" ")
++      .trim();
++    const verdict = roomTurnVerdict({
++      userText: statementPart.split(/\s+/).length >= 3 ? statementPart : judged,
++      question: { text: q.question, acceptsUnknown: true, unknownWithHelp: true },
++    });
++    if (verdict.kind === "unknown") {
++      return {
++        ...q,
++        status: "answered" as const,
++        answer: raw,
++        responseKind: "unknown" as const,
++        settledAsUnknown: true,
++        ...(verdict.helpRequested ? { helpRequested: true as const } : {}),
++        ...(extracted
++          ? { memberQuestion: extracted.memberQuestion, memberQuestionAddressedTo: extracted.addressedDirectorId }
++          : {}),
++      };
++    }
++    if (verdict.kind !== "proceed") {
+       heldOpenIds.add(q.id);
++      const obligation = verdict.kind === "hold" ? verdict.obligation : "acknowledge_and_release";
+       return {
+         ...q,
+         memberQuestion: raw,
+         memberQuestionAddressedTo: extracted?.addressedDirectorId ?? q.askedBy[0]?.directorReasoningId,
+-        ...(move === "clarification_request" ? { clarificationRequested: true as const } : { correctionNoted: true as const }),
++        ...(obligation === "explain_own_last_contribution" ? { clarificationRequested: true as const } : {}),
++        ...(obligation === "apply_or_confirm_correction" ? { correctionNoted: true as const } : {}),
++        ...(obligation === "help_with_pending" ? { helpRequested: true as const } : {}),
+       };
+     }
+ 
+@@ -497,7 +541,10 @@ export function applyBoardMemberAnswers(
+     // the remainder once any embedded question is set aside — never from a
+     // question sentence that happens to share words with the marker list.
+     const responseKind = classifyMemberBoardResponseKind(hasInformation ? remainder : raw);
+-    const helpRequested = detectHelpRequest(hasInformation ? remainder : raw);
++    // With One Brain on, a help request is a hold (above) and never rides on a
++    // stored answer; the legacy flag below only applies with the kill switch off.
++    const helpRequested =
++      !isBoundaryMeaningHoldEnabled() && detectHelpRequest(hasInformation ? remainder : raw);
+     return {
+       ...q,
+       status: "answered" as const,
+diff --git a/lib/board/round3f5ConversationalTurns.test.tsx b/lib/board/round3f5ConversationalTurns.test.tsx
+index ed2a77b5..6fbd2868 100644
+--- a/lib/board/round3f5ConversationalTurns.test.tsx
++++ b/lib/board/round3f5ConversationalTurns.test.tsx
+@@ -32,7 +32,14 @@ type Stance = {
+ 
+ const h = vi.hoisted(() => ({
+   stances: {} as Record<string, Stance>,
+-  calls: { first_pass: [] as string[], cross_exam: 0, reviseAfterAnswer: [] as { id: string; info: unknown }[], synthesis: 0 },
++  calls: {
++    first_pass: [] as string[],
++    cross_exam: 0,
++    reviseAfterAnswer: [] as { id: string; info: unknown }[],
++    /** OB-2: a member question routed to the asking Director (`memberAskedYou`). */
++    askedYou: [] as { id: string; question: unknown }[],
++    synthesis: 0,
++  },
+   transportFailures: 0,
+   transportCalls: [] as Record<string, unknown>[],
+   draftAtSend: [] as unknown[],
+@@ -97,6 +104,7 @@ vi.mock("@/lib/internalAgent", async () => {
+     if (invocation.phase === "revise") {
+       const id = String(payload.directorReasoningId);
+       const original = payload.originalFirstPass as { provisionalPosition: string };
++      if (payload.memberAskedYou) h.calls.askedYou.push({ id, question: payload.memberAskedYou });
+       if (payload.newMemberInformation) {
+         h.calls.reviseAfterAnswer.push({ id, info: payload.newMemberInformation });
+         return ok({
+@@ -311,6 +319,7 @@ beforeEach(() => {
+   h.calls.first_pass = [];
+   h.calls.cross_exam = 0;
+   h.calls.reviseAfterAnswer = [];
++  h.calls.askedYou = [];
+   h.calls.synthesis = 0;
+   h.transportFailures = 0;
+   h.transportCalls.length = 0;
+@@ -461,7 +470,16 @@ describe("3F-5 · one open question at a time; the Board reacts before anything
+     const box = el.querySelector<HTMLTextAreaElement>('[data-testid="board-member-question-answer"]')!;
+     expect(box.placeholder).toMatch(/^Whatever you know — or ask .+ or the Board something…$/);
+     await respond(el, "Why are you asking me that?");
+-    expect(JSON.stringify(h.calls.reviseAfterAnswer.map((r) => r.info))).toContain("Why are you asking me that?");
++    // OB-2 — One Brain reads this as a QUESTION to the Board, so it reaches the
++    // asking Director verbatim as `memberAskedYou` (the Director answers it and
++    // the need stays open) rather than as new information. Either way the
++    // member's words go to the Board verbatim and never become a decision.
++    expect(
++      JSON.stringify([
++        ...h.calls.reviseAfterAnswer.map((r) => r.info),
++        ...h.calls.askedYou.map((r) => r.question),
++      ]),
++    ).toContain("Why are you asking me that?");
+     const draft = loadBoardIntakeDraft()!;
+     expect(draft.boardSession!.memberContributions.find((c) => c.kind === "board_question_answer")!.text).toBe(
+       "Why are you asking me that?",
+diff --git a/lib/businessProfileFounder/claireConfirmationTurn.ts b/lib/businessProfileFounder/claireConfirmationTurn.ts
+new file mode 100644
+index 00000000..d4d9ba53
+--- /dev/null
++++ b/lib/businessProfileFounder/claireConfirmationTurn.ts
+@@ -0,0 +1,45 @@
++/**
++ * Claire confirmation turn — OB-2.
++ *
++ * While Claire is waiting for the member to confirm a business fact, One Brain
++ * decides what the member is doing. A question, a request to explain, "I'm not
++ * sure", or an unclear reply HOLDS the candidate (nothing is written or
++ * dropped) and Claire explains in her own words. A clear yes / no / change /
++ * correction goes to Claire's own confirmation contract, unchanged.
++ */
++
++import { renderRoomHoldReply, roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
++import {
++  parseMemberConfirmationResponse,
++  type MemberConfirmationOutcome,
++} from "./confirmationContract";
++import type { ProfileWriteCandidate } from "./writeCandidateContract";
++
++export type ClaireConfirmationTurn =
++  | { kind: "hold"; reply: string }
++  | { kind: "outcome"; outcome: MemberConfirmationOutcome };
++
++export function resolveClaireConfirmationTurn(
++  candidate: ProfileWriteCandidate,
++  memberLine: string,
++): ClaireConfirmationTurn {
++  const question = candidate.confirmationPrompt?.trim() || "Should I save that to your business picture?";
++  const verdict = roomTurnVerdict({
++    userText: memberLine,
++    question: { text: question, expects: "yes_no" },
++    hasCorrectionSpecialist: true,
++  });
++  if (verdict.kind === "hold") {
++    return {
++      kind: "hold",
++      reply: renderRoomHoldReply(verdict, {
++        question,
++        meaning:
++          "I'm checking before I save anything — I only update your business picture when you tell me it's right, so nothing changes by accident.",
++        help:
++          "There's no rush. You can say it's right, tell me what to change, or ask me to leave it as it is — I won't save it until you do.",
++      }),
++    };
++  }
++  return { kind: "outcome", outcome: parseMemberConfirmationResponse(candidate, memberLine) };
++}
+diff --git a/lib/conversationBoundary.ts b/lib/conversationBoundary.ts
+index 1e9161f2..0d6720e0 100644
+--- a/lib/conversationBoundary.ts
++++ b/lib/conversationBoundary.ts
+@@ -28,7 +28,7 @@
+  */
+ 
+ import { namesDeliverableTerm } from "./artifactRegistry";
+-import { readBoundaryMeaning } from "./conversationBoundaryMeaning";
++import { isBoundaryMeaningHoldEnabled, readBoundaryMeaning } from "./conversationBoundaryMeaning";
+ 
+ export type ConversationBoundaryDecisionKind =
+   | "continue_current_topic"
+@@ -437,8 +437,11 @@ function decide(
+ export function resolveConversationBoundary(
+   input: BoundaryTurnInput,
+ ): ConversationBoundaryDecision {
+-  const transition = resolveTransition(input);
++  const raw = resolveTransition(input);
+   const meaning = readBoundaryMeaning(input);
++  const transition = isBoundaryMeaningHoldEnabled()
++    ? reconcileTransitionWithMeaning(raw, meaning, input)
++    : raw;
+   return {
+     ...transition,
+     evidence: [...transition.evidence, ...meaning.evidence.map((e) => `meaning:${e}`)],
+@@ -450,6 +453,68 @@ export function resolveConversationBoundary(
+   };
+ }
+ 
++/** Evidence marker for a turn Boundary holds on the current thread (OB-2). */
++export const MEANING_HOLD_EVIDENCE = "meaning_hold";
++/** Evidence marker for a yes/no that is not an answer to an open question (OB-2). */
++export const MEANING_NOT_AN_ANSWER_EVIDENCE = "meaning_not_an_answer";
++
++/** True when Boundary held this turn on the current thread because of what the member is doing. */
++export function isMeaningHold(decision: ConversationBoundaryDecision | null | undefined): boolean {
++  return Boolean(decision?.evidence.includes(MEANING_HOLD_EVIDENCE));
++}
++
++const HOLD_RELATIONS = new Set(["clarify", "ask", "unsure", "correct"]);
++
++/**
++ * OB-2 — the transition must not contradict what the member is doing.
++ *
++ * 1. With a live thread (pending question/offer, executed item, unresolved
++ *    topic or active work), a HIGH-confidence clarify / ask / unsure / correct
++ *    is never a topic switch, never an answer, and never an emotional
++ *    interruption: it HOLDS the current thread (`continue_current_topic` +
++ *    `meaning_hold`). Affect stays a modifier.
++ * 2. A yes/no reply is not an answer to an OPEN question unless the pending
++ *    question expects yes/no, is a decision slot, or its owner's own
++ *    affordance matches the reply.
++ *
++ * Everything else — distress with no relation, cancel, return, LOW
++ * confidence — keeps the unchanged transition.
++ */
++function reconcileTransitionWithMeaning(
++  transition: ConversationBoundaryDecision,
++  meaning: ReturnType<typeof readBoundaryMeaning>,
++  input: BoundaryTurnInput,
++): ConversationBoundaryDecision {
++  const liveThread =
++    Boolean(input.pendingQuestion) ||
++    Boolean(input.pendingOffer) ||
++    Boolean(input.armedItems?.length) ||
++    Boolean(input.lastExecuted) ||
++    Boolean(input.activeTopic && !input.activeTopic.resolved) ||
++    Boolean(input.activeWork);
++  if (
++    liveThread &&
++    meaning.meaningConfidence === "high" &&
++    HOLD_RELATIONS.has(meaning.relation) &&
++    transition.decision !== "cancel_current_workflow" &&
++    transition.decision !== "return_to_suspended_topic"
++  ) {
++    return decide("continue_current_topic", "high", [...transition.evidence, MEANING_HOLD_EVIDENCE]);
++  }
++  const q = input.pendingQuestion;
++  if (
++    q &&
++    transition.decision === "answer_pending_question" &&
++    (meaning.relation === "accept" || meaning.relation === "decline") &&
++    q.expects !== "yes_no" &&
++    q.role !== "decision" &&
++    !q.affordances?.some((re) => re.test(input.userText.trim()))
++  ) {
++    return decide("unclear", "low", [...transition.evidence, MEANING_NOT_AN_ANSWER_EVIDENCE]);
++  }
++  return transition;
++}
++
+ /**
+  * The single deterministic transition decision. Precedence (highest first):
+  *   1 emotional urgency → interrupt_and_suspend
+diff --git a/lib/conversationBoundaryMeaning.ts b/lib/conversationBoundaryMeaning.ts
+index 9397e341..c6e02323 100644
+--- a/lib/conversationBoundaryMeaning.ts
++++ b/lib/conversationBoundaryMeaning.ts
+@@ -75,6 +75,18 @@ export type BoundaryMeaning = {
+   evidence: string[];
+ };
+ 
++/**
++ * OB-2 beta kill switch. Default ON: Boundary meaning governs hold / store /
++ * advance. `NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0` restores the pre-OB-2
++ * transition and every room's previous advancement rule (it bypasses exactly:
++ * the Boundary transition reconciliation below, the page's meaning-hold turn
++ * claim, Create's meaning-hold answer refusal, and `roomTurnHold`).
++ */
++export function isBoundaryMeaningHoldEnabled(): boolean {
++  if (typeof process === "undefined") return true;
++  return process.env.NEXT_PUBLIC_BOUNDARY_MEANING_HOLD !== "0";
++}
++
+ // ── Text helpers ─────────────────────────────────────────────────────────────
+ 
+ function normalize(text: string): string {
+@@ -107,15 +119,36 @@ function isBareAcceptance(t: string): boolean {
+   return Boolean(n) && (GENERIC_ACCEPTANCE_RE.test(n) || SHORT_ACCEPTANCE_SUPPLEMENT_RE.test(n));
+ }
+ 
++/**
++ * The loose decline tokens ("no", "later", "stay", "not yet") decline only when
++ * they ARE the clause (optionally with a courtesy tail): "No revenue yet" is an
++ * answer, "No." / "Not yet, thanks." decline. Phrasal deferrals ("no thanks",
++ * "maybe later", "hold off") and "don't do it" open a decline clause as before.
++ */
++const DECLINE_COURTESY_TAIL_RE = /^(?:thanks?|thank you|for now|please|sorry|not really|really)?$/i;
++
+ function isDeclineClause(c: string): boolean {
+   const n = normalizeAcceptanceText(c);
+-  return (
+-    CONFIRMATION_DECLINE_RE.test(n) ||
+-    DEFERRAL_SUPPLEMENT_RE.test(n) ||
+-    DONT_ACT_OPEN_RE.test(n)
+-  );
++  const looseDecline =
++    CONFIRMATION_DECLINE_RE.test(n) &&
++    DECLINE_COURTESY_TAIL_RE.test(n.replace(CONFIRMATION_DECLINE_RE, "").replace(/^[\s,]+/, "").trim());
++  return looseDecline || DEFERRAL_SUPPLEMENT_RE.test(n) || DONT_ACT_OPEN_RE.test(n);
+ }
+ 
++/**
++ * Uncertainty followed by a hedged candidate answer: "…, but I think / maybe /
++ * probably <three or more words>". Structural, domain-free.
++ */
++const TENTATIVE_ANSWER_RE =
++  /\b(?:but|though|although)\b[^.?!]*?\b(?:i think|i guess|maybe|probably|perhaps|possibly|my guess is)\b\s+(?:it'?s\s+|its\s+)?[\w'$-]+(?:\s+[\w'$-]+){2,}/i;
++
++/** Evidence marker: the member asked for help (read only by the room gate). */
++export const HELP_REQUESTED_EVIDENCE = "help_requested";
++
++/** Pseudo-cleft statement opener: "What I'm doing…", "What we need…", "How I see it…". */
++const PSEUDO_CLEFT_RE =
++  /^(?:(?:so|and|but|well|honestly)[,\s]+)*(?:what|how|where|why)\s+(?:i|i'?m|i'?ve|we|we'?re|my|our)\b[^?]*$/i;
++
+ /** A question about what a word or phrase MEANS — clarify-or-ask, never certain. */
+ const MEANING_QUESTION_RE = /\bmean(?:s|ing|t)?\b|\bstand for\b|\bdefin(?:e|ition)\b/i;
+ /** Words that signal confusion about Spark's words even when no clarify rule matched. */
+@@ -271,7 +304,9 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+     REQUEST_TO_SPARK_RE.test(t) ||
+     clauses(t).some((c) => DIRECT_INSTRUCTION_RE.test(c) || IMPERATIVE_ACTION_OPEN_RE.test(c));
+   const questionSentence = sents.find((s) => /\?\s*["')\]]*$/.test(s));
+-  const whSentence = sents.find((s) => WH_OPEN_RE.test(s));
++  // "What I'm doing isn't working." / "What we need is…" — a pseudo-cleft
++  // statement, not a question (structural: wh-word + subject pronoun, no "?").
++  const whSentence = sents.find((s) => WH_OPEN_RE.test(s) && !PSEUDO_CLEFT_RE.test(s));
+   if (questionSentence) {
+     const capabilityQuestion = talkAboutReason(questionSentence) === "capability_question";
+     const politeRequestOnly =
+@@ -279,7 +314,10 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+       !capabilityQuestion &&
+       !WH_OPEN_RE.test(questionSentence) &&
+       /^(?:can|could|would|will)\s+you\b/i.test(questionSentence);
+-    const helpQuestion = MEMBER_HELP_REQUEST_RE.test(questionSentence) && UNSURE_RE.test(t);
++    // A help request put as a question belongs to "unsure" — with an uncertainty
++    // marker, or (OB-2) whenever Spark is waiting on a pending question.
++    const helpQuestion =
++      MEMBER_HELP_REQUEST_RE.test(questionSentence) && (UNSURE_RE.test(t) || hasPending);
+     const abilityOrOpinion =
+       QUESTION_TO_SPARK_OPEN_RE.test(questionSentence) && !capabilityQuestion && !request;
+     const aboutMeaning = MEANING_QUESTION_RE.test(questionSentence);
+@@ -317,6 +355,9 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+   if (UNSURE_RE.test(t) || MEMBER_HELP_REQUEST_RE.test(t)) {
+     if (hasPending || sparkAsked) {
+       candidates.push({ relation: "unsure", strong: true, signal: "unsure_marker" });
++      // OB-2: whether the member ALSO asked for help (rooms that accept
++      // "unknown" as an answer still owe help when it was asked for).
++      if (MEMBER_HELP_REQUEST_RE.test(t)) evidence.push(HELP_REQUESTED_EVIDENCE);
+     } else {
+       evidence.push("unsure_marker_without_pending");
+     }
+@@ -369,6 +410,18 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+     candidates.push({ relation: "accept", strong: acceptStrong, signal: acceptSignal });
+   }
+ 
++  // A weak "no, I …" correction (turnRecovery's broad pattern only) yields to an
++  // explicit decline clause: "No, I don't have savings set aside." is a "no" with
++  // content, not a correction of Spark.
++  if (
++    candidates.some((c) => c.relation === "decline") &&
++    candidates.some((c) => c.relation === "correct" && !c.strong)
++  ) {
++    const i = candidates.findIndex((c) => c.relation === "correct" && !c.strong);
++    evidence.push("weak_correction_yields_to_decline");
++    candidates.splice(i, 1);
++  }
++
+   // ── choose by precedence ──
+   let relation: BoundaryMemberRelation = "none";
+   let chosen: RelationCandidate | undefined;
+@@ -415,6 +468,24 @@ export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
+     lowWhy.push("weak_acknowledgement_with_affect");
+   }
+   if (relation === "correct" && !binding) lowWhy.push("correction_without_target");
++  if (
++    relation === "decline" &&
++    cls.some(
++      (c) =>
++        !isDeclineClause(c) &&
++        !DECLINE_COURTESY_TAIL_RE.test(normalizeAcceptanceText(c)) &&
++        c.trim().split(/\s+/).length >= 2,
++    )
++  ) {
++    // "Nope, never been to one before." — a decline token plus real content:
++    // a decline of the offer, or an answer that starts with "no"? Check.
++    lowWhy.push("decline_with_content");
++  }
++  if (relation === "unsure" && TENTATIVE_ANSWER_RE.test(t)) {
++    // "I don't know, but I think maybe women over 50." — uncertainty wrapped
++    // around a real candidate answer. Neither discard it nor store it: check.
++    lowWhy.push("tentative_answer_inside_unsure");
++  }
+   if (relation === "none" && CONFUSION_SHAPE_RE.test(t) && hasSparkContribution) {
+     // Confusion-shaped words no clarify rule matched ("I don't get what you
+     // mean by…") — never a HIGH-confidence plain statement.
+@@ -555,6 +626,8 @@ export type BoundaryObligation =
+   | "apply_or_confirm_correction"
+   | "acknowledge_and_release"
+   | "execute_authorized_scope"
++  /** OB-2: distress or an interruption with nothing else asked — pause, keep the place. */
++  | "pause_for_person"
+   | "domain_turn";
+ 
+ export type BoundaryPermitSnapshot = {
+@@ -566,6 +639,15 @@ export type BoundaryPermitSnapshot = {
+   lastExecutedId?: string | null;
+   /** The pending owner's own affordance check on the reply (domain-owned). */
+   answerAffordanceValid?: boolean;
++  /**
++   * OB-2: the member's text arrives in an input dedicated to the pending
++   * question (a room's answer box). A substantive answer there often reads as
++   * a transition "switch"; that must not block storing it. Cancel / return /
++   * interrupt still do.
++   */
++  pendingQuestionOwnsInput?: boolean;
++  /** OB-2: the pending question may be skipped; a decline advances without storing. */
++  pendingQuestionOptional?: boolean;
+ };
+ 
+ export type BoundaryPermits = {
+@@ -635,7 +717,14 @@ export function permitsFor(
+       };
+     }
+     case "decline":
+-      return { ...NOTHING, preservesPending: false, obligation: "acknowledge_and_release" };
++      return {
++        ...NOTHING,
++        // A declined OPTIONAL question may be skipped; a declined offer is
++        // released. (A required room question is kept by the room gate.)
++        mayAdvance: snapshot.pendingQuestionOptional === true,
++        preservesPending: false,
++        obligation: "acknowledge_and_release",
++      };
+     case "accept": {
+       const armedIds = (snapshot.armedItems ?? []).map((i) => i.id);
+       const freshOffer =
+@@ -669,8 +758,16 @@ export function permitsFor(
+     }
+     case "none":
+     default: {
++      if (decision.decision === "interrupt_and_suspend") {
++        return { ...NOTHING, preservesPending: true, obligation: "pause_for_person" };
++      }
++      const grantedByTransition = decision.decision === "answer_pending_question";
++      const grantedByDedicatedInput =
++        snapshot.pendingQuestionOwnsInput === true &&
++        decision.decision !== "cancel_current_workflow" &&
++        decision.decision !== "return_to_suspended_topic";
+       const mayStoreAsAnswer =
+-        decision.decision === "answer_pending_question" &&
++        (grantedByTransition || grantedByDedicatedInput) &&
+         snapshot.answerAffordanceValid !== false;
+       return {
+         ...NOTHING,
+diff --git a/lib/conversationBoundaryRoomGate.ts b/lib/conversationBoundaryRoomGate.ts
+new file mode 100644
+index 00000000..8acbed90
+--- /dev/null
++++ b/lib/conversationBoundaryRoomGate.ts
+@@ -0,0 +1,202 @@
++/**
++ * One Brain room gate — OB-2.
++ *
++ * MECHANICALLY THIN. A room supplies its pending question (plain data) and the
++ * member's words; Boundary decides what the member is doing, `permitsFor`
++ * decides whether the words may be stored / the room may advance, and the room
++ * performs the returned obligation with its OWN specialist copy.
++ *
++ *   room pending question ─► resolveConversationBoundary ─► permitsFor ─► verdict
++ *
++ * No room may interpret the member's text to choose an obligation. This module
++ * contains no language rules and no domain explanations: `renderRoomHoldReply`
++ * only frames the copy the room hands it.
++ */
++
++import {
++  resolveConversationBoundary,
++  type BoundaryPendingQuestion,
++  type ConversationBoundaryDecision,
++} from "./conversationBoundary";
++import {
++  HELP_REQUESTED_EVIDENCE,
++  isBoundaryMeaningHoldEnabled,
++  permitsFor,
++  type BoundaryObligation,
++  type BoundaryPermits,
++} from "./conversationBoundaryMeaning";
++
++/** A room's pending question, as data. */
++export type RoomPendingQuestion = {
++  /** The question exactly as the room asked it. */
++  text: string;
++  /** Answer shape; open questions default to "free". */
++  expects?: BoundaryPendingQuestion["expects"];
++  choices?: string[];
++  /** The room's own answer affordances (e.g. its authored signal patterns). */
++  affordances?: readonly RegExp[];
++  /** The room lets the member skip this question. */
++  optional?: boolean;
++  /**
++   * The room's question invites a question as its answer ("What question would
++   * you like to bring to the Board?"). A member question is then the answer; a
++   * request to explain the room's own question still holds.
++   */
++  acceptsQuestions?: boolean;
++  /**
++   * The room's own answer affordance accepts "I don't know" as information
++   * (Board: a settled unknown the Directors reason with; Events: pause this
++   * question and come back). One Brain returns an `unknown` verdict and the
++   * room applies its own semantics. With `unknownWithHelp`, a help request
++   * rides on the unknown (Board); without it, a help request still holds.
++   */
++  acceptsUnknown?: boolean;
++  unknownWithHelp?: boolean;
++  /**
++   * An opening invitation ("What's on your mind?", "What would you like to
++   * bring to the Board?") accepts anything the member offers; it holds only for
++   * a request to explain the invitation itself, or for distress.
++   */
++  openingInvitation?: boolean;
++};
++
++export type RoomHoldObligation = Exclude<BoundaryObligation, "domain_turn" | "execute_authorized_scope">;
++
++export type RoomTurnVerdict =
++  /** Store/advance exactly as the room always has (its own domain validation still applies). */
++  | { kind: "proceed"; decision: ConversationBoundaryDecision | null; permits: BoundaryPermits | null }
++  /** The member declined an optional question: advance without storing. */
++  | { kind: "skip"; decision: ConversationBoundaryDecision; permits: BoundaryPermits }
++  /**
++   * The member does not know the answer and the room accepts that as
++   * information (`acceptsUnknown`). The room applies its own unknown semantics.
++   */
++  | {
++      kind: "unknown";
++      helpRequested: boolean;
++      decision: ConversationBoundaryDecision;
++      permits: BoundaryPermits;
++    }
++  /** Do not store, do not advance; perform the obligation; the question stays pending. */
++  | { kind: "hold"; obligation: RoomHoldObligation; decision: ConversationBoundaryDecision; permits: BoundaryPermits };
++
++/**
++ * The single gate every OB-2 room calls BEFORE storing or advancing.
++ * With the kill switch off it always returns `proceed` (previous behavior).
++ */
++export function roomTurnVerdict(input: {
++  userText: string;
++  question: RoomPendingQuestion;
++  turn?: number;
++  /** The room's own domain validation of the value, when it has one. */
++  answerAffordanceValid?: boolean;
++  /**
++   * The room has its own correction specialist (e.g. Claire's confirmation
++   * contract handles "modified"): a correction proceeds to it instead of holding.
++   */
++  hasCorrectionSpecialist?: boolean;
++}): RoomTurnVerdict {
++  if (!isBoundaryMeaningHoldEnabled()) return { kind: "proceed", decision: null, permits: null };
++  const turn = input.turn ?? 2;
++  const decision = resolveConversationBoundary({
++    userText: input.userText,
++    turn,
++    pendingQuestion: {
++      kind: "open",
++      expects: input.question.expects ?? "free",
++      choices: input.question.choices,
++      affordances: input.question.affordances,
++    },
++    lastAssistantText: input.question.text,
++  });
++  const permits = permitsFor(decision, {
++    currentTurn: turn,
++    answerAffordanceValid: input.answerAffordanceValid,
++    pendingQuestionOwnsInput: true,
++    pendingQuestionOptional: input.question.optional === true,
++  });
++  if (permits.mayStoreAsAnswer) return { kind: "proceed", decision, permits };
++  const high = decision.meaningConfidence === "high";
++  if (input.question.openingInvitation) {
++    const explainInvitation = high && decision.relation === "clarify";
++    if (!explainInvitation && permits.obligation !== "pause_for_person") {
++      return { kind: "proceed", decision, permits };
++    }
++  }
++  // A room ASKED a question (it made no offer), so "No, I don't have savings set
++  // aside." answers it; the decline-with-content ambiguity only matters for offers.
++  if (
++    decision.relation === "decline" &&
++    decision.evidence.includes("meaning:low:decline_with_content")
++  ) {
++    return { kind: "proceed", decision, permits };
++  }
++  if (input.question.acceptsUnknown && decision.relation === "unsure") {
++    const helpRequested = decision.evidence.includes(`meaning:${HELP_REQUESTED_EVIDENCE}`);
++    if (!helpRequested || input.question.unknownWithHelp) {
++      return { kind: "unknown", helpRequested, decision, permits };
++    }
++  }
++  // A yes/no question's own answers: a clear yes or no IS the answer.
++  if (
++    high &&
++    input.question.expects === "yes_no" &&
++    (decision.relation === "accept" || decision.relation === "decline")
++  ) {
++    return { kind: "proceed", decision, permits };
++  }
++  if (high && decision.relation === "ask" && input.question.acceptsQuestions) {
++    return { kind: "proceed", decision, permits };
++  }
++  if (high && decision.relation === "correct" && input.hasCorrectionSpecialist) {
++    return { kind: "proceed", decision, permits };
++  }
++  if (permits.obligation === "acknowledge_and_release" && permits.mayAdvance) {
++    return { kind: "skip", decision, permits };
++  }
++  const obligation: RoomHoldObligation =
++    permits.obligation === "domain_turn" || permits.obligation === "execute_authorized_scope"
++      ? "check_meaning"
++      : permits.obligation;
++  return { kind: "hold", obligation, decision, permits };
++}
++
++/** The room's own words about its pending question (specialist content). */
++export type RoomQuestionCopy = {
++  question: string;
++  /** What the question means / why the room asks it. */
++  meaning: string;
++  /** How the member can work out an answer (examples, a way in). */
++  help: string;
++};
++
++/**
++ * Frame a hold reply from the room's own copy. Person first, then the pending
++ * question again so the member can answer it on the next turn.
++ */
++export function renderRoomHoldReply(
++  verdict: Extract<RoomTurnVerdict, { kind: "hold" }>,
++  copy: RoomQuestionCopy,
++  opts: { reask?: boolean } = {},
++): string {
++  const strained = verdict.decision.affect === "strained";
++  // Rooms whose UI already shows the pending question beneath the reply pass reask:false.
++  const reask = opts.reask === false ? "" : `When you're ready: ${copy.question}`;
++  switch (verdict.obligation) {
++    case "explain_own_last_contribution":
++      return `${strained ? "Sorry — I didn't make that clear. " : ""}${copy.meaning} ${reask}`.trim();
++    case "answer_question":
++      return `Good question. ${copy.meaning} ${reask}`.trim();
++    case "help_with_pending":
++      return `${strained ? "That's completely okay. " : "That's okay — "}${copy.help} ${reask}`.trim();
++    case "apply_or_confirm_correction":
++      return `Thanks for catching that — I don't want to get it wrong. Tell me what it should be, and I'll use that instead. ${reask}`.trim();
++    case "acknowledge_and_release":
++      return `No problem. We can come back to this whenever you like. ${reask}`.trim();
++    case "pause_for_person":
++      return "Let's pause right here. Nothing is lost — your place is saved, and we can pick this back up whenever you're ready.";
++    case "check_meaning":
++    default:
++      return `Just so I get this right — is that your answer to "${copy.question}", or would you like me to explain the question first?`;
++  }
++}
+diff --git a/lib/conversationContinuity/routeTurnToOwner.ts b/lib/conversationContinuity/routeTurnToOwner.ts
+index 23d172ba..b3b78597 100644
+--- a/lib/conversationContinuity/routeTurnToOwner.ts
++++ b/lib/conversationContinuity/routeTurnToOwner.ts
+@@ -4,7 +4,7 @@
+  */
+ 
+ import {
+-  answerBoardIntakeStep,
++  boardIntakeTurn,
+   BOARD_DIRECTOR_DISCUSSION_INTAKE_STEPS,
+   loadBoardIntakeDraft,
+   saveBoardIntakeDraft,
+@@ -144,7 +144,7 @@ export function routeTurnToOwner(
+     if (!draft) {
+       return { kind: "unhandled", reason: "board_intake_missing" };
+     }
+-    const next = answerBoardIntakeStep(draft, t);
++    const { draft: next, holdReply } = boardIntakeTurn(draft, t);
+     saveBoardIntakeDraft(next);
+     persistConversationOwner({
+       kind: "board_intake",
+@@ -154,7 +154,7 @@ export function routeTurnToOwner(
+     });
+     return {
+       kind: "board_intake",
+-      reply: boardIntakeNextPrompt(next.currentStep),
++      reply: holdReply ?? boardIntakeNextPrompt(next.currentStep),
+       draft: next,
+     };
+   }
+diff --git a/lib/createEstate/entranceUnderstanding.ts b/lib/createEstate/entranceUnderstanding.ts
+index 3a51e5ee..ebd79d1d 100644
+--- a/lib/createEstate/entranceUnderstanding.ts
++++ b/lib/createEstate/entranceUnderstanding.ts
+@@ -37,11 +37,12 @@
+  * not a seventh question.
+  */
+ 
++import { renderRoomHoldReply, roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
+ import {
+   DISCOVERY_INTROS,
+   DISCOVERY_QUESTIONS,
+ } from "@/lib/estateBrain/discoveryRegistry";
+-import type { DiscoveryQuestion } from "@/lib/estateBrain/discoveryTypes";
++import type { DiscoveryQuestion, DiscoverySlot } from "@/lib/estateBrain/discoveryTypes";
+ import {
+   resolveCatalogCreateConfirm,
+   resolveCreateBeginOutcome,
+@@ -294,6 +295,26 @@ export function startEntranceUnderstandingForCatalogType(
+   );
+ }
+ 
++/** Create's own words about each discovery slot (specialist copy). */
++const CREATE_DISCOVERY_SLOT_COPY: Record<DiscoverySlot, { meaning: string; help: string }> = {
++  goal: {
++    meaning: "I'm asking what you want this piece of work to accomplish, so what we create is aimed at the right result.",
++    help: "Say it the way you'd tell a colleague — “help new clients know what to expect” is plenty.",
++  },
++  obstacle: {
++    meaning: "I'm asking what's making this hard or getting in the way, so we can design around it.",
++    help: "Think about where it usually stalls — time, not knowing where to start, too many ideas.",
++  },
++  outcome: {
++    meaning: "I'm asking what “done well” would look like, so we know when this piece of work is good enough.",
++    help: "Picture someone using it successfully. What happens for them?",
++  },
++  context: {
++    meaning: "I'm asking for the background that shapes this — who it's for and the situation around it.",
++    help: "Who will read or use it, and anything they should already know, is a good start.",
++  },
++};
++
+ /**
+  * Record the member's reply (or an explicit skip) to the current question.
+  * An empty reply is treated as a skip — never store blank answers.
+@@ -309,6 +330,27 @@ export function advanceEntranceUnderstanding(
+   const trimmed = reply.trim();
+   const skip = Boolean(opts?.skip) || !trimmed;
+ 
++  // OB-2 — One Brain decides whether the reply answers this question. A held
++  // turn stores nothing and asks the same question after Create's own reply.
++  // (Work Recognition reuses this function, so it inherits the same gate.)
++  if (!skip) {
++    const verdict = roomTurnVerdict({
++      userText: trimmed,
++      question: { text: current.prompt, affordances: current.signalPatterns, optional: true },
++    });
++    if (verdict.kind === "hold") {
++      const copy = CREATE_DISCOVERY_SLOT_COPY[current.slot];
++      return stepFor(session, {
++        acknowledgment: renderRoomHoldReply(
++          verdict,
++          { question: current.prompt, ...copy },
++          { reask: false },
++        ),
++      });
++    }
++    if (verdict.kind === "skip") return advanceEntranceUnderstanding(session, "", { skip: true });
++  }
++
+   // Guided path: the goal answer may reveal an SOP-shaped request — hand it
+   // to the SOP question set now rather than asking generic questions first.
+   if (
+diff --git a/lib/currentFocus/submitCurrentFocusResponse.ts b/lib/currentFocus/submitCurrentFocusResponse.ts
+index 1cec5024..67d18b4a 100644
+--- a/lib/currentFocus/submitCurrentFocusResponse.ts
++++ b/lib/currentFocus/submitCurrentFocusResponse.ts
+@@ -490,7 +490,10 @@ export async function submitCurrentFocusResponse(
+ 
+       const nextQ = nextFoundationQuestionForRecord(updated);
+       const lead = appliedAnswer?.assistantLead?.trim() || "Got it.";
+-      const proposedMessage = nextQ
++      // OB-2 — a held turn's reply already re-asks the same question.
++      const proposedMessage = appliedAnswer?.held
++        ? lead
++        : nextQ
+         ? `${lead}\n\n${nextQ.prompt}`
+         : appliedAnswer?.freeFormCapture && appliedAnswer.assistantLead
+           ? appliedAnswer.assistantLead
+diff --git a/lib/day-designer/dayMessages.ts b/lib/day-designer/dayMessages.ts
+index 157c4ede..1dbcb6c9 100644
+--- a/lib/day-designer/dayMessages.ts
++++ b/lib/day-designer/dayMessages.ts
+@@ -2,6 +2,7 @@
+  * Day designer messages — short questions, gentle tips, no pressure.
+  */
+ 
++import { renderRoomHoldReply, roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
+ import type { DayLevel } from "@/lib/companionStore";
+ import { evaluateEnvironment } from "@/lib/environment-intelligence/environmentEngine";
+ import { environmentTipForPlan } from "@/lib/environment-intelligence/environmentInsights";
+@@ -61,9 +62,64 @@ export function questionForStep(
+   return DAY_DESIGNER_QUESTIONS[step];
+ }
+ 
++/** Plan My Day's own words about each question (specialist copy). */
++const DAY_DESIGNER_QUESTION_COPY: Record<
++  Exclude<DayDesignerStep, "idle" | "complete">,
++  { meaning: string; help: string }
++> = {
++  time: {
++    meaning: "I'm asking how much time you can actually give to work today, so the plan fits the day you really have.",
++    help: "A rough number is fine — “about 3 hours” or “only mornings.”",
++  },
++  energy: {
++    meaning: "I'm asking how much energy you have right now, so I put the demanding work where it has the best chance.",
++    help: "Just pick the closest: low, medium, or high.",
++  },
++  environment: {
++    meaning: "I'm asking where you'll be working, because a noisy or on-the-go day needs a different kind of plan.",
++    help: "Quiet home, noisy home, office, coffee shop, or on the go — whichever is closest.",
++  },
++  priorities: {
++    meaning: "I'm asking what truly has to get done today, so the plan protects that first.",
++    help: "Name one or two things that would make today feel handled — the rest can wait.",
++  },
++};
++
++/**
++ * OB-2 — one Day Designer turn through One Brain. A held turn leaves the
++ * session untouched and returns Plan My Day's reply; a declined question is
++ * skipped without storing (the designer's questions are all optional).
++ */
++export function dayDesignerTurn(
++  session: DayDesignerSession,
++  answerText: string,
++): { session: DayDesignerSession; holdReply: string | null } {
++  const text = answerText.trim();
++  if (text && session.step !== "idle" && session.step !== "complete") {
++    const question = DAY_DESIGNER_QUESTIONS[session.step];
++    const verdict = roomTurnVerdict({ userText: text, question: { text: question, optional: true } });
++    if (verdict.kind === "hold") {
++      return {
++        session,
++        holdReply: renderRoomHoldReply(verdict, { question, ...DAY_DESIGNER_QUESTION_COPY[session.step] }),
++      };
++    }
++    if (verdict.kind === "skip") return { session: applyDayDesignerAnswer(session, ""), holdReply: null };
++  }
++  return { session: applyDayDesignerAnswer(session, answerText), holdReply: null };
++}
++
++/** Advance one step — only when One Brain permits it (see `dayDesignerTurn`). */
+ export function advanceDayDesignerSession(
+   session: DayDesignerSession,
+   answerText: string,
++): DayDesignerSession {
++  return dayDesignerTurn(session, answerText).session;
++}
++
++function applyDayDesignerAnswer(
++  session: DayDesignerSession,
++  answerText: string,
+ ): DayDesignerSession {
+   const text = answerText.trim();
+   const answers = { ...session.answers };
+diff --git a/lib/day-designer/index.ts b/lib/day-designer/index.ts
+index fbf507bc..c347e501 100644
+--- a/lib/day-designer/index.ts
++++ b/lib/day-designer/index.ts
+@@ -9,7 +9,7 @@ export * from "./founderDayDesignerReporting";
+ 
+ import { buildDayPlan, buildSimpleDayPlanView } from "./dayPlanner";
+ import {
+-  advanceDayDesignerSession,
++  dayDesignerTurn,
+   companionIntroForDayDesigner,
+   questionForStep,
+   shouldStartDayDesigner,
+@@ -38,8 +38,19 @@ export function processDayDesignerMessage(
+   session: DayDesignerSession;
+   question: string | null;
+   plan: DayPlan | null;
++  /** OB-2 — Plan My Day's reply when One Brain held the question (nothing stored). */
++  holdReply?: string;
+ } {
+-  const next = advanceDayDesignerSession(session, text);
++  const turn = dayDesignerTurn(session, text);
++  if (turn.holdReply) {
++    return {
++      session,
++      question: session.step === "idle" || session.step === "complete" ? null : questionForStep(session.step),
++      plan: null,
++      holdReply: turn.holdReply,
++    };
++  }
++  const next = turn.session;
+   saveDayDesignerSession(next);
+ 
+   if (next.step === "complete") {
+diff --git a/lib/eventsEstate/eventsEntranceUnderstanding.ts b/lib/eventsEstate/eventsEntranceUnderstanding.ts
+index 99cc638b..0f85d988 100644
+--- a/lib/eventsEstate/eventsEntranceUnderstanding.ts
++++ b/lib/eventsEstate/eventsEntranceUnderstanding.ts
+@@ -249,25 +249,29 @@ export function advanceEventsEntranceUnderstanding(
+   let record = recordId ? getEventRecord(recordId) : null;
+ 
+   let captureAck: string | null = null;
++  // OB-2 — One Brain held the question: nothing is stored, the turn does not
++  // count, and the same foundation question is asked again after Events' reply.
++  let held = false;
+   if (record && !skip) {
+     const activeQ = nextFoundationQuestionForRecord(record);
+     const applied = applyEventConversationalAnswer(record, trimmed, activeQ, {
+       preferFreeFormCapture: opts?.preferFreeFormCapture,
+     });
+     record = applied.record;
++    held = applied.held === true;
+     if (applied.assistantLead?.trim()) {
+       captureAck = applied.assistantLead.trim();
+     }
+   }
+ 
+   const turnCount =
+-    Number(session.answers["events-turn-count"] ?? "0") + (skip ? 0 : 1);
++    Number(session.answers["events-turn-count"] ?? "0") + (skip || held ? 0 : 1);
+   const nextSession: EntranceUnderstandingSession = {
+     ...session,
+     answers: {
+       ...session.answers,
+       "events-turn-count": String(turnCount),
+-      ...(skip
++      ...(skip || held
+         ? {}
+         : { [EVENTS_ENTRANCE_FOLLOWUP_QUESTION_ID]: trimmed }),
+     },
+diff --git a/lib/eventsIntelligence/applyEventConversationalAnswer.ts b/lib/eventsIntelligence/applyEventConversationalAnswer.ts
+index 2fafcbb8..b6d877b4 100644
+--- a/lib/eventsIntelligence/applyEventConversationalAnswer.ts
++++ b/lib/eventsIntelligence/applyEventConversationalAnswer.ts
+@@ -3,6 +3,12 @@
+  * Used by foundation Q&A and deeper domain turns (no second questionnaire).
+  */
+ 
++import { isBoundaryMeaningHoldEnabled } from "@/lib/conversationBoundaryMeaning";
++import {
++  renderRoomHoldReply,
++  roomTurnVerdict,
++  type RoomQuestionCopy,
++} from "@/lib/conversationBoundaryRoomGate";
+ import type { EventFoundationQuestion, EventRecord, EventSectionId } from "./types";
+ import { updateEventSection } from "./eventSections";
+ import { enrichEventRecordFromEntranceText } from "./foundationQuestionCompletion";
+@@ -20,6 +26,62 @@ import {
+   utteranceLooksMultiFact,
+ } from "./eventFreeFormCapture";
+ 
++const EVENT_SECTION_COPY: Partial<Record<EventSectionId, { meaning: string; help: string }>> = {
++  event_type: {
++    meaning: "I'm asking what kind of event this is — a workshop, a conference, a retreat, a launch — because that shapes everything else we plan.",
++    help: "Start with how you'd describe it to a friend: “a half-day workshop,” “an online summit.”",
++  },
++  purpose: {
++    meaning: "I'm asking why you're holding this event — what it should accomplish for you and your business.",
++    help: "Think about what would make it worth doing: new clients, visibility, community, revenue.",
++  },
++  audience: {
++    meaning: "I'm asking who this event is for — the people you most want in the room.",
++    help: "Picture two or three people you'd love to see there. What do they have in common?",
++  },
++  outcomes: {
++    meaning: "I'm asking what attendees should leave with, so the agenda serves that.",
++    help: "Finish the sentence “After this event, people will be able to…”.",
++  },
++  format: {
++    meaning: "I'm asking whether this is in person, online, or both, because that changes the venue, tech and timing.",
++    help: "If you're unsure, think about where your audience already gathers.",
++  },
++  dates: {
++    meaning: "I'm asking when it will happen and roughly how long it runs, so we can plan backwards from it.",
++    help: "A rough window is fine — “sometime in spring, about half a day.”",
++  },
++  venue: {
++    meaning: "I'm asking where it will take place, because the venue drives capacity, cost and logistics.",
++    help: "Even a type of place helps — a hotel meeting room, your office, Zoom.",
++  },
++  budget: {
++    meaning: "I'm asking how much you can spend, so the plan stays inside what's realistic for you.",
++    help: "A range is plenty — or tell me what you'd be uncomfortable spending.",
++  },
++  revenue_pricing: {
++    meaning: "I'm asking whether you'll charge for this and how much, since it affects who comes and how you promote it.",
++    help: "Free, a single ticket price, or tiers are all good starting points.",
++  },
++  speakers: {
++    meaning: "I'm asking who will present or speak, so we can plan the program around them.",
++    help: "Names you already have in mind are enough — including yourself.",
++  },
++};
++
++/** Events' own explanation of its active question (specialist copy). */
++function eventQuestionCopy(q: EventFoundationQuestion): RoomQuestionCopy {
++  const copy = EVENT_SECTION_COPY[q.sectionId];
++  const label = q.sectionId.replace(/_/g, " ");
++  return {
++    question: q.prompt,
++    meaning:
++      copy?.meaning ??
++      `I'm asking about the ${label} so the event plan fits what you actually need.`,
++    help: copy?.help ?? `Whatever you already know about the ${label} is a good start — it can be rough.`,
++  };
++}
++
+ export type EventAnswerDisposition =
+   | "answered"
+   | "skip"
+@@ -35,6 +97,12 @@ export type ApplyEventConversationalAnswerOptions = {
+ export type ApplyEventConversationalAnswerResult = {
+   record: EventRecord;
+   disposition: EventAnswerDisposition;
++  /**
++   * OB-2 — One Brain held the question (the member asked, needs help, corrected
++   * Spark, …). Nothing was stored or written; the same question stays active and
++   * `assistantLead` carries Events' reply.
++   */
++  held?: boolean;
+   assistantLead?: string;
+   /** Brief multi-fact capture — UI may show follow-up approach links. */
+   freeFormCapture?: boolean;
+@@ -116,10 +184,17 @@ function seedRootAndSection(
+   return next;
+ }
+ 
+-function detectDisposition(text: string): EventAnswerDisposition {
++/**
++ * Events' own domain dispositions. With One Brain on (`oneBrain`), "I don't
++ * know" and "skip / not now" are NOT read here — Boundary decides those (a
++ * hold or a skip verdict); Events keeps only its specialist meanings
++ * (organizer holds the information, not my responsibility, redirect to work).
++ */
++function detectDisposition(text: string, oneBrain = false): EventAnswerDisposition {
+   const t = text.trim();
+   if (!t) return "skip";
+   if (
++    !oneBrain &&
+     /\b(?:i don't know|don't know yet|not sure yet|no idea|haven't decided|i'll know later)\b/i.test(
+       t,
+     )
+@@ -134,6 +209,7 @@ function detectDisposition(text: string): EventAnswerDisposition {
+     return "defer";
+   }
+   if (
++    !oneBrain &&
+     /\b(?:skip(?: that)?|come back to that|later|not now)\b/i.test(t)
+   ) {
+     return "skip";
+@@ -299,7 +375,28 @@ export function applyEventConversationalAnswer(
+   activeQuestion?: EventFoundationQuestion | null,
+   opts?: ApplyEventConversationalAnswerOptions,
+ ): ApplyEventConversationalAnswerResult {
+-  const disposition = detectDisposition(userText);
++  // OB-2 — One Brain first: is this an answer to the active question at all?
++  let verdictDisposition: EventAnswerDisposition | null = null;
++  if (activeQuestion && userText.trim()) {
++    const verdict = roomTurnVerdict({
++      userText,
++      // Events' affordance: "I don't know (yet)" pauses this question and comes
++      // back later; a request for help still holds and helps.
++      question: { text: activeQuestion.prompt, optional: true, acceptsUnknown: true },
++    });
++    if (verdict.kind === "hold") {
++      return {
++        record,
++        disposition: "answered",
++        held: true,
++        assistantLead: renderRoomHoldReply(verdict, eventQuestionCopy(activeQuestion)),
++      };
++    }
++    if (verdict.kind === "skip") verdictDisposition = "skip";
++    if (verdict.kind === "unknown") verdictDisposition = "defer";
++  }
++  const disposition =
++    verdictDisposition ?? detectDisposition(userText, isBoundaryMeaningHoldEnabled());
+   if (disposition !== "answered") {
+     const lead =
+       disposition === "skip" || disposition === "defer"
+diff --git a/lib/oneBrainCertification/bakeoff.ob1.test.ts b/lib/oneBrainCertification/bakeoff.ob1.test.ts
+index ea6c8750..b4b734be 100644
+--- a/lib/oneBrainCertification/bakeoff.ob1.test.ts
++++ b/lib/oneBrainCertification/bakeoff.ob1.test.ts
+@@ -13,7 +13,7 @@
+ import { existsSync, readFileSync, writeFileSync } from "node:fs";
+ import path from "node:path";
+ import { describe, expect, it } from "vitest";
+-import { CORPUS, HOLDOUT, type CorpusCase, type CorpusFamily } from "./corpus";
++import { CORPUS, HOLDOUT, OB2_ADDITIONS, type CorpusCase, type CorpusFamily } from "./corpus";
+ import { boundaryInputFor, readA, scoreCase, summarize, type CaseResult } from "./evaluate";
+ import { composeHybridMeaning, validateModelMeaningRead } from "./modelMeaningRead";
+ 
+@@ -73,13 +73,13 @@ describe("OB-1 corpus coverage", () => {
+   });
+ 
+   it("case ids are unique", () => {
+-    const ids = [...CORPUS, ...HOLDOUT].map((c) => c.id);
++    const ids = [...CORPUS, ...HOLDOUT, ...OB2_ADDITIONS].map((c) => c.id);
+     expect(new Set(ids).size).toBe(ids.length);
+   });
+ });
+ 
+ describe("OB-1 bake-off — A (deterministic)", () => {
+-  for (const [name, cases] of [["CORPUS", CORPUS], ["HOLDOUT", HOLDOUT]] as const) {
++  for (const [name, cases] of [["CORPUS", CORPUS], ["HOLDOUT", HOLDOUT], ["OB2_ADDITIONS", OB2_ADDITIONS]] as const) {
+     it(`${name}: every HIGH-confidence reading matches the human label`, () => {
+       const wrong = runA(cases).filter((r) => r.highButWrong).map((r) => `${r.id}: ${r.text}`);
+       expect(wrong).toEqual([]);
+diff --git a/lib/oneBrainCertification/corpus.ts b/lib/oneBrainCertification/corpus.ts
+index 241f9fcf..a1f8d68d 100644
+--- a/lib/oneBrainCertification/corpus.ts
++++ b/lib/oneBrainCertification/corpus.ts
+@@ -438,3 +438,53 @@ export const HOLDOUT: CorpusCase[] = [
+   c("emotion_combined", "positive", "executed", "I'm so annoyed — that's wrong, I said Thursday.", correct("executed", "strained")),
+   c("emotion_combined", "negative", "open_question", "The team is overwhelmed, so it's mostly for them.", none()),
+ ];
++
++/**
++ * OB-2 additions — structural families found by the OB-2 adversarial pass,
++ * written and labelled before the reader change that handles them. Scored with
++ * the corpus gates (HIGH precision, zero false executions).
++ */
++export const OB2_ADDITIONS: CorpusCase[] = [
++  // unsure wrapped around a tentative candidate answer → LOW (check meaning, don't discard)
++  c("unsure_help", "positive", "open_question", "I don't know, but I think maybe women over 50.", { ...unsure(), authorizesExecution: false }),
++  c("unsure_help", "positive", "open_question", "Not sure — probably small business owners in their first year.", { ...unsure(), authorizesExecution: false }),
++  c("unsure_help", "positive", "open_question", "No idea, but maybe coaches who just started out.", { ...unsure(), authorizesExecution: false }),
++  c("unsure_help", "positive", "open_question", "I'm not sure, though I guess it's mostly new managers.", { ...unsure(), authorizesExecution: false }),
++  c("unsure_help", "positive", "open_question", "Honestly I don't know, but my guess is solo founders.", { ...unsure(), authorizesExecution: false }),
++  c("unsure_help", "negative", "open_question", "I don't know yet.", unsure()),
++  c("unsure_help", "negative", "open_question", "Mostly women over 50.", none()),
++  c("unsure_help", "negative", "open_question", "I think it's mostly women over 50.", none()),
++  // a help request put as a question while Spark waits → unsure
++  c("unsure_help", "positive", "open_question", "Can you help me figure that out?", unsure()),
++  c("unsure_help", "positive", "open_question", "Could you help me think this through?", unsure()),
++  c("unsure_help", "positive", "open_question", "Can you walk me through it?", unsure()),
++  c("unsure_help", "positive", "open_question", "Would you help me work out an answer?", unsure()),
++  c("unsure_help", "positive", "open_question", "Can you help me decide?", unsure()),
++  c("unsure_help", "negative", "chat", "Can you help me with my newsletter?", { ...ask(), stance: "none" }),
++  c("unsure_help", "negative", "open_question", "Can you explain what you mean?", clarify()),
++  c("unsure_help", "negative", "open_question", "Why do you need to know that?", ask()),
++  // "no" opening a factual answer is not a decline; a bare "no"/"not yet" is
++  c("decline", "negative", "open_question", "No revenue yet — we launch in March.", none()),
++  c("decline", "negative", "open_question", "No clients yet, just friends testing it.", none()),
++  c("decline", "negative", "open_question", "Nope, never been to one before.", none()),
++  c("decline", "positive", "offer_single", "No.", decline()),
++  c("decline", "positive", "offer_single", "Not yet, thanks.", decline()),
++  c("decline", "positive", "offer_single", "Nah.", decline()),
++  c("decline", "positive", "offer_single", "Later, please.", decline()),
++  c("decline", "positive", "offer_single", "No thanks, not right now.", decline()),
++  // pseudo-cleft statements are answers, not questions
++  c("ask_spark", "negative", "open_question", "What I'm doing isn't working.", none()),
++  c("ask_spark", "negative", "open_question", "What we need is more of the right clients.", none()),
++  c("ask_spark", "negative", "open_question", "How I see it, it's mostly for coaches.", none()),
++  c("ask_spark", "negative", "open_question", "What I really want is fewer, better clients.", none()),
++  c("ask_spark", "negative", "open_question", "Why I started this was to help new managers.", none()),
++  c("ask_spark", "positive", "open_question", "What do I need to have ready?", ask()),
++  c("ask_spark", "positive", "open_question", "What are we trying to decide here?", ask()),
++  c("ask_spark", "positive", "open_question", "How do other people answer this?", ask()),
++  // "no" + content in answer to a question: never a HIGH correction of Spark
++  c("correction", "negative", "open_question", "No, I don't have savings set aside for this.", { ...decline(), authorizesExecution: false }),
++  c("correction", "negative", "open_question", "No, I haven't hired anyone yet.", { ...decline(), authorizesExecution: false }),
++  c("correction", "negative", "open_question", "No, I work alone right now.", { ...decline(), authorizesExecution: false }),
++  c("correction", "positive", "executed", "No, I said Thursday, not Tuesday.", correct("executed")),
++  c("correction", "positive", "executed", "No — that's wrong, it's weekly.", correct("executed")),
++];
+diff --git a/lib/oneBrainCertification/oneBrainConsumers.test.ts b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+new file mode 100644
+index 00000000..865753a0
+--- /dev/null
++++ b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+@@ -0,0 +1,95 @@
++/**
++ * OB-2 One Brain consumer isolation (replaces the OB-1 shadow-isolation test).
++ *
++ * OB-2 turns the meaning contract on — but through ONE gate. Proves:
++ * - only the room gate calls `permitsFor` or reads the meaning fields;
++ * - rooms touch the meaning module only for the kill switch;
++ * - production never imports the certification harness or the
++ *   evaluation-only model read (approach A: no model tier).
++ */
++import { readdirSync, readFileSync, statSync } from "node:fs";
++import path from "node:path";
++import { describe, expect, it } from "vitest";
++
++const ROOT = path.resolve(__dirname, "../..");
++const SCAN_DIRS = ["app", "components", "lib", "proxy.ts"];
++
++function productionFiles(): string[] {
++  const out: string[] = [];
++  const walk = (p: string) => {
++    const st = statSync(p);
++    if (st.isDirectory()) {
++      if (/node_modules|\.next|__tests__/.test(p)) return;
++      for (const f of readdirSync(p)) walk(path.join(p, f));
++      return;
++    }
++    if (!/\.(ts|tsx)$/.test(p) || /\.test\.(ts|tsx)$/.test(p)) return;
++    out.push(path.relative(ROOT, p));
++  };
++  for (const d of SCAN_DIRS) {
++    try {
++      walk(path.join(ROOT, d));
++    } catch {
++      // optional entry
++    }
++  }
++  return out;
++}
++
++const BOUNDARY = new Set([
++  "lib/conversationBoundary.ts",
++  "lib/conversationBoundaryMeaning.ts",
++  "lib/conversationBoundaryLexicon.ts",
++]);
++const GATE = "lib/conversationBoundaryRoomGate.ts";
++const HARNESS = "lib/oneBrainCertification/";
++
++describe("OB-2 One Brain consumers", () => {
++  const files = productionFiles().filter((f) => !f.startsWith(HARNESS));
++  const read = (f: string) => readFileSync(path.join(ROOT, f), "utf8");
++
++  it("production never imports the certification harness or the evaluation-only model read", () => {
++    expect(files.filter((f) => /from\s+["'][^"']*oneBrainCertification[^"']*["']/.test(read(f)))).toEqual([]);
++  });
++
++  it("only the room gate calls permitsFor; only Boundary calls the reader", () => {
++    const permits = files.filter((f) => !BOUNDARY.has(f) && /\bpermitsFor\s*\(/.test(read(f)));
++    expect(permits).toEqual([GATE]);
++    const reader = files.filter(
++      (f) => f !== "lib/conversationBoundaryMeaning.ts" && /readBoundaryMeaning\s*\(/.test(read(f)),
++    );
++    expect(reader).toEqual(["lib/conversationBoundary.ts"]);
++  });
++
++  it("only the room gate reads the meaning fields; rooms use the gate, not the fields", () => {
++    const re =
++      /(?:[bB]oundaryDecision|turnBoundaryDecision|boundary|\bdecision)\??\.(?:relation|stance|affect|binding|meaningConfidence)\b|\bmeaningConfidence\b/;
++    const readers = files.filter((f) => !BOUNDARY.has(f) && f !== GATE && re.test(read(f)));
++    expect(readers).toEqual([]);
++  });
++
++  it("rooms import the meaning module only for the kill switch", () => {
++    const importers = files.filter(
++      (f) => !BOUNDARY.has(f) && f !== GATE && /from\s+["'][^"']*conversationBoundaryMeaning["']/.test(read(f)),
++    );
++    for (const f of importers) {
++      const m = read(f).match(/import\s*\{([^}]*)\}\s*from\s*["'][^"']*conversationBoundaryMeaning["']/);
++      const names = (m?.[1] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
++      expect(names, f).toEqual(["isBoundaryMeaningHoldEnabled"]);
++    }
++  });
++
++  it("every converged room entry goes through the One Brain gate", () => {
++    const entries = [
++      "lib/board/boardDiscussion/boardDirectorDiscussion.ts",
++      "lib/board/reconstructed/orchestration/boardMemberQuestions.ts",
++      "lib/eventsIntelligence/applyEventConversationalAnswer.ts",
++      "lib/strategyApplyCoach.ts",
++      "lib/strategyChamber/guidedJourney.ts",
++      "lib/day-designer/dayMessages.ts",
++      "lib/createEstate/entranceUnderstanding.ts",
++      "lib/businessProfileFounder/claireConfirmationTurn.ts",
++    ];
++    for (const f of entries) expect(read(f), f).toMatch(/\broomTurnVerdict\s*\(/);
++  });
++});
+diff --git a/lib/oneBrainCertification/roomDivergence.ob1.test.ts b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+index b6e77fe7..b064e4fa 100644
+--- a/lib/oneBrainCertification/roomDivergence.ob1.test.ts
++++ b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+@@ -1,22 +1,26 @@
+ // @vitest-environment jsdom
+ /**
+- * OB-1 real-room divergence BASELINE.
++ * Real-room divergence baselines (OB-1 → OB-2).
+  *
+  * Drives each room's real exported step function with the same member turns
+- * and records what it actually does (roomDrivers.ts). Today's divergence from
+- * the OB-0.5 contract is the committed baseline
+- * (docs/reviews/ob1/divergence_baseline.json). This test fails if a room's
+- * observed behavior changes without the baseline being updated deliberately —
+- * convergence rounds flip rows on purpose. Regenerate with
+- * OB1_WRITE_BASELINE=1.
++ * and records what it actually does (roomDrivers.ts).
++ *
++ * - With the OB-2 kill switch OFF (NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0) the
++ *   matrix must reproduce the committed OB-1 baseline exactly — proof that the
++ *   switch restores every room's previous behavior.
++ * - With One Brain hold ON (default) the matrix is the committed OB-2 baseline
++ *   (docs/reviews/ob2/divergence_baseline.json). Regenerate deliberately with
++ *   OB2_WRITE_BASELINE=1.
+  */
+-import { existsSync, readFileSync, writeFileSync } from "node:fs";
++import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+ import path from "node:path";
+-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+-import { runDivergenceMatrix, type DivergenceCell } from "./roomDrivers";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { OB2_SITUATIONS, SITUATIONS, runDivergenceMatrix, type DivergenceCell } from "./roomDrivers";
+ 
+-const BASELINE = path.resolve(__dirname, "../../docs/reviews/ob1/divergence_baseline.json");
+-const FLAG = "NEXT_PUBLIC_EXECUTABLE_REQUEST_PRECEDENCE";
++const OB1_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob1/divergence_baseline.json");
++const OB2_BASELINE = path.resolve(__dirname, "../../docs/reviews/ob2/divergence_baseline.json");
++const PRECEDENCE_FLAG = "NEXT_PUBLIC_EXECUTABLE_REQUEST_PRECEDENCE";
++const HOLD_FLAG = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
+ 
+ type Row = Pick<DivergenceCell, "room" | "situation" | "diverges" | "divergentFields"> & {
+   observed: DivergenceCell["observed"];
+@@ -32,28 +36,47 @@ function rows(cells: DivergenceCell[]): Row[] {
+   }));
+ }
+ 
+-describe("OB-1 real-room divergence baseline", () => {
+-  let original: string | undefined;
+-  beforeAll(() => {
+-    original = process.env[FLAG];
+-    process.env[FLAG] = "1";
++describe("real-room divergence baselines", () => {
++  const saved: Record<string, string | undefined> = {};
++  beforeEach(() => {
++    for (const k of [PRECEDENCE_FLAG, HOLD_FLAG]) saved[k] = process.env[k];
++    process.env[PRECEDENCE_FLAG] = "1";
++  });
++  afterEach(() => {
++    for (const [k, v] of Object.entries(saved)) {
++      if (v === undefined) delete process.env[k];
++      else process.env[k] = v;
++    }
+   });
+-  afterAll(() => {
+-    if (original === undefined) delete process.env[FLAG];
+-    else process.env[FLAG] = original;
++
++  it("kill switch OFF reproduces the OB-1 room behavior exactly (every observed cell)", () => {
++    process.env[HOLD_FLAG] = "0";
++    // Compare what each room DID (the observation), cell by cell. The
++    // divergence flags are derived from expectations, which OB-2 refined for
++    // one documented room affordance (Board accepts "I don't know").
++    const observed = rows(runDivergenceMatrix(SITUATIONS)).map(({ room, situation, observed }) => ({ room, situation, observed }));
++    const baseline = (JSON.parse(readFileSync(OB1_BASELINE, "utf8")) as Row[]).map(({ room, situation, observed }) => ({
++      room,
++      situation,
++      observed,
++    }));
++    expect(observed).toEqual(baseline);
+   });
+ 
+-  it("matches the committed baseline", () => {
+-    const observed = rows(runDivergenceMatrix());
+-    if (process.env.OB1_WRITE_BASELINE === "1" || !existsSync(BASELINE)) {
+-      writeFileSync(BASELINE, JSON.stringify(observed, null, 1));
++  it("One Brain hold ON matches the committed OB-2 baseline", () => {
++    delete process.env[HOLD_FLAG];
++    const observed = rows(runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS]));
++    if (process.env.OB2_WRITE_BASELINE === "1" || !existsSync(OB2_BASELINE)) {
++      mkdirSync(path.dirname(OB2_BASELINE), { recursive: true });
++      writeFileSync(OB2_BASELINE, JSON.stringify(observed, null, 1));
+     }
+-    const baseline = JSON.parse(readFileSync(BASELINE, "utf8")) as Row[];
++    const baseline = JSON.parse(readFileSync(OB2_BASELINE, "utf8")) as Row[];
+     expect(observed).toEqual(baseline);
+   });
+ 
+   it("the drivers observe production — every room produced an observation", () => {
+-    const cells = runDivergenceMatrix();
++    delete process.env[HOLD_FLAG];
++    const cells = runDivergenceMatrix([...SITUATIONS, ...OB2_SITUATIONS]);
+     const threw = cells.filter((c) => c.observed.note?.startsWith("threw:") || c.observed.note === "no_fixture");
+     expect(threw.map((c) => `${c.room}/${c.situation}: ${c.observed.note}`)).toEqual([]);
+   });
+diff --git a/lib/oneBrainCertification/roomDrivers.ts b/lib/oneBrainCertification/roomDrivers.ts
+index 53607ad2..9a0cabc9 100644
+--- a/lib/oneBrainCertification/roomDrivers.ts
++++ b/lib/oneBrainCertification/roomDrivers.ts
+@@ -46,7 +46,7 @@ import { resolveVisualMenuSelection } from "@/lib/visualThinkingContinuation";
+ import { visualRecommendationPendingFromReply } from "@/lib/visualRecommendationEngine";
+ import { buildClaireTurnResponse } from "@/lib/businessProfileFounder/claireConversation";
+ import { emptyFirstVisitSnapshot } from "@/lib/businessProfileFounder/emptyFirstVisitSnapshot";
+-import { parseMemberConfirmationResponse } from "@/lib/businessProfileFounder/confirmationContract";
++import { resolveClaireConfirmationTurn } from "@/lib/businessProfileFounder/claireConfirmationTurn";
+ import { buildWriteCandidate } from "@/lib/businessProfileFounder/writeCandidateContract";
+ import { classifyPrimaryConversationTurn } from "@/lib/conversation/primaryTurnClassifier";
+ import { resolveFrictionlessAction } from "@/lib/frictionlessActionLayer";
+@@ -94,7 +94,11 @@ export type SituationId =
+   | "S5-bare-yes"
+   | "S6-decline"
+   | "S7-strained-clarify"
+-  | "S8-answer";
++  | "S8-answer"
++  // OB-2 — the brief's exact phrasings + distress alone
++  | "S3b-dont-know-help"
++  | "S4b-not-what-i-meant"
++  | "S9-distress";
+ 
+ export const SITUATIONS: { id: SituationId; text: string | null }[] = [
+   { id: "S1-clarify", text: "I don't know what you mean. Can you explain that before we keep going?" },
+@@ -107,6 +111,13 @@ export const SITUATIONS: { id: SituationId; text: string | null }[] = [
+   { id: "S8-answer", text: null }, // room-specific genuine answer (control)
+ ];
+ 
++/** OB-2 situations (not part of the OB-1 baseline; compared separately). */
++export const OB2_SITUATIONS: { id: SituationId; text: string | null }[] = [
++  { id: "S3b-dont-know-help", text: "I don't know. Help me figure that out." },
++  { id: "S4b-not-what-i-meant", text: "No, that's not what I meant." },
++  { id: "S9-distress", text: "I'm falling apart. I can't do this." },
++];
++
+ /**
+  * HUMAN-DEFINED expected outcome per situation, from the OB-0.5 contract.
+  * `null` = no expectation for that field in that room shape.
+@@ -123,6 +134,9 @@ export function expectedOutcome(shape: RoomShape, s: SituationId): Observation {
+       case "S7-strained-clarify":
+       case "S4-correct":
+       case "S5-bare-yes":
++      case "S3b-dont-know-help":
++      case "S4b-not-what-i-meant":
++      case "S9-distress":
+         return hold;
+       case "S6-decline":
+         return { advanced: null, storedAsAnswer: false, executed: false, pendingPreserved: null };
+@@ -145,6 +159,7 @@ export function expectedOutcome(shape: RoomShape, s: SituationId): Observation {
+   // executed item (a correction must be applied; nothing else changes it)
+   switch (s) {
+     case "S4-correct":
++    case "S4b-not-what-i-meant":
+       return { advanced: null, storedAsAnswer: null, executed: true, pendingPreserved: true };
+     case "S8-answer":
+       return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null };
+@@ -158,6 +173,12 @@ export type RoomDriver = {
+   shape: RoomShape;
+   /** Fields a room cannot expose structurally for its control answer (documented, not guessed). */
+   controlUnobservable?: (keyof Observation)[];
++  /**
++   * OB-2: the room's own answer affordance accepts "I don't know" as information
++   * (Board: a settled unknown). For the unsure situations the expected outcome is
++   * then "stored (as unknown) and moved on", not a hold — documented, not guessed.
++   */
++  acceptsUnknown?: boolean;
+   entry: string;
+   controlAnswer: string;
+   run: (text: string) => Observation;
+@@ -200,6 +221,7 @@ const boardIntake: RoomDriver = {
+ const boardMeeting: RoomDriver = {
+   room: "Board meeting",
+   shape: "question",
++  acceptsUnknown: true,
+   entry: "applyBoardMemberAnswers",
+   controlAnswer: "About $12,000 a month right now.",
+   run: (text) => {
+@@ -347,12 +369,17 @@ const workRecognition: RoomDriver = {
+     const r = resolveWorkRecognitionResumption(text, lastAssistant);
+     const after = localStorage.getItem("estate-work-recognition-session-v1");
+     const stored = containsMemberText(after, text) || (r?.kind === "question" && containsMemberText(r.session, text));
+-    const advanced = r !== null && (r.kind === "understood" || (r.kind === "question" && r.message !== lastAssistant));
++    // Structural: the journey advanced when its stored session changed (an answer
++    // or skip recorded) or it completed — not merely because the reply text differs.
++    const advanced =
++      r !== null &&
++      (r.kind === "understood" ||
++        (r.kind === "question" && JSON.stringify(r.session) !== before));
+     return {
+       advanced,
+       storedAsAnswer: Boolean(stored),
+       executed: false,
+-      pendingPreserved: r === null ? before !== null && after === before : !advanced,
++      pendingPreserved: r === null ? before !== null && after === before : !advanced && !stored,
+       note: r ? r.kind : "not_handled",
+     };
+   },
+@@ -402,12 +429,18 @@ const claireConversation: RoomDriver = {
+ const claireConfirmation: RoomDriver = {
+   room: "Claire (confirmation pending)",
+   shape: "offer",
+-  entry: "parseMemberConfirmationResponse",
++  entry: "resolveClaireConfirmationTurn",
+   controlAnswer: "Yes, that's right.",
+   run: (text) => {
+     const candidate = buildWriteCandidate("My workshop costs $150.");
+     if (!candidate) return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null, note: "no_fixture" };
+-    const kind = parseMemberConfirmationResponse(candidate, text).kind;
++    // OB-2: the production entry (BusinessProfileBp2aPrototype) is now the One
++    // Brain confirmation turn; a hold keeps the candidate and writes nothing.
++    const turn = resolveClaireConfirmationTurn(candidate, text);
++    if (turn.kind === "hold") {
++      return { advanced: false, storedAsAnswer: null, executed: false, pendingPreserved: true, note: "held" };
++    }
++    const kind = turn.outcome.kind;
+     // BusinessProfileBp2aPrototype.tsx:598-607 — "unrecognized" takes the decline
+     // branch (candidate discarded) unless it looks like a subject change.
+     const released = kind === "rejected" || kind === "unrecognized";
+@@ -502,10 +535,10 @@ export type DivergenceCell = {
+ 
+ const FIELDS: (keyof Observation)[] = ["advanced", "storedAsAnswer", "executed", "pendingPreserved"];
+ 
+-export function runDivergenceMatrix(): DivergenceCell[] {
++export function runDivergenceMatrix(situations = SITUATIONS): DivergenceCell[] {
+   const cells: DivergenceCell[] = [];
+   for (const d of ROOM_DRIVERS) {
+-    for (const s of SITUATIONS) {
++    for (const s of situations) {
+       const text = s.text ?? d.controlAnswer;
+       let observed: Observation;
+       try {
+@@ -515,6 +548,9 @@ export function runDivergenceMatrix(): DivergenceCell[] {
+       }
+       const expected = { ...expectedOutcome(d.shape, s.id) };
+       if (s.id === "S8-answer") for (const f of d.controlUnobservable ?? []) (expected as Record<string, unknown>)[f] = null;
++      if (d.acceptsUnknown && (s.id === "S3-unsure" || s.id === "S3b-dont-know-help")) {
++        Object.assign(expected, { advanced: true, storedAsAnswer: true, executed: null, pendingPreserved: false });
++      }
+       const divergentFields = FIELDS.filter(
+         (f) => expected[f] !== null && observed[f] !== null && expected[f] !== observed[f],
+       );
+diff --git a/lib/oneBrainCertification/roomHold.ob2.test.ts b/lib/oneBrainCertification/roomHold.ob2.test.ts
+new file mode 100644
+index 00000000..d143f4f5
+--- /dev/null
++++ b/lib/oneBrainCertification/roomHold.ob2.test.ts
+@@ -0,0 +1,239 @@
++// @vitest-environment jsdom
++/**
++ * OB-2 — hold-and-answer through One Brain, per room.
++ *
++ * For each converged room: a clarification is held (nothing stored, same
++ * question pending) and the SPECIALIST explains its own question; the next
++ * turn's genuine answer stores normally; the kill switch restores the
++ * previous path. Main chat: a held turn is never a Create discovery answer.
++ */
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import {
++  resolveConversationBoundary,
++  isMeaningHold,
++  type BoundaryPendingQuestion,
++} from "@/lib/conversationBoundary";
++import {
++  boardIntakeTurn,
++  createEmptyBoardIntakeDraft,
++  setDraftStep,
++} from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
++import { applyBoardMemberAnswers } from "@/lib/board/reconstructed/orchestration/boardMemberQuestions";
++import type { BoardMemberQuestion } from "@/lib/board/reconstructed/orchestration/types";
++import { applyEventConversationalAnswer } from "@/lib/eventsIntelligence/applyEventConversationalAnswer";
++import { nextFoundationQuestionForRecord } from "@/lib/eventsIntelligence/eventMemberQuestionPaths";
++import { getEventRecord } from "@/lib/eventsIntelligence/eventRecordStore";
++import {
++  advanceEventsEntranceUnderstanding,
++  startEventsEntranceUnderstanding,
++} from "@/lib/eventsEstate/eventsEntranceUnderstanding";
++import { bootstrapStrategyApplySession, processStrategyApplyTurn } from "@/lib/strategyApplyCoach";
++import {
++  __resetStrategyChamberStoresForTests,
++  applyGuidedJourneyAnswer,
++  createStrategyWorkItem,
++  getStrategyWorkItem,
++  updateStrategyWorkItem,
++} from "@/lib/strategyChamber";
++import { processDayDesignerMessage, startDayDesignerSession } from "@/lib/day-designer";
++import { advanceEntranceUnderstanding, startEntranceUnderstanding } from "@/lib/createEstate/entranceUnderstanding";
++import { resolveClaireConfirmationTurn } from "@/lib/businessProfileFounder/claireConfirmationTurn";
++import { buildWriteCandidate } from "@/lib/businessProfileFounder/writeCandidateContract";
++import { classifyCreateTurnRelationship } from "@/lib/universalCreation/createTurnRelationship";
++import type { UniversalCreationSession } from "@/lib/universalCreation/types";
++
++const CLARIFY = "I don't know what you mean. Can you explain that before we keep going?";
++const HOLD = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
++let saved: string | undefined;
++beforeEach(() => {
++  saved = process.env[HOLD];
++  delete process.env[HOLD];
++  localStorage.clear();
++});
++afterEach(() => {
++  if (saved === undefined) delete process.env[HOLD];
++  else process.env[HOLD] = saved;
++});
++
++describe("Board intake", () => {
++  const draft = () => setDraftStep(createEmptyBoardIntakeDraft([]), "importance");
++  it("holds a clarification, explains Board's own question, then stores a real answer", () => {
++    const held = boardIntakeTurn(draft(), CLARIFY);
++    expect(held.draft.currentStep).toBe("importance");
++    expect(held.draft.importance).toBe("");
++    expect(held.holdReply).toMatch(/why this decision matters right now/);
++    expect(held.holdReply).toMatch(/Why does it matter now\?/);
++    const answered = boardIntakeTurn(held.draft, "Cash is tight this quarter.");
++    expect(answered.holdReply).toBeNull();
++    expect(answered.draft.importance).toBe("Cash is tight this quarter.");
++    expect(answered.draft.currentStep).toBe("options");
++  });
++  it("kill switch restores storing every reply", () => {
++    process.env[HOLD] = "0";
++    expect(boardIntakeTurn(draft(), CLARIFY).draft.importance).toBe(CLARIFY);
++  });
++});
++
++describe("Board meeting", () => {
++  const q: BoardMemberQuestion = {
++    id: "q1",
++    question: "What is your monthly revenue right now?",
++    askedBy: [{ directorReasoningId: "economic-survivability", missingInformation: "monthly revenue" }],
++    status: "asked",
++  };
++  it("routes a held turn to the asking Director (Board explains), keeps the question open", () => {
++    const r = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: "Wait, why does that matter?" }]);
++    expect(r.ok).toBe(true);
++    const after = r.ok ? r.questions[0]! : null;
++    expect(after?.status).toBe("asked");
++    expect(after?.memberQuestionAddressedTo).toBe("economic-survivability");
++  });
++  it("Board's affordance: 'I don't know' settles as unknown (help rides along); a factual unknown settles too", () => {
++    // R3F-5B (Founder-certified): the Board accepts an unknown as information the
++    // Directors reason with — One Brain returns `unknown`, the Board applies it.
++    const help = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: "I don't know. Help me figure that out." }]);
++    expect(help.ok && help.questions[0]!.status).toBe("answered");
++    expect(help.ok && help.questions[0]!.settledAsUnknown).toBe(true);
++    expect(help.ok && help.questions[0]!.helpRequested).toBe(true);
++    const unknown = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: "No revenue yet — we launch in March." }]);
++    expect(unknown.ok && unknown.questions[0]!.status).toBe("answered");
++  });
++});
++
++describe("Events", () => {
++  it("holds without writing, explains Events' own question, same question next turn", () => {
++    const start = startEventsEntranceUnderstanding("I'm hosting an online event.");
++    expect(start).not.toBeNull();
++    const session = start!.session;
++    const step = advanceEventsEntranceUnderstanding(session, CLARIFY);
++    expect(step.kind).toBe("question");
++    if (step.kind !== "question") return;
++    expect(step.acknowledgment).toMatch(/I'm asking/);
++    expect(Number(step.session.answers["events-turn-count"] ?? "0")).toBe(
++      Number(session.answers["events-turn-count"] ?? "0"),
++    );
++    expect(JSON.stringify(step.session.answers)).not.toContain("what you mean");
++  });
++  it("the record is not rewritten on a hold", () => {
++    const start = startEventsEntranceUnderstanding("I'm hosting an online event.")!;
++    const id = start.session.answers["events-record-id"]!;
++    const rec = getEventRecord(id)!;
++    const q = nextFoundationQuestionForRecord(rec);
++    const before = JSON.stringify(getEventRecord(id));
++    const res = applyEventConversationalAnswer(rec, CLARIFY, q);
++    expect(res.held).toBe(true);
++    expect(JSON.stringify(getEventRecord(id))).toBe(before);
++    const answer = applyEventConversationalAnswer(rec, "ADHD entrepreneurs and solopreneurs.", q);
++    expect(answer.held).toBeUndefined();
++    expect(answer.record.activeQuestionId).not.toBe(rec.activeQuestionId);
++  });
++});
++
++describe("Strategy Apply", () => {
++  it("holds, explains Strategy's own question, then advances on a real answer", () => {
++    const s = bootstrapStrategyApplySession("ugly-first-draft")!.session;
++    const held = processStrategyApplyTurn(s, CLARIFY);
++    expect(held.session).toBe(s);
++    expect(held.reply).toMatch(/what's really getting in the way/);
++    const next = processStrategyApplyTurn(held.session, "I keep rewriting my sales page.");
++    expect(next.session.questionIndex).toBe(s.questionIndex + 1);
++  });
++});
++
++describe("Strategy Chamber", () => {
++  it("a hold changes only Shari's reflection", () => {
++    __resetStrategyChamberStoresForTests();
++    const item = createStrategyWorkItem({ entryReason: "need_direction" });
++    updateStrategyWorkItem(item.id, applyGuidedJourneyAnswer(item, "Where should my marketing focus?"));
++    const current = getStrategyWorkItem(item.id)!;
++    const patch = applyGuidedJourneyAnswer(current, CLARIFY);
++    expect(Object.keys(patch)).toEqual(["shariReflection"]);
++    expect(patch.shariReflection).toMatch(/I'm asking this so we build the strategy/);
++  });
++});
++
++describe("Day Designer (Plan My Day)", () => {
++  it("holds with Plan My Day's own explanation and keeps the step", () => {
++    const s = { ...startDayDesignerSession(new Date("2026-09-28T09:00:00Z")), step: "priorities" as const };
++    const r = processDayDesignerMessage(s, CLARIFY);
++    expect(r.holdReply).toMatch(/what truly has to get done today/);
++    expect(r.session.step).toBe("priorities");
++    expect(r.plan).toBeNull();
++  });
++});
++
++describe("Create entrance (and Work Recognition, which reuses it)", () => {
++  it("holds with Create's own slot explanation; same question; nothing stored", () => {
++    const start = startEntranceUnderstanding("I want to create a client onboarding guide")!;
++    expect(start.kind).toBe("question");
++    if (start.kind !== "question") return;
++    const step = advanceEntranceUnderstanding(start.session, CLARIFY);
++    expect(step.kind).toBe("question");
++    if (step.kind !== "question") return;
++    expect(step.question.id).toBe(start.question.id);
++    expect(step.acknowledgment).toMatch(/I'm asking/);
++    expect(step.session.answers[start.question.id]).toBeUndefined();
++  });
++});
++
++describe("Claire confirmation", () => {
++  const candidate = () => buildWriteCandidate("My workshop costs $150.")!;
++  it("a clarification holds the candidate; yes still confirms; a correction reaches Claire's contract", () => {
++    const held = resolveClaireConfirmationTurn(candidate(), "What do you mean by that?");
++    expect(held.kind).toBe("hold");
++    expect(held.kind === "hold" && held.reply).toMatch(/only update your business picture/);
++    const yes = resolveClaireConfirmationTurn(candidate(), "Yes.");
++    expect(yes.kind === "outcome" && yes.outcome.kind).toBe("confirmed");
++    const fix = resolveClaireConfirmationTurn(candidate(), "No, that's wrong. It's $175.");
++    expect(fix.kind).toBe("outcome");
++  });
++});
++
++describe("Main chat — Boundary reconciliation", () => {
++  const pendingQuestion: BoundaryPendingQuestion = {
++    kind: "open",
++    expects: "free",
++    role: "recipient",
++    outstandingRoles: ["recipient", "goal", "subject", "outcome"],
++  };
++  const boundary = (userText: string) =>
++    resolveConversationBoundary({
++      userText,
++      turn: 2,
++      activeTopic: { topicId: "t", goal: "Help me write an email to my client", resolved: false, startedAtTurn: 1, updatedAtTurn: 1 },
++      activeWork: { kind: "create", id: "uc:email", artifactType: "email", awaitingAnswer: true, suspendable: true },
++      pendingQuestion,
++      lastAssistantText: "Who is receiving this email?",
++    });
++  const session = {
++    documentType: "email",
++    phase: "discovery",
++    confidence: "high",
++    answers: {},
++    questionIndex: 1,
++    originalUserText: "Help me write an email to my client",
++    startedAtTurn: 1,
++    preparationReady: false,
++    pendingEnhancements: [],
++    lifecycle: "active",
++  } as unknown as UniversalCreationSession;
++
++  it("a clarification holds the thread (not a switch, not an answer) and is never a Create answer", () => {
++    const d = boundary("I'm not sure. Help me figure that out.");
++    expect(d.decision).toBe("continue_current_topic");
++    expect(isMeaningHold(d)).toBe(true);
++    const rel = classifyCreateTurnRelationship({ userText: "I'm not sure. Help me figure that out.", session, boundaryDecision: d });
++    expect(rel.relationship).not.toBe("answer-create-question");
++  });
++  it("a real answer is still a Create discovery answer", () => {
++    const d = boundary("My accountant");
++    expect(d.decision).toBe("answer_pending_question");
++    const rel = classifyCreateTurnRelationship({ userText: "My accountant", session, boundaryDecision: d });
++    expect(rel.relationship).toBe("answer-create-question");
++  });
++  it("kill switch restores the unreconciled transition", () => {
++    process.env[HOLD] = "0";
++    const d = boundary("I'm not sure. Help me figure that out.");
++    expect(isMeaningHold(d)).toBe(false);
++  });
++});
+diff --git a/lib/oneBrainCertification/shadowIsolation.test.ts b/lib/oneBrainCertification/shadowIsolation.test.ts
+deleted file mode 100644
+index eddf4d75..00000000
+--- a/lib/oneBrainCertification/shadowIsolation.test.ts
++++ /dev/null
+@@ -1,74 +0,0 @@
+-/**
+- * OB-1 shadow isolation — proves the meaning contract is computed but NOT
+- * consumed: no production file reads relation / stance / affect / binding /
+- * meaningConfidence, calls permitsFor, or imports the meaning module, the
+- * certification harness, or the evaluation-only model read.
+- */
+-import { readdirSync, readFileSync, statSync } from "node:fs";
+-import path from "node:path";
+-import { describe, expect, it } from "vitest";
+-
+-const ROOT = path.resolve(__dirname, "../..");
+-const SCAN_DIRS = ["app", "components", "lib", "proxy.ts"];
+-
+-function productionFiles(): string[] {
+-  const out: string[] = [];
+-  const walk = (p: string) => {
+-    const st = statSync(p);
+-    if (st.isDirectory()) {
+-      if (/node_modules|\.next|__tests__/.test(p)) return;
+-      for (const f of readdirSync(p)) walk(path.join(p, f));
+-      return;
+-    }
+-    if (!/\.(ts|tsx)$/.test(p)) return;
+-    if (/\.test\.(ts|tsx)$/.test(p)) return;
+-    out.push(path.relative(ROOT, p));
+-  };
+-  for (const d of SCAN_DIRS) {
+-    try {
+-      walk(path.join(ROOT, d));
+-    } catch {
+-      // optional entry
+-    }
+-  }
+-  return out;
+-}
+-
+-/** The only production files allowed to touch the meaning contract. */
+-const OWNERS = new Set([
+-  "lib/conversationBoundary.ts", // computes it (the single production caller)
+-  "lib/conversationBoundaryMeaning.ts", // the reader + permitsFor
+-  "lib/conversationBoundaryLexicon.ts", // vocabulary leaf
+-]);
+-const HARNESS_PREFIX = "lib/oneBrainCertification/";
+-
+-describe("OB-1 shadow isolation", () => {
+-  const files = productionFiles().filter((f) => !OWNERS.has(f) && !f.startsWith(HARNESS_PREFIX));
+-  const read = (f: string) => readFileSync(path.join(ROOT, f), "utf8");
+-
+-  it("no production file imports the meaning module or the certification harness", () => {
+-    const offenders = files.filter((f) =>
+-      /from\s+["'][^"']*(?:conversationBoundaryMeaning|oneBrainCertification)[^"']*["']/.test(read(f)),
+-    );
+-    expect(offenders).toEqual([]);
+-  });
+-
+-  it("no production file calls permitsFor or readBoundaryMeaning", () => {
+-    const offenders = files.filter((f) => /\b(?:permitsFor|readBoundaryMeaning)\s*\(/.test(read(f)));
+-    expect(offenders).toEqual([]);
+-  });
+-
+-  it("no production file reads the new meaning fields off a Boundary decision", () => {
+-    const re =
+-      /(?:[bB]oundaryDecision|turnBoundaryDecision|boundary)\??\.(?:relation|stance|affect|binding|meaningConfidence)\b|\bmeaningConfidence\b/;
+-    const offenders = files.filter((f) => re.test(read(f)));
+-    expect(offenders).toEqual([]);
+-  });
+-
+-  it("the Boundary is the only production caller of the meaning reader", () => {
+-    const callers = productionFiles().filter(
+-      (f) => f !== "lib/conversationBoundaryMeaning.ts" && /readBoundaryMeaning\s*\(/.test(read(f)),
+-    );
+-    expect(callers).toEqual(["lib/conversationBoundary.ts"]);
+-  });
+-});
+diff --git a/lib/strategyApplyCoach.ts b/lib/strategyApplyCoach.ts
+index 599d1a2c..0aa2383e 100644
+--- a/lib/strategyApplyCoach.ts
++++ b/lib/strategyApplyCoach.ts
+@@ -2,6 +2,12 @@
+  * ADHD strategy apply coach — one question at a time; panel fills as you go.
+  */
+ 
++import { isBoundaryMeaningHoldEnabled } from "@/lib/conversationBoundaryMeaning";
++import {
++  renderRoomHoldReply,
++  roomTurnVerdict,
++  type RoomQuestionCopy,
++} from "@/lib/conversationBoundaryRoomGate";
+ import { isWorkflowConceptQuestion } from "./activeWorkflowContextLock";
+ import { getStrategy, type Strategy } from "./strategySystem";
+ 
+@@ -167,6 +173,39 @@ function buildPlan(session: StrategyApplySession): string {
+   return lines.join("\n");
+ }
+ 
++const STRATEGY_APPLY_COPY: Record<string, { meaning: string; help: string }> = {
++  "confirm-problem": {
++    meaning:
++      "I'm asking what's really getting in the way right now, so this strategy is aimed at the actual problem rather than a guess.",
++    help: "Describe what keeps happening — “I keep rewriting and never publish” is exactly the kind of answer that works.",
++  },
++  "desired-outcome": {
++    meaning:
++      "I'm asking what “better” would look like for you, so we know what this plan is steering toward.",
++    help: "Picture a week where this is working. What's different?",
++  },
++  constraints: {
++    meaning:
++      "I'm asking what limits the plan has to respect — time, energy, money, people — so it fits your real life.",
++    help: "Name anything that would make a plan unrealistic, like “only 30 minutes a day.”",
++  },
++};
++
++/** Strategy's own explanation of its current question (specialist copy). */
++function strategyApplyQuestionCopy(
++  session: StrategyApplySession,
++  q: StrategyApplyQuestion,
++): RoomQuestionCopy {
++  const copy = STRATEGY_APPLY_COPY[q.id];
++  return {
++    question: q.chatPrompt,
++    meaning:
++      copy?.meaning ??
++      `I'm asking this so your ${session.title} plan fits your real situation instead of a generic version.`,
++    help: copy?.help ?? "A rough answer is fine — even one line gives me enough to build on.",
++  };
++}
++
+ export type StrategyApplyTurnResult = {
+   session: StrategyApplySession;
+   reply: string;
+@@ -181,7 +220,23 @@ export function processStrategyApplyTurn(
+     return { session, reply: "Take your time — even a rough answer helps." };
+   }
+ 
+-  if (isWorkflowConceptQuestion(trimmed)) {
++  // OB-2 — One Brain decides whether this is an answer; Strategy explains its
++  // own question. The local concept-question reader below only runs with the
++  // kill switch off (NEXT_PUBLIC_BOUNDARY_MEANING_HOLD=0).
++  const pendingQuestion =
++    session.phase !== "done" ? session.questions[session.questionIndex] : undefined;
++  if (pendingQuestion && isBoundaryMeaningHoldEnabled()) {
++    const verdict = roomTurnVerdict({
++      userText: trimmed,
++      question: { text: pendingQuestion.chatPrompt },
++    });
++    if (verdict.kind === "hold") {
++      return {
++        session,
++        reply: renderRoomHoldReply(verdict, strategyApplyQuestionCopy(session, pendingQuestion)),
++      };
++    }
++  } else if (isWorkflowConceptQuestion(trimmed)) {
+     const pending = session.questions[session.questionIndex]?.chatPrompt;
+     return {
+       session,
+diff --git a/lib/strategyChamber/guidedJourney.ts b/lib/strategyChamber/guidedJourney.ts
+index 6df7b763..6c1c0c1d 100644
+--- a/lib/strategyChamber/guidedJourney.ts
++++ b/lib/strategyChamber/guidedJourney.ts
+@@ -4,6 +4,7 @@
+  */
+ 
+ import type { AdaptivePresentationResolved } from "@/lib/adaptiveCompanionIntelligence";
++import { renderRoomHoldReply, roomTurnVerdict } from "@/lib/conversationBoundaryRoomGate";
+ import {
+   applyConversationalAnswer,
+   applyOpeningStrategicQuestion,
+@@ -107,6 +108,33 @@ export function applyGuidedJourneyAnswer(
+   if (!trimmed) return {};
+ 
+   const isOpening = !item.decisionStatement?.trim();
++
++  // OB-2 — One Brain decides whether this is an answer. A held turn changes
++  // nothing but Shari's reflection (the Chamber's own reply); the same
++  // question stays active beneath it.
++  const pendingQuestion = guidedPromptForWorkItem(item).question;
++  // The opening question asks for the member's strategic QUESTION.
++  const verdict = roomTurnVerdict({
++    userText: trimmed,
++    question: { text: pendingQuestion, acceptsQuestions: isOpening, openingInvitation: isOpening },
++  });
++  if (verdict.kind === "hold") {
++    return {
++      shariReflection: renderRoomHoldReply(
++        verdict,
++        {
++          question: pendingQuestion,
++          meaning: isOpening
++            ? "I'm asking what decision or challenge you want to think through strategically, so we start from what's actually on your mind."
++            : "I'm asking this so we build the strategy from where you really are — the facts, pressures and hunches behind the decision.",
++          help: isOpening
++            ? "It can be as simple as “Should I raise prices?” or “Where should my marketing focus?”"
++            : "A few words is plenty — for example, “Costs went up, but I haven't changed the price.”",
++        },
++        { reask: false },
++      ),
++    };
++  }
+   const patch = isOpening
+     ? applyOpeningStrategicQuestion(item, trimmed)
+     : applyConversationalAnswer(item, trimmed);
+diff --git a/lib/universalCreation/createTurnRelationship.ts b/lib/universalCreation/createTurnRelationship.ts
+index bbc0ae91..1b89b775 100644
+--- a/lib/universalCreation/createTurnRelationship.ts
++++ b/lib/universalCreation/createTurnRelationship.ts
+@@ -15,7 +15,7 @@ import { getCreateLifecycle, isCreateParked } from "./createLifecycle";
+ import { isBareGenericAcceptance } from "@/lib/pendingAcceptanceAuthority";
+ import { EXPLICIT_EMAIL_START_OVER_RE } from "./emailWorkflowCompletion";
+ import { isCreateRevisionInstruction } from "./createRevisionDetect";
+-import type { ConversationBoundaryDecision } from "@/lib/conversationBoundary";
++import { isMeaningHold, type ConversationBoundaryDecision } from "@/lib/conversationBoundary";
+ 
+ export { isCreateRevisionInstruction } from "./createRevisionDetect";
+ 
+@@ -272,9 +272,12 @@ export function classifyCreateTurnRelationship(input: {
+   // discovery answer ONLY when the Boundary classified it as answering the pending
+   // question (or continuing the current topic). Absent a granting Boundary
+   // decision, an unrelated statement is never captured as an answer.
++  // OB-2 — a turn Boundary HOLDS (member asked / needs clarification / is
++  // unsure / corrected Spark) is never a discovery answer.
+   const boundaryGrantsCreateAnswer =
+-    input.boundaryDecision?.decision === "answer_pending_question" ||
+-    input.boundaryDecision?.decision === "continue_current_topic";
++    !isMeaningHold(input.boundaryDecision) &&
++    (input.boundaryDecision?.decision === "answer_pending_question" ||
++      input.boundaryDecision?.decision === "continue_current_topic");
+   if (
+     life.state === "awaiting_input" &&
+     boundaryGrantsCreateAnswer &&
+-- 
+2.43.0
+
