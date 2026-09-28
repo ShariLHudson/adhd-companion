@@ -1,0 +1,450 @@
+OB-1 REVIEW PACK — PART 5 of 5: labelled corpus
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024). Unified diff vs base.
+Parts: 1 core Boundary code · 2 moved vocabularies + safety tests · 3 bake-off harness · 4 real-room drivers · 5 labelled corpus. Data JSON (results, baseline, proxy reads) omitted; see the return report.
+
+diff --git a/lib/oneBrainCertification/corpus.ts b/lib/oneBrainCertification/corpus.ts
+new file mode 100644
+index 00000000..241f9fcf
+--- /dev/null
++++ b/lib/oneBrainCertification/corpus.ts
+@@ -0,0 +1,440 @@
++/**
++ * One Brain certification corpus — OB-1.
++ *
++ * HUMAN-LABELLED. Every expected value below was written from the intended
++ * meaning of the member's words (OB-0 / OB-0.5 examples, the Founder's ASEA
++ * transcript, R0 §17 executable-intent scenarios, Board round-3F-5C cases),
++ * never by running production code. Labels are the source of truth that the
++ * readers (deterministic A, hybrid C) are measured against.
++ *
++ * Each family has ≥5 natural paraphrases (`kind: "positive"`) and ≥3 negative
++ * controls (`kind: "negative"`): near-miss sentences that must NOT receive the
++ * family's reading, labelled with what they actually mean.
++ */
++
++import type {
++  BoundaryArmedItem,
++  BoundaryMemberAffect,
++  BoundaryMemberRelation,
++  BoundaryMemberStance,
++  BoundaryPendingQuestion,
++  ConversationBoundaryDecisionKind,
++} from "@/lib/conversationBoundary";
++
++export type CorpusContextId =
++  | "open_question" // Spark asked an open question (e.g. an intake question)
++  | "offer_single" // Spark offered one action ("Want me to…?") on the previous turn
++  | "offer_three" // Spark proposed three enumerated actions on the previous turn
++  | "offer_stale" // the same single offer, made four turns ago
++  | "executed" // Spark just executed an item and reported it
++  | "chat" // Spark said something; nothing pending
++  | "fresh" // nothing said yet, nothing pending
++  | "suspended_work"; // earlier work is suspended; an unrelated topic is active
++
++export type CorpusFamily =
++  | "ask_spark"
++  | "clarification"
++  | "unsure_help"
++  | "correction"
++  | "acceptance"
++  | "modified_acceptance"
++  | "partial_acceptance"
++  | "decline"
++  | "discuss_vs_act"
++  | "hypothetical"
++  | "compound_request"
++  | "interruption"
++  | "return"
++  | "stale_reference"
++  | "know_current_vs_historical"
++  | "unsupported_capability"
++  | "emotion_combined";
++
++export type ExpectedMeaning = {
++  relation: BoundaryMemberRelation;
++  stance: BoundaryMemberStance;
++  affect: BoundaryMemberAffect;
++  bindingTarget?: "pending" | "executed" | "referent";
++  include?: string[];
++  exclude?: string[];
++  amended?: boolean;
++  /** Expected permitsFor(...).mayExecute for this situation (safety label). */
++  authorizesExecution: boolean;
++  /** Expected existing Boundary transition, where the family is about transitions. */
++  transition?: ConversationBoundaryDecisionKind;
++};
++
++export type CorpusCase = {
++  id: string;
++  family: CorpusFamily;
++  kind: "positive" | "negative";
++  context: CorpusContextId;
++  text: string;
++  source: string;
++  expected: ExpectedMeaning;
++};
++
++// ── Contexts (plain data; the same shapes the Boundary snapshot carries) ─────
++
++export const THREE_ITEMS: BoundaryArmedItem[] = [
++  { id: "item-susan", label: "Add Susan as a speaker" },
++  { id: "item-david", label: "Add David as a speaker" },
++  { id: "item-invite", label: "Send the invitation email" },
++];
++
++const OPEN_Q: BoundaryPendingQuestion = { kind: "open", expects: "free" };
++
++export type CorpusContext = {
++  currentTurn: number;
++  lastAssistantText?: string;
++  pendingQuestion?: BoundaryPendingQuestion | null;
++  pendingOffer?: { summary: string; offeredAtTurn: number } | null;
++  armedItems?: BoundaryArmedItem[] | null;
++  lastExecuted?: { id: string; label?: string } | null;
++  suspended?: { id: string; summary: string; suspendedAtTurn: number }[] | null;
++  activeTopic?: {
++    topicId: string;
++    goal: string;
++    resolved: boolean;
++    startedAtTurn: number;
++    updatedAtTurn: number;
++  } | null;
++  /** For permitsFor. */
++  armedOfferedAtTurn?: number | null;
++};
++
++export const CONTEXTS: Record<CorpusContextId, CorpusContext> = {
++  open_question: {
++    currentTurn: 6,
++    lastAssistantText: "Who is this conference mainly for — your clients, or other coaches?",
++    pendingQuestion: OPEN_Q,
++    activeTopic: {
++      topicId: "t-conf",
++      goal: "plan my leadership conference",
++      resolved: false,
++      startedAtTurn: 2,
++      updatedAtTurn: 5,
++    },
++  },
++  offer_single: {
++    currentTurn: 6,
++    lastAssistantText:
++      "Want me to set up a Rhythm to check your ASEA order every month at 8:00 AM?",
++    pendingOffer: { summary: "Rhythm: check ASEA order monthly 8:00", offeredAtTurn: 5 },
++    armedOfferedAtTurn: 5,
++  },
++  offer_three: {
++    currentTurn: 6,
++    lastAssistantText:
++      "I can do three things: add Susan as a speaker, add David as a speaker, and send the invitation email. Want me to go ahead?",
++    pendingOffer: { summary: "3 conference actions", offeredAtTurn: 5 },
++    armedItems: THREE_ITEMS,
++    armedOfferedAtTurn: 5,
++  },
++  offer_stale: {
++    currentTurn: 9,
++    lastAssistantText: "Anything else on your mind?",
++    pendingOffer: { summary: "Rhythm: check ASEA order monthly 8:00", offeredAtTurn: 5 },
++    armedOfferedAtTurn: 5,
++  },
++  executed: {
++    currentTurn: 6,
++    lastAssistantText:
++      "Done — I set up a Rhythm: \"Check my ASEA order,\" every Monday at 9:00 AM.",
++    lastExecuted: { id: "rhythm-asea", label: "Check my ASEA order" },
++  },
++  chat: {
++    currentTurn: 6,
++    lastAssistantText:
++      "That makes sense — a lot of coaches find the first price is a guess they refine later.",
++  },
++  fresh: { currentTurn: 1 },
++  suspended_work: {
++    currentTurn: 8,
++    lastAssistantText: "Here are three ideas for your newsletter intro.",
++    suspended: [{ id: "susp-conf", summary: "planning the leadership conference speakers", suspendedAtTurn: 4 }],
++    activeTopic: {
++      topicId: "t-news",
++      goal: "write my newsletter intro",
++      resolved: false,
++      startedAtTurn: 5,
++      updatedAtTurn: 7,
++    },
++  },
++};
++
++// ── Label helpers (terse, explicit) ─────────────────────────────────────────
++
++const none = (
++  stance: BoundaryMemberStance = "none",
++  affect: BoundaryMemberAffect = "none",
++  extra: Partial<ExpectedMeaning> = {},
++): ExpectedMeaning => ({ relation: "none", stance, affect, authorizesExecution: false, ...extra });
++const ask = (stance: BoundaryMemberStance = "none", affect: BoundaryMemberAffect = "none"): ExpectedMeaning => ({
++  relation: "ask", stance, affect, authorizesExecution: false,
++});
++const clarify = (target: "pending" | "referent" = "pending", affect: BoundaryMemberAffect = "none"): ExpectedMeaning => ({
++  relation: "clarify", stance: "none", affect, bindingTarget: target, authorizesExecution: false,
++});
++const unsure = (affect: BoundaryMemberAffect = "none", stance: BoundaryMemberStance = "none"): ExpectedMeaning => ({
++  relation: "unsure", stance, affect, bindingTarget: "pending", authorizesExecution: false,
++});
++const correct = (target: "pending" | "executed" | "referent", affect: BoundaryMemberAffect = "none"): ExpectedMeaning => ({
++  relation: "correct", stance: "none", affect, bindingTarget: target, authorizesExecution: false,
++});
++const decline = (stance: BoundaryMemberStance = "none", affect: BoundaryMemberAffect = "none"): ExpectedMeaning => ({
++  relation: "decline", stance, affect, bindingTarget: "pending", authorizesExecution: false,
++});
++const accept = (extra: Partial<ExpectedMeaning> = {}): ExpectedMeaning => ({
++  relation: "accept", stance: "act", affect: "none", bindingTarget: "pending", authorizesExecution: true, ...extra,
++});
++
++let seq = 0;
++function c(
++  family: CorpusFamily,
++  kind: CorpusCase["kind"],
++  context: CorpusContextId,
++  text: string,
++  expected: ExpectedMeaning,
++  source = "OB-1 paraphrase set",
++): CorpusCase {
++  seq += 1;
++  return { id: `${family}-${String(seq).padStart(3, "0")}`, family, kind, context, text, source, expected };
++}
++
++const OB0 = "OB-0/OB-0.5 Founder example";
++const ASEA = "Founder ASEA transcript (Round 1 §4.1)";
++const R0 = "R0 §17 executable-intent scenario";
++const BOARD = "Board round3f5c conversational-move case";
++
++export const CORPUS: CorpusCase[] = [
++  // ── ask Spark ──────────────────────────────────────────────────────────────
++  c("ask_spark", "positive", "open_question", "Wait, why does that matter?", ask(), OB0),
++  c("ask_spark", "positive", "open_question", "How much does a venue like that usually cost?", ask()),
++  c("ask_spark", "positive", "offer_single", "What would that actually remind me to do?", ask()),
++  c("ask_spark", "positive", "open_question", "Before I answer — how many people usually come to these?", ask()),
++  c("ask_spark", "positive", "offer_three", "Which of those would you do first?", ask()),
++  c("ask_spark", "positive", "chat", "Why do you think the first price is usually a guess?", ask()),
++  c("ask_spark", "negative", "open_question", "Mostly other coaches.", none()),
++  c("ask_spark", "negative", "open_question", "It's for my clients, the ones in the leadership program.", none()),
++  c("ask_spark", "negative", "fresh", "Add a Rhythm to check my ASEA order every month.", none("act"), ASEA),
++  c("ask_spark", "negative", "offer_single", "Could you set that up for me please?", accept({ stance: "act" })),
++
++  // ── clarification ─────────────────────────────────────────────────────────
++  c("clarification", "positive", "open_question", "I don't know what you mean. Can you explain that before we keep going?", clarify(), OB0),
++  c("clarification", "positive", "open_question", "What do you mean by audience?", clarify(), OB0),
++  c("clarification", "positive", "open_question", "I'm not sure what you're asking.", clarify(), BOARD),
++  c("clarification", "positive", "open_question", "Can you say that another way?", clarify(), BOARD),
++  c("clarification", "positive", "open_question", "Sorry, what does that mean?", clarify()),
++  c("clarification", "positive", "chat", "I don't understand what you mean by that.", clarify("referent")),
++  c("clarification", "negative", "open_question", "I don't know yet — probably around forty people.", unsure(), BOARD),
++  c("clarification", "negative", "open_question", "Can you explain how pricing tiers usually work?", ask()),
++  c("clarification", "negative", "open_question", "I mean, it's mostly for coaches.", none()),
++
++  // ── unsure + help ─────────────────────────────────────────────────────────
++  c("unsure_help", "positive", "open_question", "I'm not sure. Help me figure that out.", unsure(), OB0),
++  c("unsure_help", "positive", "open_question", "I honestly don't know.", unsure()),
++  c("unsure_help", "positive", "open_question", "No idea yet — can you help me think it through?", unsure()),
++  c("unsure_help", "positive", "open_question", "I haven't decided. Can you walk me through the options?", unsure()),
++  c("unsure_help", "negative", "open_question", "Not sure. What do most people pick?", ask()),
++  c("unsure_help", "positive", "open_question", "idk", unsure()),
++  c("unsure_help", "negative", "open_question", "I don't know what you're asking me.", clarify(), BOARD),
++  c("unsure_help", "negative", "chat", "I don't know what to do about my pricing.", none()),
++  c("unsure_help", "negative", "open_question", "Mostly coaches, I'm sure of that.", none()),
++
++  // ── correction ────────────────────────────────────────────────────────────
++  c("correction", "positive", "executed", "No, I said Tuesday.", correct("executed"), OB0),
++  c("correction", "positive", "executed", "No, that's wrong. I said Tuesday.", correct("executed"), OB0),
++  c("correction", "positive", "executed", "That's not what I said — it's Tuesdays.", correct("executed")),
++  c("correction", "positive", "executed", "You got that wrong, I asked for Tuesday mornings.", correct("executed")),
++  c("correction", "positive", "chat", "I don't mean the conference. I mean the retreat.", correct("referent"), OB0),
++  c("correction", "positive", "executed", "Actually no, I meant 8 AM, not 9.", correct("executed")),
++  c("correction", "negative", "executed", "No, that's perfect, thank you.", none()),
++  c("correction", "negative", "offer_single", "No, not now.", decline()),
++  c("correction", "negative", "chat", "I meant to send that invoice yesterday.", none()),
++  c("correction", "negative", "executed", "No, I think that's all for today.", none()),
++
++  // ── acceptance ────────────────────────────────────────────────────────────
++  c("acceptance", "positive", "offer_single", "Yes.", accept(), ASEA),
++  c("acceptance", "positive", "offer_single", "Yes please.", accept()),
++  c("acceptance", "positive", "offer_single", "Sounds good, go ahead.", accept()),
++  c("acceptance", "positive", "offer_single", "Do it.", accept()),
++  c("acceptance", "positive", "offer_single", "Okay, let's do it.", accept()),
++  c("acceptance", "positive", "offer_three", "Yes, all three.", accept({ include: ["item-susan", "item-david", "item-invite"] })),
++  c("acceptance", "negative", "offer_single", "Okay, I'm overwhelmed.", none("none", "strained"), "Round 1 decline suite"),
++  c("acceptance", "negative", "offer_single", "Yes, but what does it cost?", ask(), OB0),
++  c("acceptance", "negative", "chat", "Yes, that's how I feel too.", none()),
++
++  // ── modified acceptance ───────────────────────────────────────────────────
++  c("modified_acceptance", "positive", "offer_single", "Yes, but make it 4:00.", accept({ amended: true }), OB0),
++  c("modified_acceptance", "positive", "offer_single", "Yes, but make it 9 AM.", accept({ amended: true }), ASEA),
++  c("modified_acceptance", "positive", "offer_single", "Sure, but every Tuesday at 10am instead.", accept({ amended: true }), R0),
++  c("modified_acceptance", "positive", "offer_single", "Okay, but move it to Friday.", accept({ amended: true })),
++  c("modified_acceptance", "positive", "offer_single", "Yeah, but weekly, not monthly.", accept({ amended: true })),
++  c("modified_acceptance", "negative", "offer_single", "Yes, but I'm not sure about the time.", unsure()),
++  c("modified_acceptance", "negative", "offer_single", "Yes, but why 8?", ask()),
++  c("modified_acceptance", "negative", "offer_single", "Make it 4:00.", none("act")),
++
++  // ── partial acceptance ────────────────────────────────────────────────────
++  c("partial_acceptance", "positive", "offer_three", "Do the first two, not the third.", accept({ include: ["item-susan", "item-david"], exclude: ["item-invite"] }), OB0),
++  c("partial_acceptance", "positive", "offer_three", "Yes, add Susan, but don't add David yet.", accept({ include: ["item-susan"], exclude: ["item-david"] }), OB0),
++  c("partial_acceptance", "positive", "offer_three", "Just the first one.", accept({ include: ["item-susan"] })),
++  c("partial_acceptance", "positive", "offer_three", "Yes to the invitation email, skip the speakers for now.", accept({ include: ["item-invite"], exclude: ["item-susan", "item-david"] })),
++  c("partial_acceptance", "positive", "offer_three", "Go ahead with Susan and the email.", accept({ include: ["item-susan", "item-invite"] })),
++  c("partial_acceptance", "negative", "offer_single", "Just the first one.", accept({ authorizesExecution: false })),
++  c("partial_acceptance", "negative", "offer_three", "Do the fourth one.", accept({ authorizesExecution: false })),
++  c("partial_acceptance", "negative", "offer_three", "Which one is the third again?", ask()),
++
++  // ── decline ───────────────────────────────────────────────────────────────
++  c("decline", "positive", "offer_single", "Not now.", decline(), ASEA),
++  c("decline", "positive", "offer_single", "No thanks.", decline()),
++  c("decline", "positive", "offer_single", "Maybe later.", decline(), ASEA),
++  c("decline", "positive", "offer_single", "Don't do it yet. I'm just thinking.", decline("talk_about"), OB0),
++  c("decline", "positive", "offer_single", "Hold off on that.", decline()),
++  c("decline", "negative", "offer_single", "No, but what does it cost?", ask()),
++  c("decline", "negative", "executed", "No, I said Tuesday.", correct("executed"), OB0),
++  c("decline", "negative", "offer_single", "Not now — can you explain what a Rhythm is first?", clarify()),
++
++  // ── discuss vs act ────────────────────────────────────────────────────────
++  c("discuss_vs_act", "positive", "fresh", "Add a dentist appointment to my calendar October 8 at 2.", none("act"), OB0),
++  c("discuss_vs_act", "positive", "fresh", "Please put 'send the weekly client update' in my Rhythm every Monday at 8am.", none("act"), R0),
++  c("discuss_vs_act", "positive", "fresh", "Remind me Friday to call Susan.", none("act"), ASEA),
++  c("discuss_vs_act", "positive", "fresh", "I need you to add a monthly rhythm to check my ASEA order.", none("act"), ASEA),
++  c("discuss_vs_act", "positive", "fresh", "Set up a rhythm to reconcile my receipts every Friday at 4pm.", none("act"), R0),
++  c("discuss_vs_act", "negative", "fresh", "I'm thinking about adding a dentist appointment.", none("talk_about"), OB0),
++  c("discuss_vs_act", "negative", "fresh", "Maybe I should add this to my Rhythm.", none("talk_about"), ASEA),
++  c("discuss_vs_act", "negative", "fresh", "I already added this to my Rhythm.", none("talk_about"), ASEA),
++  c("discuss_vs_act", "negative", "fresh", "Can you add things to my Rhythm?", ask("talk_about"), ASEA),
++
++  // ── hypothetical ──────────────────────────────────────────────────────────
++  c("hypothetical", "positive", "chat", "What if we charged $200 instead?", ask("talk_about")),
++  c("hypothetical", "positive", "chat", "Suppose I added a second workshop — would that help?", ask("talk_about")),
++  c("hypothetical", "positive", "offer_single", "I'm thinking about it, but what would it cost?", ask("talk_about"), OB0),
++  c("hypothetical", "positive", "chat", "Imagine I moved the retreat to spring.", none("talk_about")),
++  c("hypothetical", "positive", "chat", "Hypothetically, if I raised prices, would people leave?", ask("talk_about")),
++  c("hypothetical", "negative", "chat", "We're raising the price to $200 next month.", none()),
++  c("hypothetical", "negative", "fresh", "Add a second workshop to my calendar for May 3.", none("act")),
++  c("hypothetical", "negative", "chat", "What are we charging now?", ask()),
++
++  // ── compound request ──────────────────────────────────────────────────────
++  c("compound_request", "positive", "fresh", "Add a new item in rhythm and put it on my calendar for the 15th of every month at 8 AM to check my ASEA order.", none("act"), ASEA),
++  c("compound_request", "positive", "fresh", "Set up a rhythm to reconcile my receipts every Friday at 4pm and also put it on my calendar.", none("act"), R0),
++  c("compound_request", "positive", "fresh", "Add Susan and David as speakers and send them the invite.", none("act"), OB0),
++  c("compound_request", "positive", "fresh", "Create a reminder for Friday and add it to my weekly rhythm.", none("act")),
++  c("compound_request", "positive", "fresh", "Please add testimonials to my landing page project and remind me Monday to review it.", none("act"), OB0),
++  c("compound_request", "negative", "fresh", "I might add Susan and David as speakers at some point.", none("talk_about")),
++  c("compound_request", "negative", "fresh", "Susan and David spoke last year and the invite went out late.", none()),
++  c("compound_request", "negative", "fresh", "Should I add Susan and David as speakers?", ask("talk_about")),
++
++  // ── interruption (transition owns it; meaning must not erase it) ───────────
++  c("interruption", "positive", "open_question", "Hold on, my kid just got home.", none("none", "none", { transition: "interrupt_and_suspend" })),
++  c("interruption", "positive", "open_question", "I'm falling apart. I can't do this.", none("none", "distressed", { transition: "interrupt_and_suspend" }), OB0),
++  c("interruption", "positive", "open_question", "One sec — quick thing, remind me to call the vet.", none("act", "none", { transition: "interrupt_and_suspend" })),
++  c("interruption", "positive", "open_question", "I'm panicking about the launch, I can't cope right now.", none("none", "distressed", { transition: "interrupt_and_suspend" })),
++  c("interruption", "positive", "open_question", "Hang on, before we continue — is my invoice sent?", { ...ask(), transition: "interrupt_and_suspend" }),
++  c("interruption", "negative", "open_question", "I'm overwhelmed, but it's for my clients.", none("none", "strained")),
++  c("interruption", "negative", "open_question", "My clients, mostly.", none()),
++  c("interruption", "negative", "open_question", "Hold on, what do you mean by that?", clarify()),
++
++  // ── return ────────────────────────────────────────────────────────────────
++  c("return", "positive", "suspended_work", "Go back to what we were doing.", none("none", "none", { transition: "return_to_suspended_topic" }), OB0),
++  c("return", "positive", "suspended_work", "Okay, back to the conference speakers.", none("none", "none", { transition: "return_to_suspended_topic" })),
++  c("return", "positive", "suspended_work", "Where were we?", { ...ask(), transition: "return_to_suspended_topic" }),
++  c("return", "positive", "suspended_work", "Let's get back to planning the conference.", none("none", "none", { transition: "return_to_suspended_topic" })),
++  c("return", "positive", "suspended_work", "Anyway, back to the speakers.", none("none", "none", { transition: "return_to_suspended_topic" })),
++  c("return", "negative", "suspended_work", "The newsletter should mention the conference.", none()),
++  c("return", "negative", "suspended_work", "I'll come back to the conference later.", none()),
++  c("return", "negative", "suspended_work", "Why did we stop working on the conference?", ask()),
++
++  // ── stale reference ───────────────────────────────────────────────────────
++  c("stale_reference", "positive", "offer_stale", "Yes.", accept({ authorizesExecution: false }), R0),
++  c("stale_reference", "positive", "offer_stale", "Okay, do it.", accept({ authorizesExecution: false })),
++  c("stale_reference", "positive", "offer_stale", "Sure, go ahead.", accept({ authorizesExecution: false })),
++  c("stale_reference", "positive", "fresh", "Yes.", accept({ bindingTarget: undefined, authorizesExecution: false })),
++  c("stale_reference", "positive", "chat", "Yes please.", accept({ bindingTarget: undefined, authorizesExecution: false })),
++  c("stale_reference", "negative", "offer_single", "Yes.", accept()),
++  c("stale_reference", "negative", "offer_stale", "What was that thing you offered earlier?", ask()),
++  c("stale_reference", "negative", "offer_stale", "No, forget it.", decline()),
++
++  // ── KNOW: current vs historical (meaning only; the lens belongs to KNOW) ───
++  c("know_current_vs_historical", "positive", "chat", "What are we charging now?", ask(), OB0),
++  c("know_current_vs_historical", "positive", "chat", "What did we originally plan to charge?", ask(), OB0),
++  c("know_current_vs_historical", "positive", "chat", "Why did we change the price?", ask(), OB0),
++  c("know_current_vs_historical", "positive", "chat", "How much is the retreat these days?", ask()),
++  c("know_current_vs_historical", "positive", "chat", "What was the price before we raised it?", ask()),
++  c("know_current_vs_historical", "negative", "chat", "We're charging $150 now.", none()),
++  c("know_current_vs_historical", "negative", "chat", "We originally planned $99.", none()),
++  c("know_current_vs_historical", "negative", "chat", "We raised the price last spring.", none()),
++
++  // ── unsupported capability language ───────────────────────────────────────
++  c("unsupported_capability", "positive", "executed", "Put it on my Google Calendar.", none("act")),
++  c("unsupported_capability", "positive", "fresh", "Add the retreat to my Outlook calendar for June 3.", none("act")),
++  c("unsupported_capability", "positive", "fresh", "Schedule a Zoom with David next Tuesday.", none("act")),
++  c("unsupported_capability", "positive", "fresh", "Send Susan an email about the talk.", none("act")),
++  c("unsupported_capability", "positive", "fresh", "Please book the venue for May 3.", none("act")),
++  c("unsupported_capability", "negative", "fresh", "Can you add things to my calendar?", ask("talk_about")),
++  c("unsupported_capability", "negative", "fresh", "I already put it on my calendar.", none("talk_about")),
++  c("unsupported_capability", "negative", "fresh", "Do you connect to Google Calendar?", ask("talk_about")),
++
++  // ── emotion combined with another relation ────────────────────────────────
++  c("emotion_combined", "positive", "open_question", "I'm frustrated. What do you mean?", clarify("pending", "strained"), OB0),
++  c("emotion_combined", "positive", "offer_three", "I'm overwhelmed, but yes, do the first one.", accept({ affect: "strained", include: ["item-susan"] }), OB0),
++  c("emotion_combined", "positive", "executed", "This is confusing. No, I said Tuesday.", correct("executed", "strained"), OB0),
++  c("emotion_combined", "positive", "offer_three", "I'm frustrated, but yes, do the first one.", accept({ affect: "strained", include: ["item-susan"] }), OB0),
++  c("emotion_combined", "positive", "open_question", "Ugh, I'm stressed. I don't know — can you help me figure it out?", unsure("strained")),
++  c("emotion_combined", "positive", "offer_single", "I'm exhausted. Not now.", decline("none", "strained")),
++  c("emotion_combined", "negative", "offer_single", "Yes!", accept()),
++  c("emotion_combined", "negative", "open_question", "Our clients are often frustrated with their current coach.", none()),
++  c("emotion_combined", "negative", "open_question", "I'm excited — it's for other coaches.", none()),
++];
++
++/**
++ * HOLDOUT — written and labelled AFTER the deterministic tier was tuned on
++ * CORPUS, and never used to tune it. Fresh phrasings of the same families.
++ * Reported separately so the Command Center can see generalization, not fit.
++ */
++export const HOLDOUT: CorpusCase[] = [
++  c("ask_spark", "positive", "open_question", "Hmm, does the audience change what venue I need?", ask()),
++  c("ask_spark", "positive", "offer_single", "Would that show up on my phone too?", ask()),
++  c("ask_spark", "positive", "chat", "So how do other coaches decide this?", ask()),
++  c("ask_spark", "negative", "open_question", "Probably a mix of both.", none()),
++  c("clarification", "positive", "open_question", "Wait, I'm confused — what are you asking me exactly?", clarify("pending", "strained")),
++  c("clarification", "positive", "open_question", "What does 'audience' mean here?", clarify()),
++  c("clarification", "positive", "offer_single", "I don't get what you mean by a Rhythm.", clarify()),
++  c("clarification", "negative", "open_question", "I don't get many clients from referrals.", none()),
++  c("unsure_help", "positive", "open_question", "No clue, honestly. Can you help me work it out?", unsure()),
++  c("unsure_help", "positive", "open_question", "I'm not really sure yet.", unsure()),
++  c("unsure_help", "negative", "open_question", "I'm sure it's for coaches.", none()),
++  c("correction", "positive", "executed", "No no, I said the 15th, not Monday.", correct("executed")),
++  c("correction", "positive", "executed", "That's the wrong day — it should be Thursday.", correct("executed")),
++  c("correction", "positive", "chat", "Not the workshop — I mean the podcast.", correct("referent")),
++  c("correction", "negative", "executed", "Thanks, that's right.", none()),
++  c("acceptance", "positive", "offer_single", "Yep, go for it.", accept()),
++  c("acceptance", "positive", "offer_single", "Absolutely.", accept()),
++  c("acceptance", "positive", "offer_single", "Sure, that works.", accept()),
++  c("acceptance", "negative", "offer_single", "Sure, I guess I'm just tired.", none("none", "strained")),
++  c("modified_acceptance", "positive", "offer_single", "Yes, but at 7:30 instead.", accept({ amended: true })),
++  c("modified_acceptance", "positive", "offer_single", "Okay, but make it every Wednesday.", accept({ amended: true })),
++  c("modified_acceptance", "negative", "offer_single", "Yes, but can it be earlier?", ask()),
++  c("partial_acceptance", "positive", "offer_three", "Only the second one.", accept({ include: ["item-david"] })),
++  c("partial_acceptance", "positive", "offer_three", "Yes to the first and third, not David.", accept({ include: ["item-susan", "item-invite"], exclude: ["item-david"] })),
++  c("partial_acceptance", "negative", "offer_three", "What's the second one again?", ask()),
++  c("decline", "positive", "offer_single", "Nah, not today.", decline()),
++  c("decline", "positive", "offer_single", "Let's not.", decline()),
++  c("decline", "positive", "offer_single", "Please don't add it yet.", decline("talk_about")),
++  c("decline", "negative", "offer_single", "No — but can you explain what it would do?", clarify()),
++  c("discuss_vs_act", "positive", "fresh", "Create a reminder to renew my business license on the 1st.", none("act")),
++  c("discuss_vs_act", "positive", "fresh", "Can you please schedule my weekly review for Fridays at 3?", none("act")),
++  c("discuss_vs_act", "negative", "fresh", "I wonder if I should schedule a weekly review.", none("talk_about")),
++  c("discuss_vs_act", "negative", "fresh", "I've already scheduled my weekly review.", none("talk_about")),
++  c("hypothetical", "positive", "chat", "What if I only ran the retreat once a year?", ask("talk_about")),
++  c("hypothetical", "negative", "chat", "I'm running the retreat once a year now.", none()),
++  c("compound_request", "positive", "fresh", "Add a rhythm for my Monday review and put the retreat on my calendar.", none("act")),
++  c("stale_reference", "positive", "offer_stale", "Yeah do it.", accept({ authorizesExecution: false })),
++  c("know_current_vs_historical", "positive", "chat", "What did we charge for the first cohort?", ask()),
++  c("know_current_vs_historical", "negative", "chat", "The first cohort paid $99.", none()),
++  c("unsupported_capability", "positive", "fresh", "Text David that the call moved.", none("act")),
++  c("emotion_combined", "positive", "offer_three", "Ugh, this is a lot. Just do the first one.", accept({ affect: "strained", include: ["item-susan"] })),
++  c("emotion_combined", "positive", "executed", "I'm so annoyed — that's wrong, I said Thursday.", correct("executed", "strained")),
++  c("emotion_combined", "negative", "open_question", "The team is overwhelmed, so it's mostly for them.", none()),
++];

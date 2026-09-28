@@ -1,0 +1,500 @@
+OB-1 REVIEW PACK — PART 2 of 5: moved vocabularies + safety tests
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024). Unified diff vs base.
+Parts: 1 core Boundary code · 2 moved vocabularies + safety tests · 3 bake-off harness · 4 real-room drivers · 5 labelled corpus. Data JSON (results, baseline, proxy reads) omitted; see the return report.
+
+diff --git a/lib/board/reconstructed/orchestration/classifyMemberBoardResponse.ts b/lib/board/reconstructed/orchestration/classifyMemberBoardResponse.ts
+index 95d03bba..d530d004 100644
+--- a/lib/board/reconstructed/orchestration/classifyMemberBoardResponse.ts
++++ b/lib/board/reconstructed/orchestration/classifyMemberBoardResponse.ts
+@@ -8,6 +8,11 @@
+ 
+ import { DIRECTOR_IDENTITIES } from "../identities";
+ import { RECONSTRUCTED_DIRECTOR_REASONING_IDS, type ReconstructedDirectorReasoningId } from "../types";
++import {
++  MEMBER_CLARIFICATION_RE as CLARIFICATION_RE,
++  MEMBER_CORRECTION_RE as CORRECTION_RE,
++  MEMBER_HELP_REQUEST_RE as HELP_REQUEST_RE,
++} from "@/lib/conversationBoundaryLexicon";
+ 
+ export type MemberBoardResponseKind = "information" | "unknown";
+ 
+@@ -15,35 +20,6 @@ export type MemberBoardResponseKind = "information" | "unknown";
+ const UNKNOWN_MARKERS =
+   /\b(i\s+)?(don'?t|do not|doesn'?t|does not)\s+(?:\w+\s+)?know\b|\bnot\s+sure\b|\bno\s+idea\b|\bnot\s+yet\b|\bisn'?t\s+(?:in|live in)\s*beta\b|\bis\s+not\s+(?:in|live in)\s*beta\b|\bhasn'?t\s+launched\b|\bhas\s+not\s+launched\b|\bno\s+revenue(?:\s+yet)?\b|\bnot\s+available\s+yet\b/i;
+ 
+-/**
+- * Founder retest — a member turn confused about the QUESTION ITSELF ("what
+- * do you mean", "I'm not sure what you're asking") is a different
+- * conversational move than not knowing the ANSWER. It fires on the
+- * structural shape of confusion-about-the-question (an uncertainty marker
+- * paired with "what you mean/asking/getting at", or a direct "what does
+- * that mean"/"can you clarify" request) — never on a fixed business-topic
+- * word list, so it generalizes to any Director's question.
+- */
+-const CLARIFICATION_RE =
+-  /\b(not\s+sure|don'?t\s+know|no\s+idea|unclear|confused)\b[^.!?]{0,40}\b(what|how)\s+(you'?re|you\s+are|you)\s+(asking|mean(?:ing)?|getting\s+at)\b|\bwhat\s+(do|does)\s+(you|that)\s+mean\b|\b(i\s+)?(don'?t|do\s+not)\s+understand\b|\bcan\s+you\s+(clarify|explain|rephrase|say\s+that\s+(again|another\s+way))\b|\bcould\s+you\s+clarify\b|\bnot\s+sure\s+what\s+(that|this)\s+means\b|\bwhat\s+are\s+you\s+asking\b/i;
+-
+-/**
+- * A request for Spark/Board assistance in figuring something out, alongside
+- * (or instead of) an answer. Structural: "help me + [figure/determine/
+- * calculate/compare/decide/plan/explore/think through]", or a direct request
+- * for help, never a fixed topic list.
+- */
+-const HELP_REQUEST_RE =
+-  /\bhelp\s+me\s+(figure|work|think|calculate|determine|decide|compare|explore|plan|understand)\b|\bwould\s+welcome\s+(the\s+)?help\b|\b(can|could)\s+you\s+help\b|\bwalk\s+me\s+through\b|\bneed\s+(some\s+)?help\s+(figuring|working|thinking|determining|deciding)\b|\bhelp\s+(figuring|working)\s+(it|this|that)\s+out\b/i;
+-
+-/**
+- * The member saying a Board premise/understanding is wrong — structural
+- * ("that's not right/correct/what I said/meant", "you misunderstood", "I
+- * didn't say that"), never a topic-specific phrase list.
+- */
+-const CORRECTION_RE =
+-  /\bthat'?s\s+not\s+(right|correct|quite\s+right|what\s+i\s+(said|meant))\b|\byou\s+(misunderstood|misread|got\s+that\s+wrong)\b|\bi\s+(didn'?t|did\s+not)\s+say\s+that\b|\bactually,?\s+no\b|\bno,?\s+that'?s\s+not\s+(it|right)\b/i;
+-
+ /**
+  * Classify what the member said in reply to an open Board question. Purely
+  * lexical: a response that carries any of the fixed "not known yet" markers
+diff --git a/lib/conversationBoundaryMeaning.test.ts b/lib/conversationBoundaryMeaning.test.ts
+new file mode 100644
+index 00000000..8419ae8f
+--- /dev/null
++++ b/lib/conversationBoundaryMeaning.test.ts
+@@ -0,0 +1,185 @@
++/**
++ * OB-1 — Boundary meaning contract (shadow): required readings + permitsFor
++ * fail-safe invariants.
++ */
++import { readFileSync } from "node:fs";
++import path from "node:path";
++import { describe, expect, it } from "vitest";
++import {
++  resolveConversationBoundary,
++  type BoundaryArmedItem,
++  type BoundaryTurnInput,
++  type ConversationBoundaryDecision,
++} from "./conversationBoundary";
++import { permitsFor } from "./conversationBoundaryMeaning";
++
++const ITEMS: BoundaryArmedItem[] = [
++  { id: "a", label: "Add Susan as a speaker" },
++  { id: "b", label: "Add David as a speaker" },
++  { id: "c", label: "Send the invitation email" },
++];
++const OPEN: Partial<BoundaryTurnInput> = {
++  pendingQuestion: { kind: "open", expects: "free" },
++  lastAssistantText: "Who is this conference mainly for?",
++};
++const OFFER: Partial<BoundaryTurnInput> = {
++  pendingOffer: { summary: "offer", offeredAtTurn: 5 },
++  lastAssistantText: "Want me to set that up?",
++};
++const OFFER3: Partial<BoundaryTurnInput> = { ...OFFER, armedItems: ITEMS };
++const EXECUTED: Partial<BoundaryTurnInput> = {
++  lastExecuted: { id: "r1", label: "Check my ASEA order" },
++  lastAssistantText: "Done — set for Mondays.",
++};
++
++function read(text: string, ctx: Partial<BoundaryTurnInput> = {}) {
++  return resolveConversationBoundary({ userText: text, turn: 6, ...ctx });
++}
++
++describe("OB-1 required readings", () => {
++  it("“No, I said Tuesday.” → correct (never decline)", () => {
++    const d = read("No, I said Tuesday.", EXECUTED);
++    expect(d.relation).toBe("correct");
++    expect(d.binding?.target).toBe("executed");
++    expect(d.meaningConfidence).toBe("high");
++  });
++
++  it("“I don't know what you mean. Can you explain?” → clarify (never unsure/defer/answer)", () => {
++    const d = read("I don't know what you mean. Can you explain?", OPEN);
++    expect(d.relation).toBe("clarify");
++    expect(d.binding?.target).toBe("pending");
++    expect(d.meaningConfidence).toBe("high");
++  });
++
++  it("“I'm thinking about it, but what would it cost?” → ask + talk_about", () => {
++    const d = read("I'm thinking about it, but what would it cost?", OFFER);
++    expect(d.relation).toBe("ask");
++    expect(d.stance).toBe("talk_about");
++  });
++
++  it("“I'm frustrated, but yes, do the first one.” → accept + strained + include first", () => {
++    const d = read("I'm frustrated, but yes, do the first one.", OFFER3);
++    expect(d.relation).toBe("accept");
++    expect(d.affect).toBe("strained");
++    expect(d.binding).toEqual({ target: "pending", include: ["a"] });
++    expect(d.meaningConfidence).toBe("high");
++  });
++
++  it("“I'm falling apart. I can't do this.” → distressed; interruption stays a transition", () => {
++    const d = read("I'm falling apart. I can't do this.", {
++      ...OPEN,
++      activeTopic: { topicId: "t", goal: "plan my conference", resolved: false, startedAtTurn: 1, updatedAtTurn: 5 },
++    });
++    expect(d.affect).toBe("distressed");
++    expect(d.relation).toBe("none");
++    expect(d.decision).toBe("interrupt_and_suspend");
++  });
++
++  it("payload cases keep the binding the contract needs", () => {
++    expect(read("Yes, but make it 4:00.", OFFER).binding).toEqual({ target: "pending", amended: true });
++    expect(read("Do the first two, not the third.", OFFER3).binding).toEqual({
++      target: "pending",
++      include: ["a", "b"],
++      exclude: ["c"],
++    });
++    expect(read("Yes, add Susan, but don't add David yet.", OFFER3).binding).toEqual({
++      target: "pending",
++      include: ["a"],
++      exclude: ["b"],
++    });
++    expect(read("I don't mean the conference. I mean the retreat.", { lastAssistantText: "Your conference…" }).binding).toEqual({
++      target: "referent",
++    });
++    expect(read("What do you mean by audience?", OPEN).relation).toBe("clarify");
++    expect(read("I'm not sure. Help me figure that out.", OPEN).relation).toBe("unsure");
++  });
++
++  it("“Okay, I'm overwhelmed.” is never a high-confidence acceptance", () => {
++    const d = read("Okay, I'm overwhelmed.", OFFER);
++    expect(d.meaningConfidence).toBe("low");
++  });
++
++  it("transition fields are unchanged; meaning evidence is appended only", () => {
++    const d = read("My dog just threw up on the carpet.", {
++      activeTopic: { topicId: "t", goal: "write an email", resolved: false, startedAtTurn: 1, updatedAtTurn: 1 },
++    });
++    expect(d.decision).toBe("switch_topic");
++    expect(d.evidence.slice(0, 2)).toEqual(["substantive_new_subject", "no_overlap"]);
++    expect(d.evidence.slice(2).every((e) => e.startsWith("meaning:"))).toBe(true);
++  });
++});
++
++describe("permitsFor — fail safe", () => {
++  const base = (over: Partial<ConversationBoundaryDecision>): ConversationBoundaryDecision => ({
++    decision: "continue_current_topic",
++    confidence: "high",
++    evidence: [],
++    relation: "accept",
++    stance: "act",
++    affect: "none",
++    binding: { target: "pending" },
++    meaningConfidence: "high",
++    ...over,
++  });
++  const snap = { currentTurn: 6, armedOfferedAtTurn: 5, armedItems: ITEMS, lastExecutedId: "r1" };
++
++  it("LOW meaning confidence grants nothing", () => {
++    const p = permitsFor(base({ meaningConfidence: "low" }), snap);
++    expect(p).toMatchObject({ mayExecute: false, mayStoreAsAnswer: false, mayAdvance: false, mayModifyExecuted: false });
++    expect(p.obligation).toBe("check_meaning");
++  });
++
++  it("a decision without meaning (legacy) grants nothing", () => {
++    const p = permitsFor({ decision: "answer_pending_question", confidence: "high", evidence: [] }, snap);
++    expect(p.mayStoreAsAnswer).toBe(false);
++    expect(p.mayExecute).toBe(false);
++  });
++
++  it("accept executes only a fresh, armed, in-scope, non-talk_about offer", () => {
++    expect(permitsFor(base({}), snap).mayExecute).toBe(true);
++    expect(permitsFor(base({}), { ...snap, armedOfferedAtTurn: 2 }).mayExecute).toBe(false); // stale
++    expect(permitsFor(base({}), { ...snap, armedOfferedAtTurn: null }).mayExecute).toBe(false); // nothing armed
++    expect(permitsFor(base({ stance: "talk_about" }), snap).mayExecute).toBe(false);
++    expect(permitsFor(base({ decision: "switch_topic" }), snap).mayExecute).toBe(false);
++    expect(permitsFor(base({ binding: undefined }), snap).mayExecute).toBe(false);
++  });
++
++  it("partial acceptance can never authorize an item that is not armed", () => {
++    expect(permitsFor(base({ binding: { target: "pending", include: ["zzz"] } }), snap).mayExecute).toBe(false);
++    expect(permitsFor(base({ binding: { target: "pending", include: ["a"], exclude: ["a"] } }), snap).mayExecute).toBe(false);
++    const p = permitsFor(base({ binding: { target: "pending", include: ["a", "b"], exclude: ["c"] } }), snap);
++    expect(p.mayExecute).toBe(true);
++    expect(p.executableScope).toEqual(["a", "b"]);
++  });
++
++  it("an amended acceptance must be parsed before execution", () => {
++    expect(permitsFor(base({ binding: { target: "pending", amended: true } }), snap).requiresAmendmentParse).toBe(true);
++  });
++
++  it("clarify / ask / unsure hold the process and keep the pending item", () => {
++    for (const relation of ["clarify", "ask", "unsure"] as const) {
++      const p = permitsFor(base({ relation, decision: "answer_pending_question" }), snap);
++      expect(p).toMatchObject({ mayExecute: false, mayStoreAsAnswer: false, mayAdvance: false, preservesPending: true });
++    }
++  });
++
++  it("correction modifies only an executed item with a receipt", () => {
++    expect(permitsFor(base({ relation: "correct", binding: { target: "executed" } }), snap).mayModifyExecuted).toBe(true);
++    expect(permitsFor(base({ relation: "correct", binding: { target: "executed" } }), { ...snap, lastExecutedId: null }).mayModifyExecuted).toBe(false);
++    expect(permitsFor(base({ relation: "correct", binding: { target: "pending" } }), snap).mayModifyExecuted).toBe(false);
++  });
++
++  it("a plain answer may be stored only when Boundary grants the pending slot", () => {
++    const answer = base({ relation: "none", stance: "none", binding: undefined, decision: "answer_pending_question" });
++    expect(permitsFor(answer, snap).mayStoreAsAnswer).toBe(true);
++    expect(permitsFor(answer, { ...snap, answerAffordanceValid: false }).mayStoreAsAnswer).toBe(false);
++    expect(permitsFor({ ...answer, decision: "switch_topic" }, snap).mayStoreAsAnswer).toBe(false);
++  });
++});
++
++describe("Boundary lexicon stays a leaf", () => {
++  it("has no imports (keeps Boundary out of the ~2,400-module graph)", () => {
++    const src = readFileSync(path.join(__dirname, "conversationBoundaryLexicon.ts"), "utf8");
++    expect(src).not.toMatch(/^\s*import\s/m);
++  });
++});
+diff --git a/lib/conversationConfirmationGate.ts b/lib/conversationConfirmationGate.ts
+index 9ca8aaa6..b572b168 100644
+--- a/lib/conversationConfirmationGate.ts
++++ b/lib/conversationConfirmationGate.ts
+@@ -10,6 +10,12 @@ import {
+ import type { FrictionlessPendingAction } from "./frictionlessActionLayer";
+ import type { WorkspaceOffer } from "./workspaceMode";
+ import { isBareGenericAcceptance } from "./pendingAcceptanceAuthority";
++import {
++  CONFIRMATION_DECLINE_RE as DECLINE_RE,
++  DEFERRAL_SUPPLEMENT_RE,
++  SHORT_ACCEPTANCE_SUPPLEMENT_RE,
++  normalizeAcceptanceText,
++} from "./conversationBoundaryLexicon";
+ 
+ /** Assistant lines that require waiting for member answer — no thinking, no follow-up LLM. */
+ const CONFIRMATION_QUESTION_PATTERNS: readonly RegExp[] = [
+@@ -145,9 +151,6 @@ export function createAwaitingConfirmationState(input: {
+   };
+ }
+ 
+-const DECLINE_RE =
+-  /^(?:no|nope|nah|not now|not yet|stay(?:\s+here)?|something else|keep talking|later)\b/i;
+-
+ const ACCEPT_RE =
+   /^(?:yes|yep|yeah|yup|sure|ok(?:ay)?|please|open it|take me there|go ahead|do it|sounds good|that works|that would be great|let'?s do (?:it|that)|please do|keep working(?:\s+(?:with|on)\s+(?:this|it))?)\b/i;
+ 
+@@ -200,10 +203,6 @@ export function isPureConfirmationDecline(text: string): boolean {
+   return true;
+ }
+ 
+-/** Deferrals the canonical decline regex does not cover; whole-message anchored. */
+-const DEFERRAL_SUPPLEMENT_RE =
+-  /^(?:maybe later|not today|some other time|another time|no thanks?|no thank you|let'?s not|skip it|hold off|never ?mind)\b/i;
+-
+ /**
+  * Canonical decline plus deferral ("maybe later", "no thanks"). Supplements
+  * `isPureConfirmationDecline` the same way the acceptance supplement below
+@@ -254,22 +253,6 @@ function isArmedOwnerActive(armed: ArmedOwnerSignal): boolean {
+   return armed.active === true;
+ }
+ 
+-/** Normalize for acceptance matching — case, curly apostrophes, whitespace, trailing punctuation. */
+-function normalizeAcceptanceText(text: string): string {
+-  return text
+-    .normalize("NFKC")
+-    .replace(/[‘’ʼ`]/g, "'")
+-    .replace(/\s+/g, " ")
+-    .trim()
+-    .replace(/[.!?…]+$/g, "")
+-    .trim()
+-    .toLowerCase();
+-}
+-
+-/** Matrix tokens the canonical base regex does not cover; whole-message anchored. */
+-const SHORT_ACCEPTANCE_SUPPLEMENT_RE =
+-  /^(?:do it|absolutely|(?:yes|okay|ok|sure)\s+please)$/i;
+-
+ /**
+  * PURE text check: is the whole reply a bare short acceptance? Reuses the
+  * canonical `isBareGenericAcceptance` vocabulary + the supplement above. No
+diff --git a/lib/internalAgent/types.ts b/lib/internalAgent/types.ts
+index 8e67c87a..411126d4 100644
+--- a/lib/internalAgent/types.ts
++++ b/lib/internalAgent/types.ts
+@@ -9,7 +9,9 @@ export type InternalAgentPhase =
+   | "revise"
+   | "synthesis"
+   /** Round 2 (Semantic Understanding Architecture) — material-signal understanding, not Director selection. */
+-  | "material_signal_extraction";
++  | "material_signal_extraction"
++  /** OB-1 — evaluation-only structured read of member meaning (never wired into a turn). */
++  | "member_meaning_read_eval";
+ 
+ export type InternalAgentInvocation = {
+   agentId: string;
+diff --git a/lib/memberIntent/executableRequest.ts b/lib/memberIntent/executableRequest.ts
+index 6fefc18d..85f25188 100644
+--- a/lib/memberIntent/executableRequest.ts
++++ b/lib/memberIntent/executableRequest.ts
+@@ -24,6 +24,13 @@ import {
+   wantsRememberCapability,
+   type CapabilityObjectMatch,
+ } from "./capabilityObject";
++import {
++  ASPIRATION_RE,
++  DIRECT_INSTRUCTION_RE,
++  LEADING_ACCEPTANCE_RE,
++  REQUEST_TO_SPARK_RE,
++  talkAboutReason,
++} from "@/lib/conversationBoundaryLexicon";
+ 
+ export type ExecutableCapability = CapabilityObjectMatch["capability"];
+ 
+@@ -120,50 +127,6 @@ function detectCapabilities(text: string): {
+ // Stance — talking about an action vs asking Spark to perform it.
+ // ---------------------------------------------------------------------------
+ 
+-const PAST_TENSE_RE =
+-  /\b(?:i|we)\s+(?:already\s+|just\s+)?(?:added|put|created|made|set up|scheduled|saved|placed|entered)\b|\b(?:i'?ve|i have|we'?ve|we have)\s+(?:already\s+)?(?:added|put|created|made|set up|scheduled|saved|placed|got)\b|\balready\s+(?:added|put|created|set up|scheduled|have (?:it|that|this|one))\b|\b(?:it'?s|it is|that'?s|that is)\s+already\s+(?:in|on)\b/i;
+-
+-const NEGATED_RE =
+-  /\b(?:don'?t|do not|never|no need to|stop|please don'?t)\s+(?:\w+\s+){0,2}?(?:add|put|create|make|set up|schedule|remind|save)\b/i;
+-const NEGATION_EXCEPTION_RE = /\b(?:don'?t|never)\s+let me forget\b/i;
+-
+-const HYPOTHETICAL_RE =
+-  /\bwhat if\b|\bif i (?:were to|did|made|added|put|set up|created)\b|\bsuppose\b|\bimagine\b|\bhypothetically\b|\bwould it (?:help|make sense|work)\b/i;
+-
+-const THINKING_ALOUD_RE =
+-  /\b(?:maybe|perhaps)\s+(?:i|we)\b|\bi\s+(?:should|could|might|may|probably should)\b|\bi\s+(?:think|guess|suppose)\s+i\b|\b(?:i'?m|i am)\s+(?:thinking|considering|wondering|debating|toying)\b|\bthinking (?:about|of)\b|\bconsidering\b|\bi wonder\b|\bshould i\b|\bprobably should\b/i;
+-
+-const CAPABILITY_QUESTION_START_RE =
+-  /^(?:can|could|would|will|do|does|are|is|am)\s+(?:you|spark|it|i|we|this|the app)\b/i;
+-const GENERIC_OBJECT_RE =
+-  /\b(?:things|stuff|anything|items|something|rhythms|reminders|events|entries)\b/i;
+-const ABILITY_PHRASE_RE =
+-  /\b(?:are you able to|is it possible to|do you (?:do|support|have|handle|offer)|does (?:spark|the app|this|it) (?:do|support|have|handle)|how (?:do|can|would|should) i|how to|can i|could i)\b/i;
+-
+-const DIRECT_INSTRUCTION_RE =
+-  /^(?:(?:please|ok(?:ay)?|hey|spark|so|also|and|now|then|just|go ahead and|alright|great)[,!\s]+)*(?:add|put|create|make|set up|setup|schedule|start|set|place|save|build|remind me|get)\b/i;
+-
+-const REQUEST_TO_SPARK_RE =
+-  /\b(?:need|want|would like|'d like)\s+(?:you|spark)\s+to\b|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:\w+\s+){0,8}?(?:add|put|create|make|set up|setup|schedule|start|set|place|save|remind)\b|\bplease\s+(?:\w+\s+){0,2}?(?:add|put|create|make|set up|schedule|start|remind)\b/i;
+-
+-const ASPIRATION_RE =
+-  /\b(?:i\s+)?(?:need|want|would like|'d like|wanna|gonna|going)\s+(?:to\s+)?(?:add|put|create|make|set up|setup|schedule|start|get)\b/i;
+-
+-function isCapabilityQuestion(text: string): boolean {
+-  if (ABILITY_PHRASE_RE.test(text)) return true;
+-  if (!CAPABILITY_QUESTION_START_RE.test(text)) return false;
+-  return GENERIC_OBJECT_RE.test(text);
+-}
+-
+-function talkAboutReason(text: string): ExecutableStanceReason | null {
+-  if (HYPOTHETICAL_RE.test(text)) return "hypothetical";
+-  if (PAST_TENSE_RE.test(text)) return "past_tense";
+-  if (NEGATED_RE.test(text) && !NEGATION_EXCEPTION_RE.test(text)) return "negated";
+-  if (THINKING_ALOUD_RE.test(text)) return "thinking_aloud";
+-  if (isCapabilityQuestion(text)) return "capability_question";
+-  return null;
+-}
+-
+ // ---------------------------------------------------------------------------
+ // Slots.
+ // ---------------------------------------------------------------------------
+@@ -448,9 +411,6 @@ export function isRememberOwnedRequest(text: string): boolean {
+ // correction). Pure text interpretation — the owner decides what to do.
+ // ---------------------------------------------------------------------------
+ 
+-const LEADING_ACCEPTANCE_RE =
+-  /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|sounds good|perfect|great)\b[\s,!.:;-]*(?:but\s+|and\s+|though\s+)?/i;
+-
+ export type RememberScope = "rhythm_only" | "reminder_only" | "with_calendar";
+ 
+ export type RememberModifiers = {
+diff --git a/lib/oneBrainCertification/shadowIsolation.test.ts b/lib/oneBrainCertification/shadowIsolation.test.ts
+new file mode 100644
+index 00000000..eddf4d75
+--- /dev/null
++++ b/lib/oneBrainCertification/shadowIsolation.test.ts
+@@ -0,0 +1,74 @@
++/**
++ * OB-1 shadow isolation — proves the meaning contract is computed but NOT
++ * consumed: no production file reads relation / stance / affect / binding /
++ * meaningConfidence, calls permitsFor, or imports the meaning module, the
++ * certification harness, or the evaluation-only model read.
++ */
++import { readdirSync, readFileSync, statSync } from "node:fs";
++import path from "node:path";
++import { describe, expect, it } from "vitest";
++
++const ROOT = path.resolve(__dirname, "../..");
++const SCAN_DIRS = ["app", "components", "lib", "proxy.ts"];
++
++function productionFiles(): string[] {
++  const out: string[] = [];
++  const walk = (p: string) => {
++    const st = statSync(p);
++    if (st.isDirectory()) {
++      if (/node_modules|\.next|__tests__/.test(p)) return;
++      for (const f of readdirSync(p)) walk(path.join(p, f));
++      return;
++    }
++    if (!/\.(ts|tsx)$/.test(p)) return;
++    if (/\.test\.(ts|tsx)$/.test(p)) return;
++    out.push(path.relative(ROOT, p));
++  };
++  for (const d of SCAN_DIRS) {
++    try {
++      walk(path.join(ROOT, d));
++    } catch {
++      // optional entry
++    }
++  }
++  return out;
++}
++
++/** The only production files allowed to touch the meaning contract. */
++const OWNERS = new Set([
++  "lib/conversationBoundary.ts", // computes it (the single production caller)
++  "lib/conversationBoundaryMeaning.ts", // the reader + permitsFor
++  "lib/conversationBoundaryLexicon.ts", // vocabulary leaf
++]);
++const HARNESS_PREFIX = "lib/oneBrainCertification/";
++
++describe("OB-1 shadow isolation", () => {
++  const files = productionFiles().filter((f) => !OWNERS.has(f) && !f.startsWith(HARNESS_PREFIX));
++  const read = (f: string) => readFileSync(path.join(ROOT, f), "utf8");
++
++  it("no production file imports the meaning module or the certification harness", () => {
++    const offenders = files.filter((f) =>
++      /from\s+["'][^"']*(?:conversationBoundaryMeaning|oneBrainCertification)[^"']*["']/.test(read(f)),
++    );
++    expect(offenders).toEqual([]);
++  });
++
++  it("no production file calls permitsFor or readBoundaryMeaning", () => {
++    const offenders = files.filter((f) => /\b(?:permitsFor|readBoundaryMeaning)\s*\(/.test(read(f)));
++    expect(offenders).toEqual([]);
++  });
++
++  it("no production file reads the new meaning fields off a Boundary decision", () => {
++    const re =
++      /(?:[bB]oundaryDecision|turnBoundaryDecision|boundary)\??\.(?:relation|stance|affect|binding|meaningConfidence)\b|\bmeaningConfidence\b/;
++    const offenders = files.filter((f) => re.test(read(f)));
++    expect(offenders).toEqual([]);
++  });
++
++  it("the Boundary is the only production caller of the meaning reader", () => {
++    const callers = productionFiles().filter(
++      (f) => f !== "lib/conversationBoundaryMeaning.ts" && /readBoundaryMeaning\s*\(/.test(read(f)),
++    );
++    expect(callers).toEqual(["lib/conversationBoundary.ts"]);
++  });
++});
+diff --git a/lib/pendingAcceptanceAuthority.ts b/lib/pendingAcceptanceAuthority.ts
+index 282e4ef6..b3f5269c 100644
+--- a/lib/pendingAcceptanceAuthority.ts
++++ b/lib/pendingAcceptanceAuthority.ts
+@@ -23,10 +23,10 @@ import {
+ import { isClarificationRequest } from "./topicContinuityAnchorIntelligence/clarificationDetection";
+ import { assistantContainsQuestion } from "./conversationIntervention";
+ import { assistantOfferedConsent } from "./conversationWorkflowContinuation";
++import { GENERIC_ACCEPTANCE_RE } from "./conversationBoundaryLexicon";
+ 
+-/** Generic affirmations that must not act without pending context. */
+-export const GENERIC_ACCEPTANCE_RE =
+-  /^(?:yes|yep|yeah|yup|ok(?:ay)?|sure|sounds good|that would help|works for me|perfect|i like it|that'?s good|that'?s fine|that works|looks good|correct|right|good|that one|use that|let'?s do it|please|please do|go ahead|proceed|count me in|let'?s go|(?:yes[,\s]+)?(?:let'?s\s+)?try it)\.?$/i;
++/** Generic affirmations that must not act without pending context. (Moved to the Boundary lexicon; re-exported unchanged.) */
++export { GENERIC_ACCEPTANCE_RE };
+ 
+ export type PendingAcceptanceKind =
+   | "workspace"

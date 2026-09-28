@@ -1,0 +1,1018 @@
+OB-1 REVIEW PACK — PART 1 of 5: core Boundary code
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024). Unified diff vs base.
+Parts: 1 core Boundary code · 2 moved vocabularies + safety tests · 3 bake-off harness · 4 real-room drivers · 5 labelled corpus. Data JSON (results, baseline, proxy reads) omitted; see the return report.
+
+diff --git a/lib/conversationBoundary.ts b/lib/conversationBoundary.ts
+index e998f1d1..1e9161f2 100644
+--- a/lib/conversationBoundary.ts
++++ b/lib/conversationBoundary.ts
+@@ -28,6 +28,7 @@
+  */
+ 
+ import { namesDeliverableTerm } from "./artifactRegistry";
++import { readBoundaryMeaning } from "./conversationBoundaryMeaning";
+ 
+ export type ConversationBoundaryDecisionKind =
+   | "continue_current_topic"
+@@ -48,8 +49,49 @@ export type ConversationBoundaryDecision = {
+   returnTargetId?: string;
+   /** For switch/interrupt — park current work rather than destroy it. */
+   suspend?: boolean;
++
++  // ── OB-1 meaning contract (SHADOW — computed, not yet consumed) ──────────
++  // docs/reviews/OB05_BOUNDARY_MEANING_CONTRACT_DECISION.md. Optional so every
++  // existing constructor of this type is unchanged. `confidence` above stays
++  // the TRANSITION confidence; meaning certainty is `meaningConfidence`.
++  /** What the member is doing with Spark's last contribution / the pending item. */
++  relation?: BoundaryMemberRelation;
++  /** Discuss vs act (memberIntent/executableRequest stance, computed once). */
++  stance?: BoundaryMemberStance;
++  /** Emotional modifier — never an exclusive meaning. */
++  affect?: BoundaryMemberAffect;
++  /** Which thing the relation applies to, and the authorized scope. */
++  binding?: BoundaryBinding;
++  /** Certainty of the meaning read; "low" fails safe in `permitsFor`. */
++  meaningConfidence?: "high" | "low";
++};
++
++export type BoundaryMemberRelation =
++  | "ask"
++  | "clarify"
++  | "unsure"
++  | "correct"
++  | "decline"
++  | "accept"
++  | "none";
++
++export type BoundaryMemberStance = "act" | "talk_about" | "none";
++
++export type BoundaryMemberAffect = "none" | "strained" | "distressed";
++
++export type BoundaryBinding = {
++  target: "pending" | "executed" | "referent";
++  /** Armed item ids the acceptance covers (validated against the armed offer). */
++  include?: string[];
++  /** Armed item ids explicitly NOT authorized. */
++  exclude?: string[];
++  /** The acceptance is conditional on a change the capability must parse. */
++  amended?: true;
+ };
+ 
++/** One enumerated item of an armed offer (spine expectedReply, OB-3). */
++export type BoundaryArmedItem = { id: string; label: string };
++
+ // ── Input snapshots (plain data — no store coupling, fully testable) ─────────
+ 
+ export type BoundaryActiveTopic = {
+@@ -126,6 +168,10 @@ export type BoundaryTurnInput = {
+   pendingOffer?: { summary: string; offeredAtTurn: number } | null;
+   suspended?: BoundarySuspendedItem[] | null;
+   lastAssistantText?: string;
++  /** OB-1: enumerated items of the armed offer (not yet fed by production). */
++  armedItems?: BoundaryArmedItem[] | null;
++  /** OB-1: the item Spark most recently executed (receipt), if any. */
++  lastExecuted?: { id: string; label?: string } | null;
+ };
+ 
+ // ── Evidence helpers (conservative, explainable) ─────────────────────────────
+@@ -383,6 +429,27 @@ function decide(
+   return { decision, confidence, evidence, ...extra };
+ }
+ 
++/**
++ * The Boundary Decision: the unchanged transition decision, plus the OB-1
++ * member-meaning fields (shadow). Meaning evidence is appended as `meaning:*`
++ * after the transition evidence; the transition fields are never altered.
++ */
++export function resolveConversationBoundary(
++  input: BoundaryTurnInput,
++): ConversationBoundaryDecision {
++  const transition = resolveTransition(input);
++  const meaning = readBoundaryMeaning(input);
++  return {
++    ...transition,
++    evidence: [...transition.evidence, ...meaning.evidence.map((e) => `meaning:${e}`)],
++    relation: meaning.relation,
++    stance: meaning.stance,
++    affect: meaning.affect,
++    ...(meaning.binding ? { binding: meaning.binding } : {}),
++    meaningConfidence: meaning.meaningConfidence,
++  };
++}
++
+ /**
+  * The single deterministic transition decision. Precedence (highest first):
+  *   1 emotional urgency → interrupt_and_suspend
+@@ -396,7 +463,7 @@ function decide(
+  *   9 substantive new subject → switch_topic
+  *  10 else → unclear
+  */
+-export function resolveConversationBoundary(
++function resolveTransition(
+   input: BoundaryTurnInput,
+ ): ConversationBoundaryDecision {
+   const t = input.userText.trim();
+diff --git a/lib/conversationBoundaryLexicon.ts b/lib/conversationBoundaryLexicon.ts
+new file mode 100644
+index 00000000..4e8f7de7
+--- /dev/null
++++ b/lib/conversationBoundaryLexicon.ts
+@@ -0,0 +1,207 @@
++/**
++ * Boundary lexicon — the ONE shared, import-free home of the member-turn
++ * vocabulary that Boundary's meaning reader consumes (OB-1).
++ *
++ * Every pattern here was MOVED VERBATIM from the module that proved it; those
++ * modules now import it from here, so their behavior is byte-for-byte
++ * unchanged and no vocabulary exists twice. This file must stay a leaf
++ * (no imports): the original modules transitively import ~2,400 modules, and
++ * Boundary must not.
++ */
++
++// ── Acceptance / decline (moved verbatim from pendingAcceptanceAuthority.ts and conversationConfirmationGate.ts) ──
++
++/** Generic affirmations that must not act without pending context. */
++export const GENERIC_ACCEPTANCE_RE =
++  /^(?:yes|yep|yeah|yup|ok(?:ay)?|sure|sounds good|that would help|works for me|perfect|i like it|that'?s good|that'?s fine|that works|looks good|correct|right|good|that one|use that|let'?s do it|please|please do|go ahead|proceed|count me in|let'?s go|(?:yes[,\s]+)?(?:let'?s\s+)?try it)\.?$/i;
++
++export const CONFIRMATION_DECLINE_RE =
++  /^(?:no|nope|nah|not now|not yet|stay(?:\s+here)?|something else|keep talking|later)\b/i;
++
++/** Deferrals the canonical decline regex does not cover; whole-message anchored. */
++export const DEFERRAL_SUPPLEMENT_RE =
++  /^(?:maybe later|not today|some other time|another time|no thanks?|no thank you|let'?s not|skip it|hold off|never ?mind)\b/i;
++
++/** Normalize for acceptance matching — case, curly apostrophes, whitespace, trailing punctuation. */
++export function normalizeAcceptanceText(text: string): string {
++  return text
++    .normalize("NFKC")
++    .replace(/[‘’ʼ`]/g, "'")
++    .replace(/\s+/g, " ")
++    .trim()
++    .replace(/[.!?…]+$/g, "")
++    .trim()
++    .toLowerCase();
++}
++
++/** Matrix tokens the canonical base regex does not cover; whole-message anchored. */
++export const SHORT_ACCEPTANCE_SUPPLEMENT_RE =
++  /^(?:do it|absolutely|(?:yes|okay|ok|sure)\s+please)$/i;
++
++// ── Stance and restraint (moved verbatim from memberIntent/executableRequest.ts) ──
++
++export const PAST_TENSE_RE =
++  /\b(?:i|we)\s+(?:already\s+|just\s+)?(?:added|put|created|made|set up|scheduled|saved|placed|entered)\b|\b(?:i'?ve|i have|we'?ve|we have)\s+(?:already\s+)?(?:added|put|created|made|set up|scheduled|saved|placed|got)\b|\balready\s+(?:added|put|created|set up|scheduled|have (?:it|that|this|one))\b|\b(?:it'?s|it is|that'?s|that is)\s+already\s+(?:in|on)\b/i;
++
++export const NEGATED_RE =
++  /\b(?:don'?t|do not|never|no need to|stop|please don'?t)\s+(?:\w+\s+){0,2}?(?:add|put|create|make|set up|schedule|remind|save)\b/i;
++
++export const NEGATION_EXCEPTION_RE = /\b(?:don'?t|never)\s+let me forget\b/i;
++
++export const HYPOTHETICAL_RE =
++  /\bwhat if\b|\bif i (?:were to|did|made|added|put|set up|created)\b|\bsuppose\b|\bimagine\b|\bhypothetically\b|\bwould it (?:help|make sense|work)\b/i;
++
++export const THINKING_ALOUD_RE =
++  /\b(?:maybe|perhaps)\s+(?:i|we)\b|\bi\s+(?:should|could|might|may|probably should)\b|\bi\s+(?:think|guess|suppose)\s+i\b|\b(?:i'?m|i am)\s+(?:thinking|considering|wondering|debating|toying)\b|\bthinking (?:about|of)\b|\bconsidering\b|\bi wonder\b|\bshould i\b|\bprobably should\b/i;
++
++export const CAPABILITY_QUESTION_START_RE =
++  /^(?:can|could|would|will|do|does|are|is|am)\s+(?:you|spark|it|i|we|this|the app)\b/i;
++
++export const GENERIC_OBJECT_RE =
++  /\b(?:things|stuff|anything|items|something|rhythms|reminders|events|entries)\b/i;
++
++export const ABILITY_PHRASE_RE =
++  /\b(?:are you able to|is it possible to|do you (?:do|support|have|handle|offer)|does (?:spark|the app|this|it) (?:do|support|have|handle)|how (?:do|can|would|should) i|how to|can i|could i)\b/i;
++
++export const DIRECT_INSTRUCTION_RE =
++  /^(?:(?:please|ok(?:ay)?|hey|spark|so|also|and|now|then|just|go ahead and|alright|great)[,!\s]+)*(?:add|put|create|make|set up|setup|schedule|start|set|place|save|build|remind me|get)\b/i;
++
++export const REQUEST_TO_SPARK_RE =
++  /\b(?:need|want|would like|'d like)\s+(?:you|spark)\s+to\b|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:\w+\s+){0,8}?(?:add|put|create|make|set up|setup|schedule|start|set|place|save|remind)\b|\bplease\s+(?:\w+\s+){0,2}?(?:add|put|create|make|set up|schedule|start|remind)\b/i;
++
++export const ASPIRATION_RE =
++  /\b(?:i\s+)?(?:need|want|would like|'d like|wanna|gonna|going)\s+(?:to\s+)?(?:add|put|create|make|set up|setup|schedule|start|get)\b/i;
++
++export function isCapabilityQuestion(text: string): boolean {
++  if (ABILITY_PHRASE_RE.test(text)) return true;
++  if (!CAPABILITY_QUESTION_START_RE.test(text)) return false;
++  return GENERIC_OBJECT_RE.test(text);
++}
++
++export type TalkAboutReason =
++  | "hypothetical"
++  | "past_tense"
++  | "negated"
++  | "thinking_aloud"
++  | "capability_question";
++
++export function talkAboutReason(text: string): TalkAboutReason | null {
++  if (HYPOTHETICAL_RE.test(text)) return "hypothetical";
++  if (PAST_TENSE_RE.test(text)) return "past_tense";
++  if (NEGATED_RE.test(text) && !NEGATION_EXCEPTION_RE.test(text)) return "negated";
++  if (THINKING_ALOUD_RE.test(text)) return "thinking_aloud";
++  if (isCapabilityQuestion(text)) return "capability_question";
++  return null;
++}
++
++export const LEADING_ACCEPTANCE_RE =
++  /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|sounds good|perfect|great)\b[\s,!.:;-]*(?:but\s+|and\s+|though\s+)?/i;
++
++// ── Member conversational moves (moved verbatim from board/reconstructed/orchestration/classifyMemberBoardResponse.ts) ──
++
++/**
++ * Founder retest — a member turn confused about the QUESTION ITSELF ("what
++ * do you mean", "I'm not sure what you're asking") is a different
++ * conversational move than not knowing the ANSWER. It fires on the
++ * structural shape of confusion-about-the-question (an uncertainty marker
++ * paired with "what you mean/asking/getting at", or a direct "what does
++ * that mean"/"can you clarify" request) — never on a fixed business-topic
++ * word list, so it generalizes to any Director's question.
++ */
++export const MEMBER_CLARIFICATION_RE =
++  /\b(not\s+sure|don'?t\s+know|no\s+idea|unclear|confused)\b[^.!?]{0,40}\b(what|how)\s+(you'?re|you\s+are|you)\s+(asking|mean(?:ing)?|getting\s+at)\b|\bwhat\s+(do|does)\s+(you|that)\s+mean\b|\b(i\s+)?(don'?t|do\s+not)\s+understand\b|\bcan\s+you\s+(clarify|explain|rephrase|say\s+that\s+(again|another\s+way))\b|\bcould\s+you\s+clarify\b|\bnot\s+sure\s+what\s+(that|this)\s+means\b|\bwhat\s+are\s+you\s+asking\b/i;
++
++/**
++ * A request for Spark/Board assistance in figuring something out, alongside
++ * (or instead of) an answer. Structural: "help me + [figure/determine/
++ * calculate/compare/decide/plan/explore/think through]", or a direct request
++ * for help, never a fixed topic list.
++ */
++export const MEMBER_HELP_REQUEST_RE =
++  /\bhelp\s+me\s+(figure|work|think|calculate|determine|decide|compare|explore|plan|understand)\b|\bwould\s+welcome\s+(the\s+)?help\b|\b(can|could)\s+you\s+help\b|\bwalk\s+me\s+through\b|\bneed\s+(some\s+)?help\s+(figuring|working|thinking|determining|deciding)\b|\bhelp\s+(figuring|working)\s+(it|this|that)\s+out\b/i;
++
++/**
++ * The member saying a Board premise/understanding is wrong — structural
++ * ("that's not right/correct/what I said/meant", "you misunderstood", "I
++ * didn't say that"), never a topic-specific phrase list.
++ */
++export const MEMBER_CORRECTION_RE =
++  /\bthat'?s\s+not\s+(right|correct|quite\s+right|what\s+i\s+(said|meant))\b|\byou\s+(misunderstood|misread|got\s+that\s+wrong)\b|\bi\s+(didn'?t|did\s+not)\s+say\s+that\b|\bactually,?\s+no\b|\bno,?\s+that'?s\s+not\s+(it|right)\b/i;
++
++// ── New in OB-1 — structural, domain-free markers the moved vocabularies lack ──
++// Each is the smallest structural shape needed for the Boundary meaning
++// contract (OB-0.5). None names a business topic. None grants anything: every
++// permission is derived later by `permitsFor`, which fails safe on LOW meaning
++// confidence.
++
++/**
++ * Crisis-level distress — the subset of Boundary's EMOTIONAL_URGENCY_RE and
++ * adhdEmotionalFrictionIntelligence CRISIS_DISTRESS_RE that signals the member
++ * cannot continue right now. Ordinary strain ("overwhelmed", "frustrated") is
++ * deliberately NOT here: it is a tone modifier, never an interruption on its own.
++ */
++export const AFFECT_DISTRESS_RE =
++  /\b(?:falling apart|can'?t cope|can'?t handle (?:this|it|any ?more)|breaking down|panicking|panic attack|freaking out|shutting down|can'?t do this|can'?t breathe|can'?t catch (?:my )?breath|at my breaking point)\b/i;
++
++/** Strain that should soften delivery and reduce process pressure, never erase meaning. */
++export const AFFECT_STRAIN_RE =
++  /\b(?:frustrat(?:ed|ing)|annoy(?:ed|ing)|overwhelm(?:ed|ing)|stressed|anxious|exhausted|so tired|confus(?:ed|ing)|ugh+|this is (?:hard|a lot)|too much)\b/i;
++
++/**
++ * Not knowing the answer to what Spark asked. Subset of activeTopicGate
++ * GENUINE_UNCERTAINTY_RE and Board UNKNOWN_MARKERS without their
++ * topic-specific or affect terms.
++ */
++export const UNSURE_RE =
++  /\b(?:i\s+)?(?:don'?t|do not)\s+know\b|\bnot\s+(?:really\s+)?sure\b|\bno\s+idea\b|\bunsure\b|\bidk\b|\bdunno\b|\bhaven'?t decided\b|\bcan'?t decide\b|\bnot certain\b/i;
++
++/** A sentence that opens with a wh-word — a question even without "?". */
++export const WH_OPEN_RE =
++  /^(?:(?:so|and|but|wait|ok(?:ay)?|hmm|also|then)[,\s]+)*(?:what|why|how|when|where|who|whom|whose|which)\b/i;
++
++/** Stating that Spark's understanding or action is wrong. */
++export const STATED_WRONG_RE =
++  /\b(?:that'?s|that is|it'?s|it is|you'?re|you are|you got (?:it|that))\s+(?:all\s+)?wrong\b|\bwrong (?:day|date|time|one|person|name|place|event|item)\b/i;
++
++/**
++ * Restating what the member already said or meant. "I meant to <verb>" is an
++ * intention, not a correction (same guard as turnRecovery CORRECTION_RE).
++ */
++export const SAID_MEANT_RE =
++  /\bi\s+(?:said|asked for|told you)\b|\bi\s+meant\b(?!\s+to\s+\w)/i;
++
++/** Correcting WHICH thing Spark is talking about ("I don't mean X, I mean Y"). */
++export const REFERENT_CORRECTION_RE =
++  /\bi\s+(?:don'?t|didn'?t|do not|did not)\s+mean\b|\bnot\s+(?:the|that|this|my)\s+[\w'-]+(?:\s+[\w'-]+)?\s*[,;—–-]+\s*(?:the|my|i mean|i meant)\b/i;
++
++/** A clause that opens by telling Spark not to act. */
++export const DONT_ACT_OPEN_RE =
++  /^(?:please\s+)?(?:don'?t|do not)\s+(?:do|add|put|make|create|schedule|set|save|send|book|include)\b|^(?:not yet|hold off)\b/i;
++
++/** An amendment riding on an acceptance ("yes, but make it 4:00"). */
++export const AMENDMENT_RE =
++  /\b(?:make it|change it|move it|switch it|push it|instead|actually)\b|\bat\s+\d{1,2}(?::\d{2})?\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)(?![a-z])|\b(?:on|to)\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day\b|\bevery\s+(?:day|week|month|morning|evening|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:weekly|monthly|daily)\b/i;
++
++/** Marks a clause as EXCLUDING what follows ("not the third", "but don't add David"). */
++export const EXCLUSION_MARKER_RE =
++  /\b(?:not|except|skip|without|leave out|hold off on|don'?t (?:add|do|include|send|book|schedule))\b/i;
++
++/** Supplements THINKING_ALOUD_RE with the adverbial forms ("I'm just thinking"). */
++export const TALK_ABOUT_SUPPLEMENT_RE =
++  /\b(?:i'?m|i am|we'?re|we are)\s+(?:just|only|still)\s+(?:thinking|considering|wondering|brainstorming|exploring|musing)\b|\bjust (?:thinking|brainstorming|exploring|musing)(?: out loud)?\b/i;
++
++/**
++ * A clause-initial imperative action verb — an instruction to Spark even when
++ * the verb is outside DIRECT_INSTRUCTION_RE's capability list. Excludes the
++ * noun reading ("Change is hard", "Plan was to…").
++ */
++export const IMPERATIVE_ACTION_OPEN_RE =
++  /^(?:(?:please|ok(?:ay)?|so|also|and|now|then|just|quick thing|one sec|hey)[,!\s]+)*(?:send|email|text|call|book|schedule|move|cancel|delete|remove|update|change|rename|draft|write|order|pay|invite|share|post|publish|add|put|create|make|set up|remind me)\b(?!\s+(?:is|was|are|were)\b)/i;
++
++/** First-person / exclamative framing: the strain is the MEMBER's own. */
++export const FIRST_PERSON_AFFECT_FRAME_RE =
++  /\b(?:i|i'?m|im|i am|i feel|i'?ve|me|my)\b|^\s*(?:ugh+|argh+|this is|that'?s|it'?s|so)\b/i;
++
++/** A yes/no question put to Spark's abilities or opinions ("Do you connect to…?"). */
++export const QUESTION_TO_SPARK_OPEN_RE =
++  /^(?:(?:so|and|but|wait|ok(?:ay)?)[,\s]+)*(?:do|does|can|could|will|would|are|is)\s+(?:you|spark|it|the app)\b/i;
+diff --git a/lib/conversationBoundaryMeaning.ts b/lib/conversationBoundaryMeaning.ts
+new file mode 100644
+index 00000000..9397e341
+--- /dev/null
++++ b/lib/conversationBoundaryMeaning.ts
+@@ -0,0 +1,685 @@
++/**
++ * Boundary meaning — OB-1 (SHADOW).
++ *
++ * The minimum member meaning Boundary (S4) owns, per
++ * docs/reviews/OB05_BOUNDARY_MEANING_CONTRACT_DECISION.md:
++ *
++ *   relation  ask | clarify | unsure | correct | decline | accept | none
++ *   stance    act | talk_about | none
++ *   affect    none | strained | distressed          (a modifier, never exclusive)
++ *   binding   target + optional include / exclude / amended
++ *
++ * Boundary transition (interrupt / return / switch / cancel) is NOT repeated
++ * here; it stays in `resolveConversationBoundary`.
++ *
++ * This is the DETERMINISTIC CERTAIN TIER. It returns `meaningConfidence:
++ * "high"` only for unambiguous shapes; anything else is "low", and
++ * `permitsFor` treats low as: no execution, no storing as an answer, no
++ * advancement.
++ *
++ * SHADOW: `resolveConversationBoundary` is the only production caller. No
++ * production code reads `relation` / `stance` / `affect` / `binding` /
++ * `meaningConfidence`, and nothing in production calls `permitsFor`
++ * (enforced by lib/oneBrainCertification/shadowIsolation.test.ts).
++ */
++
++import type {
++  BoundaryArmedItem,
++  BoundaryBinding,
++  BoundaryMemberAffect,
++  BoundaryMemberRelation,
++  BoundaryMemberStance,
++  BoundaryTurnInput,
++  ConversationBoundaryDecision,
++} from "./conversationBoundary";
++import {
++  AFFECT_DISTRESS_RE,
++  AFFECT_STRAIN_RE,
++  AMENDMENT_RE,
++  CONFIRMATION_DECLINE_RE,
++  DEFERRAL_SUPPLEMENT_RE,
++  DIRECT_INSTRUCTION_RE,
++  DONT_ACT_OPEN_RE,
++  EXCLUSION_MARKER_RE,
++  FIRST_PERSON_AFFECT_FRAME_RE,
++  GENERIC_ACCEPTANCE_RE,
++  IMPERATIVE_ACTION_OPEN_RE,
++  LEADING_ACCEPTANCE_RE,
++  MEMBER_CLARIFICATION_RE,
++  MEMBER_CORRECTION_RE,
++  MEMBER_HELP_REQUEST_RE,
++  REFERENT_CORRECTION_RE,
++  REQUEST_TO_SPARK_RE,
++  SAID_MEANT_RE,
++  SHORT_ACCEPTANCE_SUPPLEMENT_RE,
++  QUESTION_TO_SPARK_OPEN_RE,
++  STATED_WRONG_RE,
++  TALK_ABOUT_SUPPLEMENT_RE,
++  UNSURE_RE,
++  WH_OPEN_RE,
++  normalizeAcceptanceText,
++  talkAboutReason,
++} from "./conversationBoundaryLexicon";
++import { detectRepairTrigger } from "./conversationRepairClarificationIntelligence/triggerDetection";
++import { classifyTurnRecovery } from "./shariAnswerFirst/turnRecovery";
++
++export type BoundaryMeaningConfidence = "high" | "low";
++
++export type BoundaryMeaning = {
++  relation: BoundaryMemberRelation;
++  stance: BoundaryMemberStance;
++  affect: BoundaryMemberAffect;
++  binding?: BoundaryBinding;
++  meaningConfidence: BoundaryMeaningConfidence;
++  /** Explainable signals, in order. Appended to Boundary `evidence` as `meaning:*`. */
++  evidence: string[];
++};
++
++// ── Text helpers ─────────────────────────────────────────────────────────────
++
++function normalize(text: string): string {
++  return text
++    .normalize("NFKC")
++    .replace(/[‘’ʼ`]/g, "'")
++    .replace(/[“”]/g, '"')
++    .replace(/\s+/g, " ")
++    .trim();
++}
++
++/** Sentences, keeping their terminal punctuation (so "?" survives). */
++function sentences(t: string): string[] {
++  return t
++    .split(/(?<=[.!?…])\s+/)
++    .map((s) => s.trim())
++    .filter(Boolean);
++}
++
++/** Clauses: sentences further split on commas, semicolons, dashes and "but". */
++function clauses(t: string): string[] {
++  return t
++    .split(/[.!?…;]+|,|\s[—–-]\s|\s+but\s+/i)
++    .map((s) => s.trim())
++    .filter(Boolean);
++}
++
++function isBareAcceptance(t: string): boolean {
++  const n = normalizeAcceptanceText(t);
++  return Boolean(n) && (GENERIC_ACCEPTANCE_RE.test(n) || SHORT_ACCEPTANCE_SUPPLEMENT_RE.test(n));
++}
++
++function isDeclineClause(c: string): boolean {
++  const n = normalizeAcceptanceText(c);
++  return (
++    CONFIRMATION_DECLINE_RE.test(n) ||
++    DEFERRAL_SUPPLEMENT_RE.test(n) ||
++    DONT_ACT_OPEN_RE.test(n)
++  );
++}
++
++/** A question about what a word or phrase MEANS — clarify-or-ask, never certain. */
++const MEANING_QUESTION_RE = /\bmean(?:s|ing|t)?\b|\bstand for\b|\bdefin(?:e|ition)\b/i;
++/** Words that signal confusion about Spark's words even when no clarify rule matched. */
++const CONFUSION_SHAPE_RE =
++  /\b(?:what|how)\s+you\s+(?:mean|meant)\b|\b(?:get|follow|understand)\s+(?:what|how)\s+you\b|\bdon'?t\s+(?:get|follow)\b|\bconfus/i;
++
++// ── Scope (partial acceptance) — validated against the armed items only ────
++
++const ORDINAL_INDEX: Record<string, number> = {
++  first: 0, "1st": 0, one: 0,
++  second: 1, "2nd": 1, two: 1,
++  third: 2, "3rd": 2, three: 2,
++  fourth: 3, "4th": 3, four: 3,
++  fifth: 4, "5th": 4, five: 4,
++};
++const COUNT_WORD: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
++
++const ORDINAL_RE =
++  /\b(?:the\s+)?(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|last)(?:\s+(one|two|three|four|five))?(?:\s+ones?)?\b/gi;
++/** Non-global twin of ORDINAL_RE for `.test()` (a /g regex keeps lastIndex state). */
++const ORDINAL_TEST_RE = new RegExp(ORDINAL_RE.source, "i");
++const ALL_RE = /\b(?:both|all(?:\s+of\s+(?:them|those|these))?|all\s+(?:two|three|four|five)|everything)\b/i;
++
++type ScopeRead = { ids: string[]; unknownReference: boolean };
++
++/** Item ids a clause refers to, by ordinal, "last", "both/all", or label word. */
++function referencedItems(clause: string, items: readonly BoundaryArmedItem[]): ScopeRead {
++  const ids = new Set<string>();
++  let unknownReference = false;
++  const c = clause.toLowerCase();
++
++  if (ALL_RE.test(c)) items.forEach((i) => ids.add(i.id));
++
++  for (const m of c.matchAll(ORDINAL_RE)) {
++    const word = m[1]!.toLowerCase();
++    const count = m[2] ? COUNT_WORD[m[2].toLowerCase()] : undefined;
++    if (word === "last") {
++      const last = items[items.length - 1];
++      if (last) ids.add(last.id);
++      else unknownReference = true;
++      continue;
++    }
++    const idx = ORDINAL_INDEX[word];
++    if (idx === undefined) continue;
++    if (count && word === "first") {
++      // "the first two" → items 1..2
++      if (count > items.length) unknownReference = true;
++      items.slice(0, count).forEach((i) => ids.add(i.id));
++      continue;
++    }
++    const item = items[idx];
++    if (item) ids.add(item.id);
++    else unknownReference = true;
++  }
++
++  for (const item of items) {
++    const words = item.label
++      .toLowerCase()
++      .split(/[^a-z0-9']+/)
++      .filter((w) => w.length >= 3 && !LABEL_STOPWORDS.has(w));
++    if (words.some((w) => new RegExp(`\\b${w}\\b`, "i").test(c))) ids.add(item.id);
++  }
++  return { ids: [...ids], unknownReference };
++}
++
++const LABEL_STOPWORDS = new Set([
++  "add", "the", "and", "for", "with", "your", "my", "our", "to", "a", "an",
++  "set", "put", "make", "create", "new", "item", "one", "two", "this", "that",
++  "speaker", "speakers", "reminder", "rhythm", "calendar", "project",
++]);
++
++function mentionsScope(clause: string): boolean {
++  return ORDINAL_TEST_RE.test(clause) || ALL_RE.test(clause);
++}
++
++// ── The certain-tier reader ─────────────────────────────────────────────────
++
++type RelationCandidate = {
++  relation: Exclude<BoundaryMemberRelation, "none">;
++  strong: boolean;
++  signal: string;
++};
++
++const PRECEDENCE: BoundaryMemberRelation[] = [
++  "clarify",
++  "ask",
++  "correct",
++  "unsure",
++  "decline",
++  "accept",
++  "none",
++];
++
++/**
++ * Read the member's relation to Spark's last contribution. Pure; reads only
++ * the Boundary input (the pre-turn snapshot + text).
++ */
++export function readBoundaryMeaning(input: BoundaryTurnInput): BoundaryMeaning {
++  const t = normalize(input.userText ?? "");
++  const evidence: string[] = [];
++  if (!t) {
++    return {
++      relation: "none",
++      stance: "none",
++      affect: "none",
++      meaningConfidence: "low",
++      evidence: ["empty"],
++    };
++  }
++
++  const items = input.armedItems ?? [];
++  const hasPendingQuestion = Boolean(input.pendingQuestion);
++  const hasArmedOffer =
++    Boolean(input.pendingOffer) ||
++    items.length > 0 ||
++    input.pendingQuestion?.expects === "yes_no";
++  const hasPending = hasPendingQuestion || hasArmedOffer;
++  const sparkAsked = /\?\s*["')\]]*\s*$/.test(input.lastAssistantText?.trim() ?? "");
++  const hasSparkContribution = hasPending || Boolean(input.lastAssistantText?.trim());
++  const lastExecuted = input.lastExecuted ?? null;
++
++  // ── affect (modifier) ──
++  let affect: BoundaryMemberAffect = "none";
++  const ownClause = (re: RegExp) =>
++    clauses(t).some((c) => re.test(c) && FIRST_PERSON_AFFECT_FRAME_RE.test(c));
++  if (ownClause(AFFECT_DISTRESS_RE)) affect = "distressed";
++  else if (ownClause(AFFECT_STRAIN_RE)) affect = "strained";
++  if (affect !== "none") evidence.push(`affect_${affect}`);
++
++  // ── relation candidates ──
++  const candidates: RelationCandidate[] = [];
++  const sents = sentences(t);
++  const cls = clauses(t);
++
++  // clarify — confusion about what SPARK said (Board move rule + CRCI repair trigger)
++  const crci = detectRepairTrigger(t);
++  const explainsNewContent =
++    /\b(?:can|could)\s+you\s+explain\s+(?!that\b|this\b|it\b|what\s+you\b|your\b|again\b)[a-z]/i.test(t);
++  if (MEMBER_CLARIFICATION_RE.test(t) && explainsNewContent && !/\bwhat\s+(?:do|does)\s+(?:you|that)\s+mean\b|\bdon'?t\s+understand\b|\bnot\s+sure\s+what\b/i.test(t)) {
++    // "Can you explain how pricing tiers work?" — explaining NEW content is a
++    // question, not a request to re-explain Spark's own words. Ambiguous → weak.
++    candidates.push({ relation: "clarify", strong: false, signal: "explain_new_content" });
++  } else if (MEMBER_CLARIFICATION_RE.test(t)) {
++    candidates.push({ relation: "clarify", strong: true, signal: "member_clarification" });
++  } else if (crci === "what-do-you-mean" || crci === "doesnt-make-sense") {
++    candidates.push({ relation: "clarify", strong: true, signal: `crci_${crci}` });
++  } else if (crci === "explain" && /\bexplain\s+(?:that|this|it|what you)\b|\bexplain\s*[?.!]*$|\bsay that (?:again|differently)\b|\bin plain (?:english|words)\b/i.test(t)) {
++    candidates.push({ relation: "clarify", strong: true, signal: "crci_explain_referent" });
++  }
++
++  // ask — a question put to Spark
++  const request =
++    REQUEST_TO_SPARK_RE.test(t) ||
++    clauses(t).some((c) => DIRECT_INSTRUCTION_RE.test(c) || IMPERATIVE_ACTION_OPEN_RE.test(c));
++  const questionSentence = sents.find((s) => /\?\s*["')\]]*$/.test(s));
++  const whSentence = sents.find((s) => WH_OPEN_RE.test(s));
++  if (questionSentence) {
++    const capabilityQuestion = talkAboutReason(questionSentence) === "capability_question";
++    const politeRequestOnly =
++      request &&
++      !capabilityQuestion &&
++      !WH_OPEN_RE.test(questionSentence) &&
++      /^(?:can|could|would|will)\s+you\b/i.test(questionSentence);
++    const helpQuestion = MEMBER_HELP_REQUEST_RE.test(questionSentence) && UNSURE_RE.test(t);
++    const abilityOrOpinion =
++      QUESTION_TO_SPARK_OPEN_RE.test(questionSentence) && !capabilityQuestion && !request;
++    const aboutMeaning = MEANING_QUESTION_RE.test(questionSentence);
++    if (helpQuestion) {
++      evidence.push("help_question_rides_with_unsure");
++    } else if (!politeRequestOnly) {
++      candidates.push({
++        relation: "ask",
++        strong: !abilityOrOpinion && !aboutMeaning,
++        signal: aboutMeaning
++          ? "question_about_meaning_clarify_or_ask"
++          : abilityOrOpinion
++            ? "question_to_spark_stance_ambiguous"
++            : "question_mark",
++      });
++    }
++  } else if (whSentence) {
++    candidates.push({ relation: "ask", strong: false, signal: "wh_open_no_question_mark" });
++  }
++
++  // correct — Spark (or a stored/executed thing) got it wrong
++  const strongCorrection =
++    MEMBER_CORRECTION_RE.test(t) ||
++    STATED_WRONG_RE.test(t) ||
++    REFERENT_CORRECTION_RE.test(t) ||
++    (SAID_MEANT_RE.test(t) &&
++      (/^(?:no|nope|actually|sorry|wait)\b/i.test(t) || Boolean(lastExecuted) || hasPending));
++  if (strongCorrection) {
++    candidates.push({ relation: "correct", strong: true, signal: "correction_marker" });
++  } else if (classifyTurnRecovery(t) === "correction") {
++    candidates.push({ relation: "correct", strong: false, signal: "turn_recovery_correction_only" });
++  }
++
++  // unsure — not knowing the answer to what Spark asked
++  if (UNSURE_RE.test(t) || MEMBER_HELP_REQUEST_RE.test(t)) {
++    if (hasPending || sparkAsked) {
++      candidates.push({ relation: "unsure", strong: true, signal: "unsure_marker" });
++    } else {
++      evidence.push("unsure_marker_without_pending");
++    }
++  }
++
++  // An acceptance is present when the whole reply is a bare yes, a clause opens
++  // with an acceptance lead, or a clause selects armed items by position.
++  const bare = isBareAcceptance(t);
++  // "Please put X in my Rhythm" is a polite instruction, not a "please" = yes.
++  const leadClauseIndex = cls.findIndex(
++    (c) => LEADING_ACCEPTANCE_RE.test(c) && !DIRECT_INSTRUCTION_RE.test(c) && !IMPERATIVE_ACTION_OPEN_RE.test(c),
++  );
++  const scopeDirective =
++    items.length > 0 &&
++    cls.some((c) => mentionsScope(c) && !EXCLUSION_MARKER_RE.test(c));
++  // Ordinal scope against an offer with NO enumerated items cannot be resolved.
++  const unresolvableScope =
++    hasArmedOffer && items.length === 0 && cls.some((c) => mentionsScope(c));
++  // Without an armed offer only a bare, whole-message yes reads as acceptance
++  // (a stale "yes"); "Okay, back to the speakers" is not an acceptance.
++  const acceptancePresent =
++    bare || (hasArmedOffer && (leadClauseIndex >= 0 || scopeDirective || unresolvableScope));
++
++  // Inside an acceptance, a "don't add David" clause that names an ARMED item is
++  // an exclusion from the authorized scope, not a decline of the whole offer.
++  const isExclusionOfArmedItem = (c: string) =>
++    acceptancePresent && items.length > 0 && referencedItems(c, items).ids.length > 0;
++
++  // decline — any clause that opens by declining / deferring / "don't do it"
++  const declineClause = cls.find((c) => isDeclineClause(c) && !isExclusionOfArmedItem(c));
++  if (declineClause) {
++    candidates.push({
++      relation: "decline",
++      strong: hasArmedOffer || hasPending,
++      signal: hasArmedOffer || hasPending ? "decline_clause" : "decline_without_pending",
++    });
++  }
++
++  // accept — bare acceptance, an acceptance lead, or a scoped directive over armed items
++  let binding: BoundaryBinding | undefined;
++  let acceptStrong = false;
++  let acceptSignal = "";
++  if (acceptancePresent) {
++    acceptSignal = bare ? "bare_acceptance" : leadClauseIndex >= 0 ? "acceptance_lead" : "scope_directive";
++    const read = readAcceptance(t, cls, items);
++    binding = hasArmedOffer ? read.binding : undefined;
++    acceptStrong = hasArmedOffer && read.recognized;
++    if (!hasArmedOffer) evidence.push("acceptance_without_armed_offer");
++    if (!read.recognized) evidence.push(read.reason ?? "unrecognized_acceptance_tail");
++    candidates.push({ relation: "accept", strong: acceptStrong, signal: acceptSignal });
++  }
++
++  // ── choose by precedence ──
++  let relation: BoundaryMemberRelation = "none";
++  let chosen: RelationCandidate | undefined;
++  for (const r of PRECEDENCE) {
++    const c = candidates.find((x) => x.relation === r);
++    if (c) {
++      relation = r;
++      chosen = c;
++      break;
++    }
++  }
++  for (const c of candidates) evidence.push(`${c.relation}:${c.signal}`);
++
++  // ── stance ──
++  // Stance is read from what the member is NOT excluding: "don't add David yet"
++  // inside an acceptance must not turn the authorized part into talk_about.
++  const stanceText =
++    relation === "accept" && binding?.exclude?.length
++      ? cls.filter((c) => !isExclusionOfArmedItem(c) || !EXCLUSION_MARKER_RE.test(c)).join(". ")
++      : t;
++  const talk =
++    talkAboutReason(stanceText) ??
++    (TALK_ABOUT_SUPPLEMENT_RE.test(stanceText) ? ("thinking_aloud" as const) : null);
++  let stance: BoundaryMemberStance = "none";
++  if (talk) stance = "talk_about";
++  else if (relation === "accept") stance = "act";
++  else if (request && relation !== "decline") stance = "act";
++  if (talk) evidence.push(`stance_talk_about_${talk}`);
++
++  // ── binding for non-accept relations (context-derived, one rule) ──
++  if (relation !== "accept") binding = bindingTargetFor(relation, input);
++
++  // ── confidence (fail safe) ──
++  let meaningConfidence: BoundaryMeaningConfidence = "high";
++  const lowWhy: string[] = [];
++  if (chosen && !chosen.strong) lowWhy.push("weak_signal");
++  if (relation === "accept" && talk) lowWhy.push("accept_with_talk_about");
++  if (relation === "accept" && candidates.some((c) => c.relation === "decline")) {
++    lowWhy.push("accept_and_decline"); // unreachable by precedence; kept as a guard
++  }
++  if (relation === "accept" && affect !== "none" && isWeakAcknowledgementOnly(cls)) {
++    // "Okay, I'm overwhelmed." — an acknowledgement riding on strain, not a yes
++    // (Round 1 decline suite). Only an explicit yes / directive / scope counts.
++    lowWhy.push("weak_acknowledgement_with_affect");
++  }
++  if (relation === "correct" && !binding) lowWhy.push("correction_without_target");
++  if (relation === "none" && CONFUSION_SHAPE_RE.test(t) && hasSparkContribution) {
++    // Confusion-shaped words no clarify rule matched ("I don't get what you
++    // mean by…") — never a HIGH-confidence plain statement.
++    lowWhy.push("unmatched_confusion_shape");
++  }
++  if (relation === "none" && stance === "act" && hasArmedOffer) {
++    // "Could you set that up for me?" while an offer is armed: acceptance of the
++    // offer, or a new request? Ambiguous → the member is asked, nothing runs.
++    lowWhy.push("request_while_offer_armed");
++  }
++  if (relation === "correct" && talk === "thinking_aloud") lowWhy.push("correction_with_thinking_aloud");
++  if (relation === "clarify" && !hasSparkContribution) lowWhy.push("clarify_without_spark_contribution");
++  if (relation === "none" && candidates.length === 0 && evidence.includes("unsure_marker_without_pending")) {
++    // member's own uncertainty about their business — a statement, not low confidence
++  }
++  if (lowWhy.length) {
++    meaningConfidence = "low";
++    evidence.push(...lowWhy.map((w) => `low:${w}`));
++  }
++
++  return { relation, stance, affect, binding, meaningConfidence, evidence };
++}
++
++const WEAK_ACK_RE = /^(?:ok(?:ay)?|sure|alright|all right|fine|right|got it|mm+|hmm+)$/i;
++
++/**
++ * True when the only acceptance-bearing clause is a weak acknowledgement and
++ * every other clause is affect ("Okay, I'm overwhelmed").
++ */
++function isWeakAcknowledgementOnly(cls: string[]): boolean {
++  let weak = false;
++  for (const raw of cls) {
++    const c = normalizeAcceptanceText(raw);
++    if (!c) continue;
++    if (WEAK_ACK_RE.test(c)) {
++      weak = true;
++      continue;
++    }
++    if ((AFFECT_STRAIN_RE.test(c) || AFFECT_DISTRESS_RE.test(c)) && c.split(/\s+/).length <= 6) continue;
++    return false; // an explicit yes, directive, scope, or other content
++  }
++  return weak;
++}
++
++/**
++ * The binding TARGET for a non-accept relation is context, not language: it
++ * comes from the pre-turn snapshot (what is pending, what was just executed,
++ * what Spark last said). One rule, used by every reading tier.
++ */
++export function bindingTargetFor(
++  relation: BoundaryMemberRelation,
++  input: BoundaryTurnInput,
++): BoundaryBinding | undefined {
++  const hasPending =
++    Boolean(input.pendingQuestion) ||
++    Boolean(input.pendingOffer) ||
++    Boolean(input.armedItems?.length);
++  const hasSparkContribution = hasPending || Boolean(input.lastAssistantText?.trim());
++  switch (relation) {
++    case "correct":
++      if (REFERENT_CORRECTION_RE.test(normalize(input.userText ?? ""))) return { target: "referent" };
++      if (input.lastExecuted) return { target: "executed" };
++      if (hasPending) return { target: "pending" };
++      return hasSparkContribution ? { target: "referent" } : undefined;
++    case "decline":
++    case "unsure":
++      return hasPending ? { target: "pending" } : undefined;
++    case "clarify":
++      return hasPending ? { target: "pending" } : hasSparkContribution ? { target: "referent" } : undefined;
++    default:
++      return undefined;
++  }
++}
++
++/** Parse an acceptance's scope and amendment against the armed items. */
++function readAcceptance(
++  t: string,
++  cls: string[],
++  items: readonly BoundaryArmedItem[],
++): { binding: BoundaryBinding; recognized: boolean; reason?: string } {
++  const binding: BoundaryBinding = { target: "pending" };
++  if (isBareAcceptance(t)) return { binding, recognized: true };
++
++  const include = new Set<string>();
++  const exclude = new Set<string>();
++  let amended = false;
++  let unknownReference = false;
++  let unrecognized = false;
++
++  for (const raw of cls) {
++    let c = raw;
++    const lead = LEADING_ACCEPTANCE_RE.exec(c);
++    if (lead) c = c.slice(lead[0].length).trim();
++    if (!c) continue;
++    if (AFFECT_STRAIN_RE.test(c) && c.split(/\s+/).length <= 5) continue; // "I'm frustrated"
++    if (isBareAcceptance(c)) continue; // "Okay, let's do it" — the clause is itself a yes
++    const excluding = EXCLUSION_MARKER_RE.test(c);
++    const refs = items.length ? referencedItems(c, items) : { ids: [], unknownReference: false };
++    if (refs.unknownReference) unknownReference = true;
++    if (refs.ids.length) {
++      refs.ids.forEach((id) => (excluding ? exclude : include).add(id));
++      continue;
++    }
++    if (mentionsScope(c)) {
++      // ordinal/scope language with nothing armed to resolve it against
++      unknownReference = true;
++      continue;
++    }
++    if (AMENDMENT_RE.test(c)) {
++      amended = true;
++      continue;
++    }
++    if (/^(?:and\s+)?(?:do it|go ahead|please|thanks?|thank you|that works|sounds good|perfect|great)\b/i.test(c)) {
++      continue;
++    }
++    unrecognized = true;
++  }
++
++  if (include.size) binding.include = [...include];
++  if (exclude.size) binding.exclude = [...exclude];
++  if (amended) binding.amended = true;
++
++  if (unknownReference) return { binding, recognized: false, reason: "scope_not_in_armed_items" };
++  if ([...include].some((id) => exclude.has(id))) {
++    return { binding, recognized: false, reason: "scope_include_exclude_overlap" };
++  }
++  if (unrecognized) return { binding, recognized: false, reason: "unrecognized_acceptance_tail" };
++  return { binding, recognized: true };
++}
++
++// ── Derived permissions (one function; children never re-derive) ────────────
++
++export type BoundaryObligation =
++  | "check_meaning"
++  | "explain_own_last_contribution"
++  | "answer_question"
++  | "help_with_pending"
++  | "apply_or_confirm_correction"
++  | "acknowledge_and_release"
++  | "execute_authorized_scope"
++  | "domain_turn";
++
++export type BoundaryPermitSnapshot = {
++  currentTurn: number;
++  /** Turn on which the armed offer was made (spine expectedReply offeredAtTurn). */
++  armedOfferedAtTurn?: number | null;
++  armedItems?: readonly BoundaryArmedItem[] | null;
++  /** Receipt id of the item Spark most recently executed in this conversation. */
++  lastExecutedId?: string | null;
++  /** The pending owner's own affordance check on the reply (domain-owned). */
++  answerAffordanceValid?: boolean;
++};
++
++export type BoundaryPermits = {
++  /** Authorization meaning for the armed offer (the action chain still runs its own checks). */
++  mayExecute: boolean;
++  /** Item ids the authorization covers when `mayExecute`. */
++  executableScope: string[];
++  /** The capability must parse the amendment before executing; never execute the unamended version. */
++  requiresAmendmentParse: boolean;
++  /** A new direct request (`relation: none`, `stance: act`) may go to the capability's own slot check. */
++  mayHandNewRequestToCapability: boolean;
++  mayModifyExecuted: boolean;
++  mayStoreAsAnswer: boolean;
++  mayAdvance: boolean;
++  /** The pending item survives this turn. */
++  preservesPending: boolean;
++  obligation: BoundaryObligation;
++};
++
++const NOTHING: Omit<BoundaryPermits, "obligation" | "preservesPending"> = {
++  mayExecute: false,
++  executableScope: [],
++  requiresAmendmentParse: false,
++  mayHandNewRequestToCapability: false,
++  mayModifyExecuted: false,
++  mayStoreAsAnswer: false,
++  mayAdvance: false,
++};
++
++/**
++ * Pure permissions derived from a Boundary decision. Fails safe: LOW meaning
++ * confidence, a missing meaning, or a transition away from the thread grants
++ * nothing. Interpretation alone never executes — `mayExecute` is authorization
++ * meaning only; the action chain still owns slot checks, execution and
++ * read-back.
++ */
++export function permitsFor(
++  decision: ConversationBoundaryDecision,
++  snapshot: BoundaryPermitSnapshot,
++): BoundaryPermits {
++  const relation = decision.relation;
++  if (!relation || decision.meaningConfidence !== "high") {
++    return { ...NOTHING, preservesPending: true, obligation: "check_meaning" };
++  }
++  const leftThread =
++    decision.decision === "switch_topic" ||
++    decision.decision === "cancel_current_workflow" ||
++    decision.decision === "return_to_suspended_topic";
++
++  switch (relation) {
++    case "clarify":
++      return { ...NOTHING, preservesPending: true, obligation: "explain_own_last_contribution" };
++    case "ask":
++      return { ...NOTHING, preservesPending: true, obligation: "answer_question" };
++    case "unsure":
++      return { ...NOTHING, preservesPending: true, obligation: "help_with_pending" };
++    case "correct": {
++      const mayModifyExecuted =
++        !leftThread &&
++        decision.binding?.target === "executed" &&
++        Boolean(snapshot.lastExecutedId);
++      return {
++        ...NOTHING,
++        mayModifyExecuted,
++        preservesPending: true,
++        obligation: "apply_or_confirm_correction",
++      };
++    }
++    case "decline":
++      return { ...NOTHING, preservesPending: false, obligation: "acknowledge_and_release" };
++    case "accept": {
++      const armedIds = (snapshot.armedItems ?? []).map((i) => i.id);
++      const freshOffer =
++        snapshot.armedOfferedAtTurn != null &&
++        snapshot.armedOfferedAtTurn === snapshot.currentTurn - 1;
++      const include = decision.binding?.include;
++      const exclude = decision.binding?.exclude ?? [];
++      const idsValid =
++        (include ?? []).every((id) => armedIds.includes(id)) &&
++        exclude.every((id) => armedIds.includes(id)) &&
++        !(include ?? []).some((id) => exclude.includes(id));
++      const scope = (include ?? armedIds).filter((id) => !exclude.includes(id));
++      const authorized =
++        !leftThread &&
++        decision.binding?.target === "pending" &&
++        freshOffer &&
++        idsValid &&
++        decision.stance !== "talk_about" &&
++        (armedIds.length === 0 || scope.length > 0);
++      if (!authorized) {
++        return { ...NOTHING, preservesPending: true, obligation: "check_meaning" };
++      }
++      return {
++        ...NOTHING,
++        mayExecute: true,
++        executableScope: scope,
++        requiresAmendmentParse: decision.binding?.amended === true,
++        preservesPending: false,
++        obligation: "execute_authorized_scope",
++      };
++    }
++    case "none":
++    default: {
++      const mayStoreAsAnswer =
++        decision.decision === "answer_pending_question" &&
++        snapshot.answerAffordanceValid !== false;
++      return {
++        ...NOTHING,
++        mayHandNewRequestToCapability: !leftThread && decision.stance === "act",
++        mayStoreAsAnswer,
++        mayAdvance: mayStoreAsAnswer,
++        preservesPending: !mayStoreAsAnswer,
++        obligation: "domain_turn",
++      };
++    }
++  }
++}

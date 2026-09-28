@@ -1,0 +1,601 @@
+OB-1 REVIEW PACK — PART 4 of 5: real-room drivers
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024). Unified diff vs base.
+Parts: 1 core Boundary code · 2 moved vocabularies + safety tests · 3 bake-off harness · 4 real-room drivers · 5 labelled corpus. Data JSON (results, baseline, proxy reads) omitted; see the return report.
+
+diff --git a/lib/oneBrainCertification/roomDivergence.ob1.test.ts b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+new file mode 100644
+index 00000000..b6e77fe7
+--- /dev/null
++++ b/lib/oneBrainCertification/roomDivergence.ob1.test.ts
+@@ -0,0 +1,60 @@
++// @vitest-environment jsdom
++/**
++ * OB-1 real-room divergence BASELINE.
++ *
++ * Drives each room's real exported step function with the same member turns
++ * and records what it actually does (roomDrivers.ts). Today's divergence from
++ * the OB-0.5 contract is the committed baseline
++ * (docs/reviews/ob1/divergence_baseline.json). This test fails if a room's
++ * observed behavior changes without the baseline being updated deliberately —
++ * convergence rounds flip rows on purpose. Regenerate with
++ * OB1_WRITE_BASELINE=1.
++ */
++import { existsSync, readFileSync, writeFileSync } from "node:fs";
++import path from "node:path";
++import { afterAll, beforeAll, describe, expect, it } from "vitest";
++import { runDivergenceMatrix, type DivergenceCell } from "./roomDrivers";
++
++const BASELINE = path.resolve(__dirname, "../../docs/reviews/ob1/divergence_baseline.json");
++const FLAG = "NEXT_PUBLIC_EXECUTABLE_REQUEST_PRECEDENCE";
++
++type Row = Pick<DivergenceCell, "room" | "situation" | "diverges" | "divergentFields"> & {
++  observed: DivergenceCell["observed"];
++};
++
++function rows(cells: DivergenceCell[]): Row[] {
++  return cells.map(({ room, situation, diverges, divergentFields, observed }) => ({
++    room,
++    situation,
++    diverges,
++    divergentFields,
++    observed,
++  }));
++}
++
++describe("OB-1 real-room divergence baseline", () => {
++  let original: string | undefined;
++  beforeAll(() => {
++    original = process.env[FLAG];
++    process.env[FLAG] = "1";
++  });
++  afterAll(() => {
++    if (original === undefined) delete process.env[FLAG];
++    else process.env[FLAG] = original;
++  });
++
++  it("matches the committed baseline", () => {
++    const observed = rows(runDivergenceMatrix());
++    if (process.env.OB1_WRITE_BASELINE === "1" || !existsSync(BASELINE)) {
++      writeFileSync(BASELINE, JSON.stringify(observed, null, 1));
++    }
++    const baseline = JSON.parse(readFileSync(BASELINE, "utf8")) as Row[];
++    expect(observed).toEqual(baseline);
++  });
++
++  it("the drivers observe production — every room produced an observation", () => {
++    const cells = runDivergenceMatrix();
++    const threw = cells.filter((c) => c.observed.note?.startsWith("threw:") || c.observed.note === "no_fixture");
++    expect(threw.map((c) => `${c.room}/${c.situation}: ${c.observed.note}`)).toEqual([]);
++  });
++});
+diff --git a/lib/oneBrainCertification/roomDrivers.ts b/lib/oneBrainCertification/roomDrivers.ts
+new file mode 100644
+index 00000000..53607ad2
+--- /dev/null
++++ b/lib/oneBrainCertification/roomDrivers.ts
+@@ -0,0 +1,525 @@
++/**
++ * Real-room divergence DRIVERS — OB-1.
++ *
++ * DRIVERS, NOT INTERPRETERS. Each driver puts a room's REAL exported
++ * production step function into its own "question/offer pending" state, feeds
++ * one member turn, and reports what CHANGED. The observer below compares
++ * state; it contains no language rules. Which field is a room's "question
++ * pointer" or "answer store" is declared per driver as configuration, read
++ * from the room's own types.
++ *
++ * Test/certification only — never imported by production
++ * (shadowIsolation.test.ts).
++ */
++
++import { resolveConversationBoundary } from "@/lib/conversationBoundary";
++import {
++  answerBoardIntakeStep,
++  createEmptyBoardIntakeDraft,
++  setDraftStep,
++} from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
++import { applyBoardMemberAnswers } from "@/lib/board/reconstructed/orchestration/boardMemberQuestions";
++import type { BoardMemberQuestion } from "@/lib/board/reconstructed/orchestration/types";
++import { advanceDayDesignerSession, startDayDesignerSession } from "@/lib/day-designer/dayMessages";
++import { bootstrapStrategyApplySession, processStrategyApplyTurn } from "@/lib/strategyApplyCoach";
++import {
++  __resetStrategyChamberStoresForTests,
++  applyGuidedJourneyAnswer,
++  createStrategyWorkItem,
++  getStrategyWorkItem,
++  updateStrategyWorkItem,
++} from "@/lib/strategyChamber";
++import { applyEventConversationalAnswer } from "@/lib/eventsIntelligence/applyEventConversationalAnswer";
++import { nextFoundationQuestionForRecord } from "@/lib/eventsIntelligence/eventMemberQuestionPaths";
++import { getEventRecord } from "@/lib/eventsIntelligence/eventRecordStore";
++import { bootstrapEventsEntranceRecord } from "@/lib/eventsEstate/eventsEntranceUnderstanding";
++import { resolveReminderTurn, type ReminderDraft } from "@/lib/reminderIntelligence";
++import { getReminders } from "@/lib/reminderStore";
++import { advanceEntranceUnderstanding, startEntranceUnderstanding } from "@/lib/createEstate/entranceUnderstanding";
++import {
++  resetWorkRecognitionSessionForTests,
++  resolveWorkRecognitionFirstRefusal,
++  resolveWorkRecognitionNewRecognition,
++  resolveWorkRecognitionResumption,
++} from "@/lib/estateBrain/workRecognitionFallthrough";
++import { resolveVisualMenuSelection } from "@/lib/visualThinkingContinuation";
++import { visualRecommendationPendingFromReply } from "@/lib/visualRecommendationEngine";
++import { buildClaireTurnResponse } from "@/lib/businessProfileFounder/claireConversation";
++import { emptyFirstVisitSnapshot } from "@/lib/businessProfileFounder/emptyFirstVisitSnapshot";
++import { parseMemberConfirmationResponse } from "@/lib/businessProfileFounder/confirmationContract";
++import { buildWriteCandidate } from "@/lib/businessProfileFounder/writeCandidateContract";
++import { classifyPrimaryConversationTurn } from "@/lib/conversation/primaryTurnClassifier";
++import { resolveFrictionlessAction } from "@/lib/frictionlessActionLayer";
++import { resolveExplicitCapabilityIntent } from "@/lib/universalAccess";
++import { buildAppFeatureNavOffer } from "@/lib/appFeatureNavigation";
++import { createMemberRhythm, getMemberRhythm, listMemberRhythms } from "@/lib/rhythms/store";
++import {
++  loadPendingRememberCreate,
++  savePendingRememberCreate,
++} from "@/lib/remindersVsRhythms/conversationPending";
++
++// ── The generic observer (no language rules) ────────────────────────────────
++
++export type Observation = {
++  /** The room moved its question/step pointer. */
++  advanced: boolean | null;
++  /** The member's text was written into an answer/decision field. */
++  storedAsAnswer: boolean | null;
++  /** A durable store (localStorage domain record) changed beyond the pending/session record. */
++  executed: boolean | null;
++  /** The pending question/offer still stands after the turn. */
++  pendingPreserved: boolean | null;
++  /** Raw room output worth recording (enum / kind), for the report. */
++  note?: string;
++};
++
++function norm(s: string): string {
++  return s.toLowerCase().replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim();
++}
++
++/** Structural containment: does any string inside `value` contain the member's text? */
++export function containsMemberText(value: unknown, memberText: string): boolean {
++  const needle = norm(memberText).replace(/[.!?]+$/, "");
++  if (!needle) return false;
++  return norm(JSON.stringify(value ?? null)).includes(needle);
++}
++
++// ── Situations (the same member turns in every room) ───────────────────────
++
++export type SituationId =
++  | "S1-clarify"
++  | "S2-ask"
++  | "S3-unsure"
++  | "S4-correct"
++  | "S5-bare-yes"
++  | "S6-decline"
++  | "S7-strained-clarify"
++  | "S8-answer";
++
++export const SITUATIONS: { id: SituationId; text: string | null }[] = [
++  { id: "S1-clarify", text: "I don't know what you mean. Can you explain that before we keep going?" },
++  { id: "S2-ask", text: "Wait, why does that matter?" },
++  { id: "S3-unsure", text: "I'm not sure. Help me figure that out." },
++  { id: "S4-correct", text: "No, that's wrong. I said Tuesday." },
++  { id: "S5-bare-yes", text: "Yes." },
++  { id: "S6-decline", text: "Not now." },
++  { id: "S7-strained-clarify", text: "I'm frustrated. What do you mean?" },
++  { id: "S8-answer", text: null }, // room-specific genuine answer (control)
++];
++
++/**
++ * HUMAN-DEFINED expected outcome per situation, from the OB-0.5 contract.
++ * `null` = no expectation for that field in that room shape.
++ */
++export type RoomShape = "question" | "offer" | "executed";
++
++export function expectedOutcome(shape: RoomShape, s: SituationId): Observation {
++  const hold: Observation = { advanced: false, storedAsAnswer: false, executed: false, pendingPreserved: true };
++  if (shape === "question") {
++    switch (s) {
++      case "S1-clarify":
++      case "S2-ask":
++      case "S3-unsure":
++      case "S7-strained-clarify":
++      case "S4-correct":
++      case "S5-bare-yes":
++        return hold;
++      case "S6-decline":
++        return { advanced: null, storedAsAnswer: false, executed: false, pendingPreserved: null };
++      case "S8-answer":
++        return { advanced: true, storedAsAnswer: true, executed: null, pendingPreserved: false };
++    }
++  }
++  if (shape === "offer") {
++    switch (s) {
++      case "S5-bare-yes":
++        return { advanced: true, storedAsAnswer: null, executed: true, pendingPreserved: false };
++      case "S6-decline":
++        return { advanced: null, storedAsAnswer: null, executed: false, pendingPreserved: false };
++      case "S8-answer":
++        return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null };
++      default:
++        return { advanced: false, storedAsAnswer: null, executed: false, pendingPreserved: true };
++    }
++  }
++  // executed item (a correction must be applied; nothing else changes it)
++  switch (s) {
++    case "S4-correct":
++      return { advanced: null, storedAsAnswer: null, executed: true, pendingPreserved: true };
++    case "S8-answer":
++      return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null };
++    default:
++      return { advanced: null, storedAsAnswer: null, executed: false, pendingPreserved: null };
++  }
++}
++
++export type RoomDriver = {
++  room: string;
++  shape: RoomShape;
++  /** Fields a room cannot expose structurally for its control answer (documented, not guessed). */
++  controlUnobservable?: (keyof Observation)[];
++  entry: string;
++  controlAnswer: string;
++  run: (text: string) => Observation;
++};
++
++// ── Drivers ────────────────────────────────────────────────────────────────
++
++const mainBoundary: RoomDriver = {
++  room: "Main Boundary (S4)",
++  shape: "question",
++  entry: "resolveConversationBoundary (transition only)",
++  controlAnswer: "Mostly other coaches.",
++  run: (text) => {
++    const d = resolveConversationBoundary({
++      userText: text,
++      turn: 6,
++      pendingQuestion: { kind: "open", expects: "free" },
++      activeTopic: { topicId: "t", goal: "plan my leadership conference", resolved: false, startedAtTurn: 2, updatedAtTurn: 5 },
++      lastAssistantText: "Who is this conference mainly for?",
++    });
++    const granted = d.decision === "answer_pending_question";
++    return { advanced: granted, storedAsAnswer: granted, executed: false, pendingPreserved: !granted, note: d.decision };
++  },
++};
++
++const boardIntake: RoomDriver = {
++  room: "Board intake",
++  shape: "question",
++  entry: "answerBoardIntakeStep",
++  controlAnswer: "Because my team is stuck and cash is tight this quarter.",
++  run: (text) => {
++    const draft = setDraftStep(createEmptyBoardIntakeDraft([]), "importance");
++    const after = answerBoardIntakeStep(draft, text);
++    const advanced = after.currentStep !== draft.currentStep;
++    const stored = containsMemberText(after.importance, text);
++    return { advanced, storedAsAnswer: stored, executed: false, pendingPreserved: !advanced && !stored, note: after.currentStep };
++  },
++};
++
++const boardMeeting: RoomDriver = {
++  room: "Board meeting",
++  shape: "question",
++  entry: "applyBoardMemberAnswers",
++  controlAnswer: "About $12,000 a month right now.",
++  run: (text) => {
++    const q: BoardMemberQuestion = {
++      id: "q1",
++      question: "What is your monthly revenue right now?",
++      askedBy: [{ directorReasoningId: "economic-survivability", missingInformation: "monthly revenue" }],
++      status: "asked",
++    };
++    const r = applyBoardMemberAnswers([q], [{ questionId: "q1", answer: text }]);
++    if (!r.ok) return { advanced: false, storedAsAnswer: false, executed: false, pendingPreserved: true, note: `error:${r.error}` };
++    const after = r.questions[0]!;
++    const answered = after.status === "answered";
++    return {
++      advanced: answered,
++      storedAsAnswer: answered && containsMemberText(after.answer, text),
++      executed: false,
++      pendingPreserved: after.status === "asked",
++      note: `${after.status}${after.responseKind ? `/${after.responseKind}` : ""}`,
++    };
++  },
++};
++
++const dayDesigner: RoomDriver = {
++  room: "Day Designer (Plan My Day)",
++  shape: "question",
++  entry: "advanceDayDesignerSession (priorities step)",
++  controlAnswer: "Finish the proposal for Acme.",
++  run: (text) => {
++    const session = { ...startDayDesignerSession(new Date("2026-09-28T09:00:00Z")), step: "priorities" as const };
++    const after = advanceDayDesignerSession(session, text);
++    const advanced = after.step !== session.step;
++    const stored = containsMemberText(after.answers, text);
++    return { advanced, storedAsAnswer: stored, executed: false, pendingPreserved: !advanced, note: after.step };
++  },
++};
++
++const strategyApply: RoomDriver = {
++  room: "Strategy Apply",
++  shape: "question",
++  entry: "processStrategyApplyTurn",
++  controlAnswer: "I keep rewriting my sales page and never publish it.",
++  run: (text) => {
++    const session = bootstrapStrategyApplySession("ugly-first-draft")!.session;
++    const out = processStrategyApplyTurn(session, text);
++    const advanced = out.session.questionIndex !== session.questionIndex || out.session.phase !== session.phase;
++    const stored = containsMemberText(out.session.answers, text);
++    return { advanced, storedAsAnswer: stored, executed: false, pendingPreserved: !advanced, note: `q${out.session.questionIndex}` };
++  },
++};
++
++const strategyChamber: RoomDriver = {
++  room: "Strategy Chamber",
++  shape: "question",
++  entry: "applyGuidedJourneyAnswer",
++  controlAnswer: "We have too many offers and no clear focus.",
++  run: (text) => {
++    __resetStrategyChamberStoresForTests();
++    const item = createStrategyWorkItem({ entryReason: "need_direction" });
++    updateStrategyWorkItem(item.id, applyGuidedJourneyAnswer(item, "Where should my marketing focus next quarter?"));
++    const current = getStrategyWorkItem(item.id)!;
++    const patch = applyGuidedJourneyAnswer(current, text);
++    const advanced = patch.activeQuestion !== undefined && patch.activeQuestion !== current.activeQuestion;
++    const stored = containsMemberText(patch, text);
++    return { advanced, storedAsAnswer: stored, executed: false, pendingPreserved: !advanced && !stored };
++  },
++};
++
++const events: RoomDriver = {
++  room: "Events",
++  shape: "question",
++  entry: "applyEventConversationalAnswer",
++  controlAnswer: "ADHD entrepreneurs and solopreneurs.",
++  run: (text) => {
++    localStorage.clear();
++    const record = bootstrapEventsEntranceRecord("I'm hosting an online event.");
++    const q = nextFoundationQuestionForRecord(record);
++    const before = JSON.stringify(getEventRecord(record.id));
++    const res = applyEventConversationalAnswer(record, text, q);
++    const persisted = JSON.stringify(getEventRecord(record.id));
++    const advanced = res.record.activeQuestionId !== record.activeQuestionId;
++    const stored = containsMemberText({ s: res.record.sections, d: res.record.decisions }, text);
++    return {
++      advanced,
++      storedAsAnswer: stored,
++      executed: persisted !== before && stored,
++      pendingPreserved: !advanced,
++      note: res.disposition,
++    };
++  },
++};
++
++const reminderIntake: RoomDriver = {
++  room: "Reminder intake",
++  shape: "question",
++  entry: "resolveReminderTurn (draft missing time)",
++  controlAnswer: "Friday at 3pm.",
++  run: (text) => {
++    localStorage.clear();
++    const draft: ReminderDraft = { title: "Call Susan", message: "Call Susan", reminderType: "one_time", missing: "time" };
++    const before = getReminders().length;
++    const out = resolveReminderTurn({ userText: text, draft, now: new Date("2026-09-28T09:00:00Z") });
++    const executed = getReminders().length > before;
++    const stored = out.kind === "ask" ? out.draft !== draft && containsMemberText(out.draft, text) : executed;
++    return {
++      advanced: out.kind !== "ask",
++      storedAsAnswer: stored,
++      executed,
++      pendingPreserved: out.kind === "ask",
++      note: out.kind,
++    };
++  },
++};
++
++const createEntrance: RoomDriver = {
++  room: "Create entrance",
++  shape: "question",
++  entry: "advanceEntranceUnderstanding",
++  controlAnswer: "So new clients know exactly how onboarding works.",
++  run: (text) => {
++    const start = startEntranceUnderstanding("I want to create a client onboarding guide");
++    if (!start || start.kind !== "question") {
++      return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null, note: "no_fixture" };
++    }
++    const step = advanceEntranceUnderstanding(start.session, text);
++    const prevId = start.question.id;
++    const advanced = step.kind !== "question" || step.question.id !== prevId;
++    const stored = containsMemberText(step.session.answers, text);
++    return { advanced, storedAsAnswer: stored, executed: false, pendingPreserved: !advanced && !stored, note: step.kind };
++  },
++};
++
++const workRecognition: RoomDriver = {
++  room: "Work Recognition",
++  shape: "question",
++  entry: "resolveWorkRecognitionResumption",
++  controlAnswer: "So new clients know exactly how onboarding works.",
++  run: (text) => {
++    localStorage.clear();
++    resetWorkRecognitionSessionForTests();
++    const first = resolveWorkRecognitionNewRecognition("I need to create a client onboarding guide")
++      ?? resolveWorkRecognitionFirstRefusal("I need to create a client onboarding guide", null);
++    const lastAssistant = first && "message" in first ? first.message : null;
++    const before = localStorage.getItem("estate-work-recognition-session-v1");
++    const r = resolveWorkRecognitionResumption(text, lastAssistant);
++    const after = localStorage.getItem("estate-work-recognition-session-v1");
++    const stored = containsMemberText(after, text) || (r?.kind === "question" && containsMemberText(r.session, text));
++    const advanced = r !== null && (r.kind === "understood" || (r.kind === "question" && r.message !== lastAssistant));
++    return {
++      advanced,
++      storedAsAnswer: Boolean(stored),
++      executed: false,
++      pendingPreserved: r === null ? before !== null && after === before : !advanced,
++      note: r ? r.kind : "not_handled",
++    };
++  },
++};
++
++const vtsMenu: RoomDriver = {
++  room: "VTS menu",
++  shape: "offer",
++  entry: "resolveVisualMenuSelection",
++  controlAnswer: "The mind map.",
++  run: (text) => {
++    const pending = visualRecommendationPendingFromReply({ userText: "Turn this into something visual", offeredAtTurn: 1 });
++    if (!pending) return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null, note: "no_fixture" };
++    const sel = resolveVisualMenuSelection(text, pending);
++    // The selection function never mutates the pending menu, so "preserved" is only
++    // observable when it resolves (then the menu is consumed).
++    return { advanced: sel !== null, storedAsAnswer: null, executed: sel !== null, pendingPreserved: sel === null ? null : false, note: sel ? `open:${sel.viewId}` : "unresolved" };
++  },
++};
++
++const claireConversation: RoomDriver = {
++  room: "Claire (conversation)",
++  shape: "question",
++  controlUnobservable: ["storedAsAnswer"],
++  entry: "buildClaireTurnResponse",
++  controlAnswer: "I help new coaches get their first ten clients.",
++  run: (text) => {
++    const r = buildClaireTurnResponse({
++      memberLine: text,
++      snapshot: emptyFirstVisitSnapshot(),
++      recentTurns: [{ role: "claire", text: "Who do you mostly help — what kind of person walks through your door?" }],
++    });
++    const proposesWrite = Boolean(r.writeIntent);
++    // Only the write path is structurally observable. Which response path Claire
++    // took (IDK coaching vs re-explaining her question) is text-only and is NOT
++    // interpreted here; a genuine answer need not produce a write candidate.
++    return {
++      advanced: null,
++      storedAsAnswer: proposesWrite ? true : false,
++      executed: false,
++      pendingPreserved: null,
++      note: `${proposesWrite ? "write_candidate" : "no_write"}${r.clarificationOnly ? "/clarification_only" : ""}`,
++    };
++  },
++};
++
++const claireConfirmation: RoomDriver = {
++  room: "Claire (confirmation pending)",
++  shape: "offer",
++  entry: "parseMemberConfirmationResponse",
++  controlAnswer: "Yes, that's right.",
++  run: (text) => {
++    const candidate = buildWriteCandidate("My workshop costs $150.");
++    if (!candidate) return { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null, note: "no_fixture" };
++    const kind = parseMemberConfirmationResponse(candidate, text).kind;
++    // BusinessProfileBp2aPrototype.tsx:598-607 — "unrecognized" takes the decline
++    // branch (candidate discarded) unless it looks like a subject change.
++    const released = kind === "rejected" || kind === "unrecognized";
++    return {
++      advanced: kind === "confirmed",
++      storedAsAnswer: null,
++      executed: kind === "confirmed",
++      pendingPreserved: !released && kind !== "confirmed",
++      note: String(kind),
++    };
++  },
++};
++
++function rememberPageTurn(text: string, turn: number, lastAssistant: string): string {
++  // Same seam order as CompanionPageClient (mirrors executableIntent.round1.test.ts sendTurn).
++  const wr = resolveWorkRecognitionFirstRefusal(text, lastAssistant);
++  if (wr) return "work_recognition";
++  if (resolveExplicitCapabilityIntent(text)) return "universal_capability";
++  if (buildAppFeatureNavOffer(text)) return "app_feature_nav";
++  const primaryTurn = classifyPrimaryConversationTurn({ userText: text, lastAssistantText: lastAssistant });
++  const d = resolveFrictionlessAction({ userText: text, currentTurn: turn, lastAssistantText: lastAssistant, primaryTurn });
++  return d.localReply ? `frictionless:${d.category}` : "chat_api";
++}
++
++const rhythmOffer: RoomDriver = {
++  room: "Rhythm owner (offer pending)",
++  shape: "offer",
++  entry: "page seam order → resolveFrictionlessAction",
++  controlAnswer: "Every month is fine.",
++  run: (text) => {
++    localStorage.clear();
++    const now = new Date().toISOString();
++    savePendingRememberCreate({
++      kind: "rhythm", title: "Check my ASEA order", sourceText: "check my ASEA order every month",
++      cadence: "monthly", createdAt: now, phase: "confirm", offeredAtTurn: 1, offeredAt: now,
++    });
++    const before = listMemberRhythms().length;
++    const owner = rememberPageTurn(text, 2, "Want me to set up a monthly Rhythm to check your ASEA order?");
++    const executed = listMemberRhythms().length > before;
++    const pending = loadPendingRememberCreate();
++    return { advanced: executed, storedAsAnswer: null, executed, pendingPreserved: Boolean(pending) && !executed, note: owner };
++  },
++};
++
++const rhythmExecuted: RoomDriver = {
++  room: "Rhythm owner (just executed)",
++  shape: "executed",
++  entry: "page seam order → resolveFrictionlessAction",
++  controlAnswer: "Thanks!",
++  run: (text) => {
++    localStorage.clear();
++    const now = new Date().toISOString();
++    const r = createMemberRhythm({ title: "Check my ASEA order", cadence: "weekly" });
++    const beforeRec = JSON.stringify(getMemberRhythm(r.id));
++    savePendingRememberCreate({
++      kind: "rhythm", title: r.title, sourceText: "check my ASEA order every Monday", cadence: "weekly",
++      createdAt: now, phase: "executed", executedItemId: r.id, offeredAtTurn: 1, offeredAt: now,
++    });
++    const owner = rememberPageTurn(text, 2, `Done — I set up a Rhythm: "${r.title}," weekly on Mondays.`);
++    const changed = JSON.stringify(getMemberRhythm(r.id)) !== beforeRec;
++    return { advanced: null, storedAsAnswer: null, executed: changed, pendingPreserved: Boolean(loadPendingRememberCreate()), note: owner };
++  },
++};
++
++export const ROOM_DRIVERS: RoomDriver[] = [
++  mainBoundary,
++  claireConversation,
++  claireConfirmation,
++  boardIntake,
++  boardMeeting,
++  events,
++  strategyApply,
++  strategyChamber,
++  dayDesigner,
++  reminderIntake,
++  rhythmOffer,
++  rhythmExecuted,
++  createEntrance,
++  workRecognition,
++  vtsMenu,
++];
++
++export type DivergenceCell = {
++  room: string;
++  situation: SituationId;
++  text: string;
++  observed: Observation;
++  expected: Observation;
++  diverges: boolean;
++  divergentFields: string[];
++};
++
++const FIELDS: (keyof Observation)[] = ["advanced", "storedAsAnswer", "executed", "pendingPreserved"];
++
++export function runDivergenceMatrix(): DivergenceCell[] {
++  const cells: DivergenceCell[] = [];
++  for (const d of ROOM_DRIVERS) {
++    for (const s of SITUATIONS) {
++      const text = s.text ?? d.controlAnswer;
++      let observed: Observation;
++      try {
++        observed = d.run(text);
++      } catch (e) {
++        observed = { advanced: null, storedAsAnswer: null, executed: null, pendingPreserved: null, note: `threw:${(e as Error).message.slice(0, 80)}` };
++      }
++      const expected = { ...expectedOutcome(d.shape, s.id) };
++      if (s.id === "S8-answer") for (const f of d.controlUnobservable ?? []) (expected as Record<string, unknown>)[f] = null;
++      const divergentFields = FIELDS.filter(
++        (f) => expected[f] !== null && observed[f] !== null && expected[f] !== observed[f],
++      );
++      cells.push({ room: d.room, situation: s.id, text, observed, expected, diverges: divergentFields.length > 0, divergentFields });
++    }
++  }
++  return cells;
++}

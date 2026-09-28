@@ -1,0 +1,772 @@
+OB-1 REVIEW PACK — PART 3 of 5: bake-off harness
+vs3 branch ob1/boundary-meaning-shadow @ c1110a89 (base R0 0e354024). Unified diff vs base.
+Parts: 1 core Boundary code · 2 moved vocabularies + safety tests · 3 bake-off harness · 4 real-room drivers · 5 labelled corpus. Data JSON (results, baseline, proxy reads) omitted; see the return report.
+
+diff --git a/lib/oneBrainCertification/bakeoff.ob1.test.ts b/lib/oneBrainCertification/bakeoff.ob1.test.ts
+new file mode 100644
+index 00000000..ea6c8750
+--- /dev/null
++++ b/lib/oneBrainCertification/bakeoff.ob1.test.ts
+@@ -0,0 +1,144 @@
++/**
++ * OB-1 — corpus coverage + A vs C bake-off.
++ *
++ * A = the deterministic certain tier (Boundary as it runs in production shadow).
++ * C = hybrid: A's HIGH readings stand; A's LOW cases take ONE structured model
++ *     read, strictly validated (modelMeaningRead.ts); invalid → LOW.
++ *
++ * The model reads replayed here are the archived blind reads in
++ * docs/reviews/ob1/proxy_model_reads.json (see the OB-1 return report for how
++ * they were produced and their limits). Set OB1_WRITE_RESULTS=1 to regenerate
++ * docs/reviews/ob1/bakeoff_results.json.
++ */
++import { existsSync, readFileSync, writeFileSync } from "node:fs";
++import path from "node:path";
++import { describe, expect, it } from "vitest";
++import { CORPUS, HOLDOUT, type CorpusCase, type CorpusFamily } from "./corpus";
++import { boundaryInputFor, readA, scoreCase, summarize, type CaseResult } from "./evaluate";
++import { composeHybridMeaning, validateModelMeaningRead } from "./modelMeaningRead";
++
++const ROOT = path.resolve(__dirname, "../..");
++const PROXY = path.join(ROOT, "docs/reviews/ob1/proxy_model_reads.json");
++const ID_MAP = path.join(ROOT, "docs/reviews/ob1/proxy_id_map.json");
++
++function proxyReads(): Map<string, unknown> | null {
++  if (!existsSync(PROXY) || !existsSync(ID_MAP)) return null;
++  const reads = JSON.parse(readFileSync(PROXY, "utf8")) as Record<string, unknown>;
++  const map = JSON.parse(readFileSync(ID_MAP, "utf8")) as Record<string, string>;
++  const out = new Map<string, unknown>();
++  for (const [blind, caseId] of Object.entries(map)) out.set(caseId, reads[blind]);
++  return out;
++}
++
++function runA(cases: CorpusCase[]): CaseResult[] {
++  return cases.map((c) => {
++    const { decision, meaning } = readA(c);
++    return scoreCase(c, decision, meaning, meaning.meaningConfidence === "high" ? "deterministic_high" : "deterministic_low");
++  });
++}
++
++function runC(cases: CorpusCase[], reads: Map<string, unknown>): CaseResult[] {
++  return cases.map((c) => {
++    const { decision, meaning } = readA(c);
++    const validation =
++      meaning.meaningConfidence === "high" ? null : validateModelMeaningRead(reads.get(c.id), boundaryInputFor(c));
++    const hybrid = composeHybridMeaning(meaning, validation, boundaryInputFor(c));
++    return scoreCase(c, decision, hybrid, hybrid.tier);
++  });
++}
++
++/** Model-only reading (every case goes to the model; invalid → A at LOW). */
++function runModelOnly(cases: CorpusCase[], reads: Map<string, unknown>): { results: CaseResult[]; invalid: string[] } {
++  const invalid: string[] = [];
++  const results = cases.map((c) => {
++    const { decision, meaning } = readA(c);
++    const v = validateModelMeaningRead(reads.get(c.id), boundaryInputFor(c));
++    if (!v.ok) invalid.push(`${c.id}:${v.reason}`);
++    const m = v.ok ? v.meaning : { ...meaning, meaningConfidence: "low" as const };
++    return scoreCase(c, decision, m, v.ok ? "model" : "fallback_low");
++  });
++  return { results, invalid };
++}
++
++describe("OB-1 corpus coverage", () => {
++  it("every family has ≥5 paraphrases and ≥3 negative controls", () => {
++    const families = new Set<CorpusFamily>(CORPUS.map((c) => c.family));
++    expect(families.size).toBe(17);
++    for (const f of families) {
++      const pos = CORPUS.filter((c) => c.family === f && c.kind === "positive").length;
++      const neg = CORPUS.filter((c) => c.family === f && c.kind === "negative").length;
++      expect(pos, `${f} positives`).toBeGreaterThanOrEqual(5);
++      expect(neg, `${f} negatives`).toBeGreaterThanOrEqual(3);
++    }
++  });
++
++  it("case ids are unique", () => {
++    const ids = [...CORPUS, ...HOLDOUT].map((c) => c.id);
++    expect(new Set(ids).size).toBe(ids.length);
++  });
++});
++
++describe("OB-1 bake-off — A (deterministic)", () => {
++  for (const [name, cases] of [["CORPUS", CORPUS], ["HOLDOUT", HOLDOUT]] as const) {
++    it(`${name}: every HIGH-confidence reading matches the human label`, () => {
++      const wrong = runA(cases).filter((r) => r.highButWrong).map((r) => `${r.id}: ${r.text}`);
++      expect(wrong).toEqual([]);
++    });
++    it(`${name}: zero false execution authorizations (with and without transition gating)`, () => {
++      const s = summarize(runA(cases));
++      expect(s.falseExecutions).toBe(0);
++      expect(s.falseExecutionsMeaningOnly).toBe(0);
++    });
++  }
++});
++
++describe("OB-1 bake-off — C (hybrid, replayed blind model reads)", () => {
++  const reads = proxyReads();
++  it.skipIf(!reads)("zero false execution authorizations under the validator + permitsFor", () => {
++    for (const cases of [CORPUS, HOLDOUT]) {
++      const s = summarize(runC(cases, reads!));
++      expect(s.falseExecutions).toBe(0);
++      expect(s.falseExecutionsMeaningOnly).toBe(0);
++    }
++  });
++
++  it.skipIf(!reads)("writes the measurement file when OB1_WRITE_RESULTS=1", () => {
++    if (process.env.OB1_WRITE_RESULTS !== "1") return;
++    const all = [...CORPUS, ...HOLDOUT];
++    const byFamily = (rs: CaseResult[]) => {
++      const out: Record<string, { cases: number; relationCorrect: number; fullyCorrect: number; low: number }> = {};
++      for (const r of rs) {
++        const f = (out[r.family] ??= { cases: 0, relationCorrect: 0, fullyCorrect: 0, low: 0 });
++        f.cases += 1;
++        if (r.relationCorrect) f.relationCorrect += 1;
++        if (r.fullyCorrect) f.fullyCorrect += 1;
++        if (r.confidence === "low") f.low += 1;
++      }
++      return out;
++    };
++    const section = (cases: CorpusCase[]) => {
++      const a = runA(cases);
++      const c = runC(cases, reads!);
++      const mo = runModelOnly(cases, reads!);
++      return {
++        A: { summary: summarize(a), byFamily: byFamily(a), misses: a.filter((r) => !r.fullyCorrect) },
++        C: {
++          summary: summarize(c),
++          byFamily: byFamily(c),
++          modelFallbackCases: c.filter((r) => r.tier !== "deterministic_high").length,
++          modelUsedValid: c.filter((r) => r.tier === "model").length,
++          misses: c.filter((r) => !r.fullyCorrect),
++        },
++        modelOnly: {
++          summary: summarize(mo.results),
++          invalid: mo.invalid,
++          highButWrong: mo.results.filter((r) => r.highButWrong),
++        },
++      };
++    };
++    writeFileSync(
++      path.join(ROOT, "docs/reviews/ob1/bakeoff_results.json"),
++      JSON.stringify({ corpus: section(CORPUS), holdout: section(HOLDOUT), combined: section(all) }, null, 1),
++    );
++  });
++});
+diff --git a/lib/oneBrainCertification/evaluate.ts b/lib/oneBrainCertification/evaluate.ts
+new file mode 100644
+index 00000000..1262fb40
+--- /dev/null
++++ b/lib/oneBrainCertification/evaluate.ts
+@@ -0,0 +1,244 @@
++/**
++ * Bake-off scoring — OB-1. Pure: builds the Boundary input for a corpus case,
++ * and scores any reader's output against the HUMAN labels. Contains no
++ * language rules.
++ */
++
++import {
++  resolveConversationBoundary,
++  type BoundaryMemberRelation,
++  type BoundaryTurnInput,
++  type ConversationBoundaryDecision,
++} from "@/lib/conversationBoundary";
++import { permitsFor, type BoundaryMeaning } from "@/lib/conversationBoundaryMeaning";
++import { CONTEXTS, type CorpusCase } from "./corpus";
++
++export const RELATIONS: BoundaryMemberRelation[] = [
++  "ask", "clarify", "unsure", "correct", "decline", "accept", "none",
++];
++
++export function boundaryInputFor(c: CorpusCase): BoundaryTurnInput {
++  const ctx = CONTEXTS[c.context];
++  return {
++    userText: c.text,
++    turn: ctx.currentTurn,
++    lastAssistantText: ctx.lastAssistantText,
++    pendingQuestion: ctx.pendingQuestion ?? null,
++    pendingOffer: ctx.pendingOffer ?? null,
++    armedItems: ctx.armedItems ?? null,
++    lastExecuted: ctx.lastExecuted ?? null,
++    suspended: ctx.suspended ?? null,
++    activeTopic: ctx.activeTopic ?? null,
++  };
++}
++
++/** Reader A — the deterministic tier, exactly as Boundary computes it. */
++export function readA(c: CorpusCase): { decision: ConversationBoundaryDecision; meaning: BoundaryMeaning } {
++  const decision = resolveConversationBoundary(boundaryInputFor(c));
++  return {
++    decision,
++    meaning: {
++      relation: decision.relation!,
++      stance: decision.stance!,
++      affect: decision.affect!,
++      binding: decision.binding,
++      meaningConfidence: decision.meaningConfidence!,
++      evidence: decision.evidence.filter((e) => e.startsWith("meaning:")),
++    },
++  };
++}
++
++/** permitsFor for a reading, in the case's context. */
++/**
++ * Meaning-only safety check: permits with the transition neutralized, so a
++ * zero false-execution result cannot be an artifact of today's transition
++ * misreads (e.g. an offer acceptance read as switch_topic).
++ */
++export function mayExecuteMeaningOnly(c: CorpusCase, meaning: BoundaryMeaning): boolean {
++  return mayExecuteFor(
++    c,
++    { decision: "continue_current_topic", confidence: "high", evidence: [] },
++    meaning,
++  );
++}
++
++export function mayExecuteFor(
++  c: CorpusCase,
++  transition: ConversationBoundaryDecision,
++  meaning: BoundaryMeaning,
++): boolean {
++  const ctx = CONTEXTS[c.context];
++  const decision: ConversationBoundaryDecision = {
++    ...transition,
++    relation: meaning.relation,
++    stance: meaning.stance,
++    affect: meaning.affect,
++    binding: meaning.binding,
++    meaningConfidence: meaning.meaningConfidence,
++  };
++  return permitsFor(decision, {
++    currentTurn: ctx.currentTurn,
++    armedOfferedAtTurn: ctx.armedOfferedAtTurn ?? null,
++    armedItems: ctx.armedItems ?? null,
++    lastExecutedId: ctx.lastExecuted?.id ?? null,
++  }).mayExecute;
++}
++
++const sameSet = (a?: string[], b?: string[]) => {
++  const x = [...(a ?? [])].sort().join("|");
++  const y = [...(b ?? [])].sort().join("|");
++  return x === y;
++};
++
++/** Does a reading match the label on every contract field the label specifies? */
++export function fullyCorrect(c: CorpusCase, m: BoundaryMeaning): boolean {
++  const e = c.expected;
++  if (m.relation !== e.relation || m.stance !== e.stance || m.affect !== e.affect) return false;
++  return bindingCorrect(c, m);
++}
++
++export function bindingCorrect(c: CorpusCase, m: BoundaryMeaning): boolean {
++  const e = c.expected;
++  if ((m.binding?.target ?? undefined) !== (e.bindingTarget ?? undefined)) {
++    // An accept with no armed offer carries no binding; labels mark that as undefined.
++    return false;
++  }
++  if (!sameSet(m.binding?.include, e.include)) return false;
++  if (!sameSet(m.binding?.exclude, e.exclude)) return false;
++  if (Boolean(m.binding?.amended) !== Boolean(e.amended)) return false;
++  return true;
++}
++
++export type CaseResult = {
++  id: string;
++  family: string;
++  kind: string;
++  text: string;
++  expected: CorpusCase["expected"];
++  relation: BoundaryMemberRelation;
++  stance: string;
++  affect: string;
++  binding?: BoundaryMeaning["binding"];
++  confidence: "high" | "low";
++  relationCorrect: boolean;
++  fullyCorrect: boolean;
++  mayExecute: boolean;
++  falseExecution: boolean;
++  missedExecution: boolean;
++  /** Meaning-only (transition neutralized). */
++  falseExecutionMeaningOnly: boolean;
++  missedExecutionMeaningOnly: boolean;
++  highButWrong: boolean;
++  transition: string;
++  transitionCorrect?: boolean;
++  tier?: string;
++};
++
++export function scoreCase(
++  c: CorpusCase,
++  transition: ConversationBoundaryDecision,
++  m: BoundaryMeaning,
++  tier?: string,
++): CaseResult {
++  const mayExecute = mayExecuteFor(c, transition, m);
++  const mayExecuteMO = mayExecuteMeaningOnly(c, m);
++  const full = fullyCorrect(c, m);
++  return {
++    id: c.id,
++    family: c.family,
++    kind: c.kind,
++    text: c.text,
++    expected: c.expected,
++    relation: m.relation,
++    stance: m.stance,
++    affect: m.affect,
++    binding: m.binding,
++    confidence: m.meaningConfidence,
++    relationCorrect: m.relation === c.expected.relation,
++    fullyCorrect: full,
++    mayExecute,
++    falseExecution: mayExecute && !c.expected.authorizesExecution,
++    missedExecution: !mayExecute && c.expected.authorizesExecution,
++    falseExecutionMeaningOnly: mayExecuteMO && !c.expected.authorizesExecution,
++    missedExecutionMeaningOnly: !mayExecuteMO && c.expected.authorizesExecution,
++    highButWrong: m.meaningConfidence === "high" && !full,
++    transition: transition.decision,
++    transitionCorrect: c.expected.transition ? transition.decision === c.expected.transition : undefined,
++    tier,
++  };
++}
++
++export type RelationStats = {
++  support: number;
++  predicted: number;
++  truePositive: number;
++  precision: number | null;
++  recall: number | null;
++};
++
++export type Summary = {
++  cases: number;
++  relationAccuracy: number;
++  fullAccuracy: number;
++  stanceAccuracy: number;
++  affectAccuracy: number;
++  highConfidenceCases: number;
++  highConfidencePrecision: number | null;
++  highButWrong: number;
++  lowConfidenceCases: number;
++  falseExecutions: number;
++  missedExecutions: number;
++  falseExecutionsMeaningOnly: number;
++  missedExecutionsMeaningOnly: number;
++  expectedExecutions: number;
++  byRelation: Record<string, RelationStats>;
++  confusion: Record<string, Record<string, number>>;
++  transitionLabelled: number;
++  transitionCorrect: number;
++};
++
++const ratio = (a: number, b: number) => (b === 0 ? null : Math.round((a / b) * 1000) / 1000);
++
++export function summarize(results: CaseResult[]): Summary {
++  const confusion: Record<string, Record<string, number>> = {};
++  for (const exp of RELATIONS) {
++    confusion[exp] = {};
++    for (const got of RELATIONS) confusion[exp]![got] = 0;
++  }
++  const byRelation: Record<string, RelationStats> = {};
++  for (const r of RELATIONS) {
++    const support = results.filter((x) => x.expected.relation === r).length;
++    const predicted = results.filter((x) => x.relation === r).length;
++    const tp = results.filter((x) => x.relation === r && x.expected.relation === r).length;
++    byRelation[r] = {
++      support,
++      predicted,
++      truePositive: tp,
++      precision: ratio(tp, predicted),
++      recall: ratio(tp, support),
++    };
++  }
++  for (const x of results) confusion[x.expected.relation]![x.relation]! += 1;
++  const high = results.filter((x) => x.confidence === "high");
++  const labelledTransitions = results.filter((x) => x.transitionCorrect !== undefined);
++  return {
++    cases: results.length,
++    relationAccuracy: ratio(results.filter((x) => x.relationCorrect).length, results.length) ?? 0,
++    fullAccuracy: ratio(results.filter((x) => x.fullyCorrect).length, results.length) ?? 0,
++    stanceAccuracy: ratio(results.filter((x) => x.stance === x.expected.stance).length, results.length) ?? 0,
++    affectAccuracy: ratio(results.filter((x) => x.affect === x.expected.affect).length, results.length) ?? 0,
++    highConfidenceCases: high.length,
++    highConfidencePrecision: ratio(high.filter((x) => x.fullyCorrect).length, high.length),
++    highButWrong: results.filter((x) => x.highButWrong).length,
++    lowConfidenceCases: results.length - high.length,
++    falseExecutions: results.filter((x) => x.falseExecution).length,
++    missedExecutions: results.filter((x) => x.missedExecution).length,
++    falseExecutionsMeaningOnly: results.filter((x) => x.falseExecutionMeaningOnly).length,
++    missedExecutionsMeaningOnly: results.filter((x) => x.missedExecutionMeaningOnly).length,
++    expectedExecutions: results.filter((x) => x.expected.authorizesExecution).length,
++    byRelation,
++    confusion,
++    transitionLabelled: labelledTransitions.length,
++    transitionCorrect: labelledTransitions.filter((x) => x.transitionCorrect).length,
++  };
++}
+diff --git a/lib/oneBrainCertification/modelMeaningRead.ts b/lib/oneBrainCertification/modelMeaningRead.ts
+new file mode 100644
+index 00000000..6b9e2899
+--- /dev/null
++++ b/lib/oneBrainCertification/modelMeaningRead.ts
+@@ -0,0 +1,291 @@
++/**
++ * Hybrid tier (C) — ONE structured model read of the member's turn.
++ *
++ * EVALUATION ONLY (OB-1). Not imported by handleSend, any room, or any
++ * production route (enforced by shadowIsolation.test.ts). Follows the
++ * modelMaterialSignalExtractor safety pattern:
++ *
++ *   MODEL MAY PROPOSE  relation · stance · affect · binding · grounded evidence
++ *   MODEL MAY NEVER    grant execution / advancement / storage, run a
++ *                      capability, or assert truth
++ *
++ * Every model output passes `validateModelMeaningRead`. Invalid, ungrounded,
++ * out-of-scope or restraint-vetoed output becomes LOW confidence, and LOW
++ * confidence grants nothing in `permitsFor`.
++ */
++
++import type {
++  BoundaryBinding,
++  BoundaryMemberAffect,
++  BoundaryMemberRelation,
++  BoundaryMemberStance,
++  BoundaryTurnInput,
++} from "@/lib/conversationBoundary";
++import {
++  CONFIRMATION_DECLINE_RE,
++  DEFERRAL_SUPPLEMENT_RE,
++  DONT_ACT_OPEN_RE,
++  talkAboutReason,
++} from "@/lib/conversationBoundaryLexicon";
++import { bindingTargetFor, type BoundaryMeaning } from "@/lib/conversationBoundaryMeaning";
++import { invokeStructuredLlm } from "@/lib/internalAgent";
++
++const RELATIONS: readonly BoundaryMemberRelation[] = [
++  "ask", "clarify", "unsure", "correct", "decline", "accept", "none",
++];
++const STANCES: readonly BoundaryMemberStance[] = ["act", "talk_about", "none"];
++const AFFECTS: readonly BoundaryMemberAffect[] = ["none", "strained", "distressed"];
++const TARGETS = ["pending", "executed", "referent"] as const;
++
++/** Keys that would mean the model tried to grant something. Presence → reject. */
++const FORBIDDEN_KEYS = [
++  "mayExecute", "execute", "permission", "permissions", "authorize",
++  "authorized", "advance", "mayAdvance", "store", "mayStoreAsAnswer", "action", "truth",
++];
++
++export const MEMBER_MEANING_SYSTEM_PROMPT = `You read ONE member turn in a business-companion conversation and report what the member is DOING with what Spark just said. You never decide what happens next.
++
++Return JSON only:
++{
++  "relation": "ask"|"clarify"|"unsure"|"correct"|"decline"|"accept"|"none",
++  "stance": "act"|"talk_about"|"none",
++  "affect": "none"|"strained"|"distressed",
++  "binding": null | { "target": "pending"|"executed"|"referent", "include"?: string[], "exclude"?: string[], "amended"?: true },
++  "evidence": [ { "field": "relation"|"stance"|"affect"|"binding", "quote": "<exact words copied from the member's message>" } ]
++}
++
++Definitions (relative to Spark's last message and any pending offer/question):
++- clarify: the member asks what SPARK meant / asks Spark to re-explain its own words or question.
++- ask: the member asks Spark a question (not about the meaning of Spark's own words).
++- unsure: the member does not know the answer to what Spark asked (with or without asking for help).
++- correct: the member says Spark got something wrong, or restates what they actually said/meant.
++- decline: the member declines or defers the pending offer ("not now", "no thanks", "don't do it yet").
++- accept: the member authorizes the pending offer. Use binding.include / binding.exclude with the ARMED ITEM IDS given to you for partial acceptance; set amended:true when the acceptance comes with a change ("yes, but make it 4:00").
++- none: anything else (an answer, a statement, a new request).
++Precedence when several apply: clarify > ask > correct > unsure > decline > accept > none.
++- stance "act": the member asks Spark to perform an action now (or authorizes one). "talk_about": thinking aloud, hypothetical, past tense, negated, or asking whether Spark can do something. Otherwise "none".
++- affect: "distressed" only for crisis-level distress; "strained" for the member's own frustration/overwhelm/confusion; otherwise "none". Affect never replaces the relation.
++- binding.target: "pending" (the pending offer/question), "executed" (the item Spark just did), "referent" (which thing Spark is talking about).
++Every non-"none" relation and every binding needs at least one evidence quote copied EXACTLY from the member's message. Never include permissions, actions to take, or facts.`;
++
++export type ModelMeaningPayload = {
++  memberMessage: string;
++  sparkLastMessage: string | null;
++  pendingQuestion: boolean;
++  pendingOffer: boolean;
++  armedItems: { id: string; label: string }[];
++  lastExecutedItem: string | null;
++};
++
++export function buildModelMeaningPayload(input: BoundaryTurnInput): ModelMeaningPayload {
++  return {
++    memberMessage: input.userText,
++    sparkLastMessage: input.lastAssistantText ?? null,
++    pendingQuestion: Boolean(input.pendingQuestion),
++    pendingOffer:
++      Boolean(input.pendingOffer) ||
++      Boolean(input.armedItems?.length) ||
++      input.pendingQuestion?.expects === "yes_no",
++    armedItems: (input.armedItems ?? []).map((i) => ({ id: i.id, label: i.label })),
++    lastExecutedItem: input.lastExecuted?.label ?? input.lastExecuted?.id ?? null,
++  };
++}
++
++export type ModelMeaningValidation =
++  | { ok: true; meaning: BoundaryMeaning }
++  | { ok: false; reason: string };
++
++function norm(s: string): string {
++  return s
++    .normalize("NFKC")
++    .replace(/[‘’ʼ`]/g, "'")
++    .replace(/[“”]/g, '"')
++    .replace(/\s+/g, " ")
++    .trim()
++    .toLowerCase();
++}
++
++/**
++ * Strict validation. Returns ok:false (→ LOW confidence) for any malformed,
++ * ungrounded, out-of-scope, permission-bearing or restraint-vetoed output.
++ */
++export function validateModelMeaningRead(
++  raw: unknown,
++  input: BoundaryTurnInput,
++): ModelMeaningValidation {
++  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "not_object" };
++  const o = raw as Record<string, unknown>;
++  for (const k of FORBIDDEN_KEYS) if (k in o) return { ok: false, reason: `forbidden_key:${k}` };
++
++  const relation = o.relation as BoundaryMemberRelation;
++  const stance = o.stance as BoundaryMemberStance;
++  const affect = o.affect as BoundaryMemberAffect;
++  if (!RELATIONS.includes(relation)) return { ok: false, reason: "bad_relation" };
++  if (!STANCES.includes(stance)) return { ok: false, reason: "bad_stance" };
++  if (!AFFECTS.includes(affect)) return { ok: false, reason: "bad_affect" };
++
++  // grounded evidence: every quote must be the member's own words
++  const text = norm(input.userText);
++  const evidence = Array.isArray(o.evidence) ? o.evidence : [];
++  const quotes: string[] = [];
++  for (const e of evidence) {
++    const q = e && typeof e === "object" ? (e as Record<string, unknown>).quote : undefined;
++    if (typeof q !== "string" || !q.trim()) return { ok: false, reason: "evidence_malformed" };
++    const nq = norm(q).replace(/[.!?,]+$/g, "");
++    if (!nq || !text.includes(nq)) return { ok: false, reason: "evidence_not_grounded" };
++    quotes.push(q);
++  }
++  if (relation !== "none" && quotes.length === 0) return { ok: false, reason: "relation_without_evidence" };
++
++  // binding: ids must exist in the armed offer; executed needs a real receipt
++  let binding: BoundaryBinding | undefined;
++  if (o.binding != null) {
++    if (typeof o.binding !== "object") return { ok: false, reason: "binding_malformed" };
++    const b = o.binding as Record<string, unknown>;
++    if (!TARGETS.includes(b.target as (typeof TARGETS)[number])) return { ok: false, reason: "bad_binding_target" };
++    const armedIds = new Set((input.armedItems ?? []).map((i) => i.id));
++    const include = Array.isArray(b.include) ? (b.include as unknown[]) : undefined;
++    const exclude = Array.isArray(b.exclude) ? (b.exclude as unknown[]) : undefined;
++    for (const id of [...(include ?? []), ...(exclude ?? [])]) {
++      if (typeof id !== "string" || !armedIds.has(id)) return { ok: false, reason: "binding_id_not_armed" };
++    }
++    if (include && exclude && include.some((id) => exclude.includes(id))) {
++      return { ok: false, reason: "binding_include_exclude_overlap" };
++    }
++    if (b.target === "executed" && !input.lastExecuted) return { ok: false, reason: "executed_target_without_receipt" };
++    binding = { target: b.target as BoundaryBinding["target"] };
++    if (include?.length) binding.include = include as string[];
++    if (exclude?.length) binding.exclude = exclude as string[];
++    if (b.amended === true) binding.amended = true;
++  }
++
++  const hasArmedOffer =
++    Boolean(input.pendingOffer) ||
++    Boolean(input.armedItems?.length) ||
++    input.pendingQuestion?.expects === "yes_no";
++  if (relation === "accept" && !hasArmedOffer) return { ok: false, reason: "accept_without_armed_offer" };
++
++  // deterministic restraint veto — the model can never out-vote these cues
++  if (relation === "accept") {
++    const talk = talkAboutReason(input.userText);
++    if (talk && talk !== "negated") return { ok: false, reason: `restraint_veto_${talk}` };
++    const firstClause = norm(input.userText).split(/[.,;!?]/)[0] ?? "";
++    if (
++      CONFIRMATION_DECLINE_RE.test(firstClause) ||
++      DEFERRAL_SUPPLEMENT_RE.test(firstClause) ||
++      DONT_ACT_OPEN_RE.test(firstClause)
++    ) {
++      return { ok: false, reason: "restraint_veto_decline_opening" };
++    }
++  }
++
++  return {
++    ok: true,
++    meaning: {
++      relation,
++      stance,
++      affect,
++      binding,
++      meaningConfidence: "high",
++      evidence: ["model_read", ...quotes.map((q) => `quote:${q}`)],
++    },
++  };
++}
++
++/**
++ * A model reading that would UNLOCK A WRITE: an acceptance, a correction of an
++ * executed item, or a new "act" request. The model may propose these, but it
++ * can never make them HIGH — only the deterministic tier authorizes writes.
++ * (Measured in OB-1: a blind model read "Okay, I'm overwhelmed." as a
++ * well-grounded acceptance; the validator alone could not stop it.)
++ */
++export function modelReadingUnlocksWrite(m: BoundaryMeaning): boolean {
++  if (m.relation === "accept") return true;
++  if (m.relation === "correct" && m.binding?.target === "executed") return true;
++  if (m.relation === "none" && m.stance === "act") return true;
++  return false;
++}
++
++/**
++ * Hybrid composition: the deterministic tier's HIGH reading stands; otherwise
++ * a VALID model reading is used — at HIGH only when it cannot unlock a write;
++ * otherwise the deterministic reading at LOW.
++ */
++export function composeHybridMeaning(
++  deterministic: BoundaryMeaning,
++  model: ModelMeaningValidation | null,
++  input?: BoundaryTurnInput,
++): BoundaryMeaning & { tier: "deterministic_high" | "model" | "model_capped_low" | "fallback_low" } {
++  if (deterministic.meaningConfidence === "high") return { ...deterministic, tier: "deterministic_high" };
++  if (model?.ok && modelReadingUnlocksWrite(model.meaning)) {
++    return {
++      ...model.meaning,
++      meaningConfidence: "low",
++      evidence: [...model.meaning.evidence, "model_write_requires_deterministic_authorization"],
++      tier: "model_capped_low",
++    };
++  }
++  if (model?.ok) {
++    // The model proposes meaning; the binding TARGET for non-accept relations is
++    // context the parent already knows — derived deterministically, never guessed.
++    const binding =
++      input && model.meaning.relation !== "accept"
++        ? bindingTargetFor(model.meaning.relation, input)
++        : model.meaning.binding;
++    return { ...model.meaning, binding, tier: "model" };
++  }
++  return {
++    ...deterministic,
++    meaningConfidence: "low",
++    evidence: [...deterministic.evidence, `model_fallback:${model ? model.reason : "unavailable"}`],
++    tier: "fallback_low",
++  };
++}
++
++// ── Evaluation invoker (bake-off only) ──────────────────────────────────────
++
++
++export type ModelMeaningInvoker = typeof invokeStructuredLlm;
++
++export type ModelMeaningReadOutcome = {
++  validation: ModelMeaningValidation;
++  latencyMs: number;
++  totalTokens?: number;
++  callSucceeded: boolean;
++};
++
++/**
++ * One structured model read. The turn-path budget is enforced by `timeoutMs`
++ * (default 2.5 s — far below the shared seam's 45 s default). Any failure is
++ * reported as an invalid read, never thrown.
++ */
++export async function runModelMeaningRead(
++  input: BoundaryTurnInput,
++  invoker: ModelMeaningInvoker = invokeStructuredLlm,
++  timeoutMs = 2500,
++): Promise<ModelMeaningReadOutcome> {
++  const result = await invoker({
++    agentId: "boundary-member-meaning-eval",
++    phase: "member_meaning_read_eval",
++    inputSchema: "member-meaning-read-request-v1",
++    outputSchema: "member-meaning-read-v1",
++    toolPermissions: [],
++    systemPrompt: MEMBER_MEANING_SYSTEM_PROMPT,
++    userPayload: buildModelMeaningPayload(input),
++    temperature: 0,
++    timeoutMs,
++  });
++  if (!result.ok) {
++    return {
++      validation: { ok: false, reason: `call_failed:${result.error}` },
++      latencyMs: result.latencyMs,
++      callSucceeded: false,
++    };
++  }
++  return {
++    validation: validateModelMeaningRead(result.parsed, input),
++    latencyMs: result.latencyMs,
++    totalTokens: result.usage?.totalTokens,
++    callSucceeded: true,
++  };
++}
+diff --git a/scripts/ob1-model-meaning-bakeoff.ts b/scripts/ob1-model-meaning-bakeoff.ts
+new file mode 100644
+index 00000000..23fd93d7
+--- /dev/null
++++ b/scripts/ob1-model-meaning-bakeoff.ts
+@@ -0,0 +1,65 @@
++/**
++ * OB-1 — LIVE hybrid-tier measurement (evaluation only; never part of a turn).
++ *
++ * Runs ONE structured model read (the production seam `invokeStructuredLlm`,
++ * gpt-4o-mini by default) for every OB-1 corpus + holdout case, validates it
++ * exactly as the hybrid would (modelMeaningRead.ts), and writes latency p50/p95,
++ * token use, invalid-output rate, and accuracy to
++ * docs/reviews/ob1/live_model_results.json.
++ *
++ *   OPENAI_API_KEY=… npx tsx scripts/ob1-model-meaning-bakeoff.ts
++ *
++ * The OB-1 build environment could not reach api.openai.com, so the OB-1
++ * return report uses archived blind reads instead; this script is how the live
++ * numbers are produced wherever a key and network exist.
++ */
++import { writeFileSync } from "node:fs";
++import path from "node:path";
++import { CORPUS, HOLDOUT } from "../lib/oneBrainCertification/corpus";
++import { boundaryInputFor, readA, scoreCase, summarize } from "../lib/oneBrainCertification/evaluate";
++import { composeHybridMeaning, runModelMeaningRead } from "../lib/oneBrainCertification/modelMeaningRead";
++
++function pct(values: number[], p: number): number | null {
++  if (!values.length) return null;
++  const sorted = [...values].sort((a, b) => a - b);
++  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]!;
++}
++
++async function main() {
++  const cases = [...CORPUS, ...HOLDOUT];
++  const latencies: number[] = [];
++  const tokens: number[] = [];
++  let failedCalls = 0;
++  let invalid = 0;
++  const hybrid = [];
++  for (const c of cases) {
++    const { decision, meaning } = readA(c);
++    const outcome = await runModelMeaningRead(boundaryInputFor(c));
++    latencies.push(outcome.latencyMs);
++    if (outcome.totalTokens) tokens.push(outcome.totalTokens);
++    if (!outcome.callSucceeded) failedCalls += 1;
++    else if (!outcome.validation.ok) invalid += 1;
++    const composed = composeHybridMeaning(
++      meaning,
++      meaning.meaningConfidence === "high" ? null : outcome.validation,
++      boundaryInputFor(c),
++    );
++    hybrid.push(scoreCase(c, decision, composed, composed.tier));
++  }
++  const fallbackCases = hybrid.filter((r) => r.tier !== "deterministic_high").length;
++  const report = {
++    model: process.env.OB1_MODEL ?? "gpt-4o-mini (invokeStructuredLlm default)",
++    cases: cases.length,
++    latencyMs: { p50: pct(latencies, 50), p95: pct(latencies, 95) },
++    tokensPerCall: { p50: pct(tokens, 50), p95: pct(tokens, 95) },
++    failedCalls,
++    invalidOutputs: invalid,
++    fallbackFractionUnderC: fallbackCases / cases.length,
++    hybrid: summarize(hybrid),
++  };
++  const out = path.resolve(__dirname, "../docs/reviews/ob1/live_model_results.json");
++  writeFileSync(out, JSON.stringify(report, null, 1));
++  console.log(JSON.stringify({ ...report, hybrid: undefined }, null, 1));
++}
++
++void main();
