@@ -1,0 +1,2369 @@
+From e5c53e73bbf8496703b4f1bc90ae52bc3eb5f8a1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 13:55:46 +0000
+Subject: [PATCH] OB-6: Unified Knowledge Access (KNOW) through the existing
+ read path
+
+- retrieveRelevantSituation gains a time lens (current/history/reason) and a
+  source scope; items carry the source's own temporal fields. New collectors
+  read owners it never read: Events, Visual maps, the Board's view, member
+  decisions at any scope, Business Understanding history and reasons.
+- Business Understanding: supersedesId / changeReason / confirmedAt now pass
+  through the read path (were dropped); retired offers never read as current;
+  prices read as 'price: $49', not JSON.
+- One Brain KNOW (knowQuestion.ts + know.ts): understand the question, read
+  through the shared path (plus the Strategy Chamber's own store and the
+  Living Model projection), derive truth types, apply fixed precedence and
+  answer; capability selection yields so no room opens.
+- Conversation Gate: temporal / Board / event / visual labels, recorded
+  reasons, and a deterministic precedence line for the model.
+- Five partial returns connected (Avatar, LMC, Events, Strategy, Visual).
+- Visual Thinking receives the conversation through the studio's own
+  source intake (same mechanism as the Research bridge).
+- Who-knows-what from the Board / Chamber / Strategy selectors; director
+  expertise in self-knowledge; honest 'not yet' from the availability map.
+- Certification: know.ob6 (50); pinned OB-5 gaps updated.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0162D2EyVC24X9wVgoMdDuJm
+---
+ app/companion/CompanionPageClient.tsx         |  43 +-
+ .../companion/VisualFocusWorkspacePanel.tsx   |   7 +-
+ lib/conversationBoundaryLexicon.ts            |  17 +
+ .../gateRelevantSituationForConversation.ts   |  45 +-
+ lib/conversationGate/types.ts                 |   9 +
+ lib/memberIntent/executableRequest.ts         |   5 +
+ lib/oneBrainCapability/connections.ts         |  35 +-
+ lib/oneBrainCapability/handoffs.ts            |   7 +-
+ lib/oneBrainCapability/know.ts                | 429 +++++++++++++
+ lib/oneBrainCapability/knowQuestion.ts        | 104 ++++
+ lib/oneBrainCapability/projection.ts          |   7 +-
+ lib/oneBrainCapability/readPath.ts            |   5 +
+ lib/oneBrainCapability/selectCapability.ts    |  18 +-
+ .../capabilityConnect.ob5.test.ts             |   5 +-
+ .../finalConnection.ob5f.test.ts              |  15 +-
+ lib/oneBrainCertification/know.ob6.test.ts    | 585 ++++++++++++++++++
+ .../oneBrainConsumers.test.ts                 |   4 +-
+ .../businessUnderstanding/readProvider.ts     |   5 +
+ lib/profile/businessUnderstanding/types.ts    |   5 +
+ .../collectBusinessUnderstandingItems.ts      |  98 ++-
+ .../retrieveRelevantSituation.ts              | 212 ++++++-
+ lib/relevantSituation/types.ts                |  44 ++
+ .../bridgeConversationVisualHandoff.ts        |  54 ++
+ 23 files changed, 1696 insertions(+), 62 deletions(-)
+ create mode 100644 lib/oneBrainCapability/know.ts
+ create mode 100644 lib/oneBrainCapability/knowQuestion.ts
+ create mode 100644 lib/oneBrainCertification/know.ob6.test.ts
+ create mode 100644 lib/visualFocus/looseThinking/bridgeConversationVisualHandoff.ts
+
+diff --git a/app/companion/CompanionPageClient.tsx b/app/companion/CompanionPageClient.tsx
+index 9b81058c..1f51d6cd 100644
+--- a/app/companion/CompanionPageClient.tsx
++++ b/app/companion/CompanionPageClient.tsx
+@@ -1548,6 +1548,8 @@ import {
+   releasePendingReply,
+ } from "@/lib/conversationSession/ownership/pendingReply";
+ import { resolveCapabilitySelection } from "@/lib/oneBrainCapability/selectCapability";
++import { bringConversationIntoLooseThinking } from "@/lib/visualFocus/looseThinking/bridgeConversationVisualHandoff";
++import { planKnowTurn, type KnowSituationLens as SituationKnowLens, type KnowSourceFamily as SituationSourceFamily } from "@/lib/oneBrainCapability/know";
+ import {
+   CAPABILITY_BIND_PREFIX,
+   planCapabilityTurn,
+@@ -12146,6 +12148,13 @@ export default function CompanionPageClient() {
+         return `${companionIntroForDayDesigner()} ${firstQ}`;
+       }
+       case "visual_open": {
++        // OB-6 — the conversation arrives in the studio's own intake ("Already
++        // brought in"), through the same source mechanism Research uses.
++        if (payload.material?.length && bringConversationIntoLooseThinking({ texts: payload.material })) {
++          clearVisualThinkingMenuPending();
++          openCartographersStudioCore();
++          return "Opening the Visual Thinking Studio with what you've been working through — it's under “Already brought in.”";
++        }
+         const viewId: VisualThinkingViewId =
+           detectExplicitVisualView(payload.memberRequest)?.id ??
+           recommendVisualStructures(payload.memberRequest).recommended[0] ??
+@@ -17013,6 +17022,9 @@ export default function CompanionPageClient() {
+       pendingBinding,
+       correctionBinding,
+     });
++    // OB-6 KNOW — set when a knowledge question has no decisive saved answer:
++    // the Conversation Gate then reads those sources with that time lens.
++    let knowGateScope: { lens: SituationKnowLens; sources: readonly SituationSourceFamily[] } | null = null;
+ 
+     // Cognitive pipeline / answer-first: help in chat before destination routers.
+     // Bind every Companion turn to the active ConversationSession spine id.
+@@ -17503,10 +17515,25 @@ export default function CompanionPageClient() {
+             preTurnBoundarySnapshot.activeTopic?.unresolvedNeed?.trim() ||
+             preTurnBoundarySnapshot.activeTopic?.goal?.trim() ||
+             "";
++          // Visual Thinking receives what the member was working through: their
++          // own recent words in this conversation (never the request itself).
++          const visualMaterial =
++            plan.payload.kind === "visual_open"
++              ? [
++                  ...(offerReferent ? [offerReferent] : []),
++                  ...messages
++                    .filter((m) => m.role === "user")
++                    .map((m) => m.content.trim())
++                    .filter((text) => text.length >= 12 && text !== trimmed)
++                    .slice(-3),
++                ]
++              : [];
+           const armed =
+             plan.payload.kind === "research_launch" && offerReferent
+               ? { ...plan.payload, referent: offerReferent }
+-              : plan.payload;
++              : plan.payload.kind === "visual_open" && visualMaterial.length
++                ? { ...plan.payload, material: visualMaterial }
++                : plan.payload;
+           armPendingReply({
+             bindKey: plan.bindKey,
+             offeredAtTurn: chatTurnRef.current,
+@@ -17587,6 +17614,19 @@ export default function CompanionPageClient() {
+         return;
+       }
+ 
++      // OB-6 KNOW — a question about what Spark already knows is answered from
++      // the owners' own records (labelled; current / earlier / reason), never
++      // by opening a room. When nothing decisive is saved, the model answers
++      // with the scoped, labelled context instead (see the Conversation Gate).
++      if (capabilitySelection?.kind === "none" && capabilitySelection.reason === "knowledge") {
++        const know = planKnowTurn(trimmed);
++        if (know?.kind === "answer") {
++          capabilityReply(know.reply, `one_brain:know:${know.question.subject}`);
++          return;
++        }
++        if (know?.kind === "context") knowGateScope = { lens: know.question.lens, sources: know.sources };
++      }
++
+       const plannedCapability = capabilitySelection
+         ? planCapabilityTurn({
+             selection: capabilitySelection,
+@@ -24403,6 +24443,7 @@ export default function CompanionPageClient() {
+ 
+       const gatedSituationForTurn = gateRelevantSituationForConversation({
+         memberStatement: trimmed,
++        ...(knowGateScope ?? {}),
+       });
+       const strategyAuthorizedPromptBlock =
+         buildStrategyAuthorizedPromptBlockForChat({
+diff --git a/components/companion/VisualFocusWorkspacePanel.tsx b/components/companion/VisualFocusWorkspacePanel.tsx
+index e166a62b..db2e8688 100644
+--- a/components/companion/VisualFocusWorkspacePanel.tsx
++++ b/components/companion/VisualFocusWorkspacePanel.tsx
+@@ -122,6 +122,7 @@ import {
+   removeSource,
+ } from "@/lib/visualFocus/looseThinking/sourceEditing";
+ import { consumeResearchVisualHandoffIntoLooseThinking } from "@/lib/visualFocus/looseThinking/bridgeResearchVisualHandoff";
++import { consumeConversationVisualHandoffIntoLooseThinking } from "@/lib/visualFocus/looseThinking/bridgeConversationVisualHandoff";
+ import { finalizeLooseThinkingCaptureMap } from "@/lib/visualFocus/looseThinking/ensureLooseThinkingVisualLayout";
+ 
+ const NODE_COLORS = ["#1e4f4f", "#5b7c99", "#c48992", "#8b7355", "#6b8e6b"];
+@@ -559,7 +560,11 @@ export function VisualFocusWorkspacePanel({
+     if (view !== "hub") return;
+ 
+     researchHandoffBridgeAttemptedRef.current = true;
+-    const bridged = consumeResearchVisualHandoffIntoLooseThinking();
++    // OB-6 — the conversation arrives through the same intake (member-stated sources).
++    const fromConversation = consumeConversationVisualHandoffIntoLooseThinking();
++    const bridged = fromConversation
++      ? { ok: true as const, map: fromConversation }
++      : consumeResearchVisualHandoffIntoLooseThinking();
+     if (bridged?.ok) {
+       setLooseThinkingMap(bridged.map);
+     }
+diff --git a/lib/conversationBoundaryLexicon.ts b/lib/conversationBoundaryLexicon.ts
+index 4ecc2bad..5561f5a6 100644
+--- a/lib/conversationBoundaryLexicon.ts
++++ b/lib/conversationBoundaryLexicon.ts
+@@ -210,6 +210,23 @@ export const UNSURE_RE =
+  */
+ export const TALK_IT_THROUGH_RE = /\btalk\s+(?:it|this|that|things|them)\s+(?:through|over|out)\b/i;
+ 
++/**
++ * OB-6 KNOW — the member asking what Spark already knows (a recall question,
++ * not a request). Structural: a question about a settled state or a past
++ * result of the member's own work ("what did we decide", "what are we
++ * charging", "what do you know about", "didn't we already…").
++ */
++export const KNOW_RECALL_RE =
++  /\b(?:did|have|has|had|was|were)\s+(?:we|i|you|they)\b|\bdid\s+(?:the\s+)?\w+\s+(?:find|say|decide|recommend|conclude|suggest|settle|land|agree|create|map)\b|\b(?:decided|settled|found|said|changed|chose|landed on|mapped|created|planned|figured out|agreed)\b|\b(?:am|are)\s+(?:i|we)\s+(?:charging|working on|doing|planning|focused on)\b|\b(?:know|remember)\s+about\b|\bwhat\s+(?:is|'s|was)\s+(?:my|our)\b|\bwhat\s+was\s+the\b|\bwhat\s+does\s+(?:my|our)\b|\bdidn'?t\s+we\b/i;
++
++/** OB-6 KNOW — the question asks WHY something changed (a recorded reason). */
++export const KNOW_REASON_RE =
++  /\bwhy\b[^?.!]{0,60}\b(?:chang|switch|mov|drop|rais|lower|decid|chose|choos|pick|went|stopp?|cut|increas|reduc)\w*/i;
++
++/** OB-6 KNOW — the question asks for an EARLIER version (history), not the current one. */
++export const KNOW_HISTORY_RE =
++  /\b(?:originally|original|used to|previous(?:ly)?|earlier|at first|the old|old (?:version|price|plan|one|offer)|first plan|before (?:we|i|that|the change))\b/i;
++
+ /** A sentence that opens with a wh-word — a question even without "?". */
+ export const WH_OPEN_RE =
+   /^(?:(?:so|and|but|wait|ok(?:ay)?|hmm|also|then)[,\s]+)*(?:what|why|how|when|where|who|whom|whose|which)\b/i;
+diff --git a/lib/conversationGate/gateRelevantSituationForConversation.ts b/lib/conversationGate/gateRelevantSituationForConversation.ts
+index c502c32b..b3e329e8 100644
+--- a/lib/conversationGate/gateRelevantSituationForConversation.ts
++++ b/lib/conversationGate/gateRelevantSituationForConversation.ts
+@@ -99,6 +99,23 @@ function overlapCount(a: Set<string>, b: Set<string>): number {
+ }
+ 
+ function statusLabelFor(item: RelevantSituationItem): string {
++  // OB-6 KNOW — time outranks every other status: an earlier or retired
++  // version is never presented as current, whatever it once was.
++  if (item.temporal?.state === "superseded") {
++    return "earlier version — superseded, not current";
++  }
++  if (item.temporal?.state === "retired") {
++    return "retired — no longer current";
++  }
++  if (item.origin === "board_deliberation") {
++    return "the Board's view (advice, not a decision)";
++  }
++  if (item.origin === "events_intelligence") {
++    return "event plan (working state)";
++  }
++  if (item.origin === "visual_thinking") {
++    return "member's visual map (working material)";
++  }
+   if (item.role === "nextMeaningfulMove") {
+     return "possible next step (not a commitment)";
+   }
+@@ -146,9 +163,18 @@ function toApproved(item: RelevantSituationItem): ConversationGateApprovedItem {
+     origin: item.origin,
+     role: item.role,
+     statusLabel: statusLabelFor(item),
++    ...(item.temporal ? { temporal: item.temporal } : {}),
+   };
+ }
+ 
++/** OB-6 KNOW — the reason travels only when one was recorded; never invented. */
++function reasonSuffix(item: ConversationGateApprovedItem, lens: string): string {
++  if (lens === "current") return "";
++  const reason = item.temporal?.changeReason?.trim();
++  if (!reason) return "";
++  return ` (reason recorded when it changed, in the member's words: "${reason.slice(0, 200)}")`;
++}
++
+ function shouldApproveItem(
+   item: RelevantSituationItem,
+   statementTokens: Set<string>,
+@@ -184,9 +210,10 @@ function buildPromptBlock(
+   approved: ConversationGateApprovedItem[],
+   situationRef: ConversationGateResult["situationRef"],
+   memberStatement: string,
++  lens = "current",
+ ): string {
+   const lines = approved.map(
+-    (item) => `- ${item.summary} [${item.statusLabel}]`,
++    (item) => `- ${item.summary} [${item.statusLabel}]${reasonSuffix(item, lens)}`,
+   );
+ 
+   const blocks = [
+@@ -194,6 +221,12 @@ function buildPromptBlock(
+     "Each line keeps its own status. Do not merge into one truth blob.",
+     ...lines,
+   ];
++  if (approved.some((item) => item.temporal)) {
++    // OB-6 KNOW precedence, deterministic — not left to the model.
++    blocks.push(
++      "Truth precedence: a current member-established line wins over earlier or retired versions, research, the Board's view and hypotheses. Never state an earlier version as current. Give a reason for a change only if one is listed.",
++    );
++  }
+ 
+   if (situationRef.originalStatement?.trim()) {
+     blocks.push(
+@@ -230,13 +263,19 @@ export function gateRelevantSituationForConversation(
+   input: ConversationGateInput,
+ ): ConversationGateResult {
+   const memberStatement = input.memberStatement?.trim() ?? "";
++  const lens = input.lens ?? "current";
+   const slice = retrieveRelevantSituation({
+     intent: {
+       memberStatement,
+       aim: input.aim ?? "think",
+     },
+     consumerRole: "conversation",
++    lens,
++    ...(input.sources?.length ? { sources: input.sources } : {}),
+   });
++  // OB-6 KNOW: the member asked about these sources, or for an earlier version —
++  // the owner's labelled records are relevant by the question itself.
++  const knowScoped = Boolean(input.sources?.length) || lens !== "current";
+ 
+   const statementTokens = tokens(memberStatement);
+   const referential =
+@@ -246,7 +285,7 @@ export function gateRelevantSituationForConversation(
+ 
+   const approved: ConversationGateApprovedItem[] = [];
+   for (const item of slice.items) {
+-    if (!shouldApproveItem(item, statementTokens, referential, memberStatement))
++    if (!knowScoped && !shouldApproveItem(item, statementTokens, referential, memberStatement))
+       continue;
+     approved.push(toApproved(item));
+     if (approved.length >= MAX_GATE_APPROVED_ITEMS) break;
+@@ -275,7 +314,7 @@ export function gateRelevantSituationForConversation(
+   const surfaceSharedContext =
+     approved.length > 0 && turnContract.primaryJob !== "SUPPORT_PRESENCE";
+   const baseBlock = surfaceSharedContext
+-    ? buildPromptBlock(approved, slice.situationRef, memberStatement)
++    ? buildPromptBlock(approved, slice.situationRef, memberStatement, lens)
+     : null;
+   const withContract = baseBlock
+     ? `${baseBlock}\n\n${contractBlock}`
+diff --git a/lib/conversationGate/types.ts b/lib/conversationGate/types.ts
+index f0de46e9..c4fbb6e7 100644
+--- a/lib/conversationGate/types.ts
++++ b/lib/conversationGate/types.ts
+@@ -12,6 +12,9 @@ import type {
+   SituationIntentAim,
+   SituationRelevanceReason,
+   SituationRepresentAs,
++  SituationKnowLens,
++  SituationSourceFamily,
++  SituationTemporal,
+ } from "@/lib/relevantSituation/types";
+ import type { ResearchEvidenceBasis } from "@/lib/research/types";
+ import type { ConversationalTurnContract } from "./conversationalTurnContract";
+@@ -28,6 +31,8 @@ export type ConversationGateApprovedItem = {
+   role?: "nextMeaningfulMove";
+   /** Short human-readable status for prompt assembly — not a merged truth blob. */
+   statusLabel: string;
++  /** OB-6 KNOW — copied temporal metadata (current / superseded / retired, reason). */
++  temporal?: SituationTemporal;
+ };
+ 
+ export type ConversationGateInput = {
+@@ -39,6 +44,10 @@ export type ConversationGateInput = {
+    * When true, projection may select SPECIALIST_ANALYSIS if no stronger job.
+    */
+   chamberLocked?: boolean;
++  /** OB-6 KNOW — the version of truth the question asks for (default current). */
++  lens?: SituationKnowLens;
++  /** OB-6 KNOW — the member asked about these sources by name (scoped read). */
++  sources?: readonly SituationSourceFamily[];
+ };
+ 
+ export type ConversationGateResult = {
+diff --git a/lib/memberIntent/executableRequest.ts b/lib/memberIntent/executableRequest.ts
+index 85f25188..b7c4f594 100644
+--- a/lib/memberIntent/executableRequest.ts
++++ b/lib/memberIntent/executableRequest.ts
+@@ -87,6 +87,11 @@ const AVAILABILITY: Record<ExecutableCapability, CapabilityAvailability> = {
+   calendar: "not_available_from_chat",
+ };
+ 
++/** OB-6 KNOW — read-only view of the availability map ("can you … my calendar?"). */
++export function listCapabilityAvailability(): readonly (readonly [ExecutableCapability, CapabilityAvailability])[] {
++  return Object.entries(AVAILABILITY) as [ExecutableCapability, CapabilityAvailability][];
++}
++
+ function normalize(text: string): string {
+   return text
+     .replace(/[‘’ʼ`]/g, "'")
+diff --git a/lib/oneBrainCapability/connections.ts b/lib/oneBrainCapability/connections.ts
+index 99327113..d2356b97 100644
+--- a/lib/oneBrainCapability/connections.ts
++++ b/lib/oneBrainCapability/connections.ts
+@@ -127,25 +127,24 @@ export const CAPABILITY_CONNECTIONS: Record<OneBrainCapabilityId, CapabilityConn
+     ownerKey: "events",
+     mode: "acts_with_confirmation",
+     handoff: "events_doorway",
+-    returnPath: "originating_room",
+-    status: "partially_connected",
+-    reach: "Spark opens Events with what you said; Events asks its own first planning question",
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "Spark opens Events with what you said; ask what event you're working on and Spark reads it back",
+     contextCarried: ["member's words (Events' own understanding starts from them)"],
+-    cannot: "Event results stay in Events and your Create work; they are not summarized back into chat yet.",
+     evidence:
+-      "openCreateEventsDoorwayCore → EventsEstateEntrancePanel initialRequest → beginStartEventUnderstanding (eventsEntranceUnderstanding.startEventsEntranceUnderstanding)",
++      "openCreateEventsDoorwayCore → EventsEstateEntrancePanel initialRequest → beginStartEventUnderstanding; read-back (OB-6): retrieveRelevantSituation events collector → getActiveEventRecord",
+   },
+   strategy_chamber: {
+     ownerKey: "strategy",
+     mode: "advises",
+     handoff: "strategy_entry",
+     returnPath: "main_chat",
+-    status: "partially_connected",
++    status: "connected",
+     reach: "Spark opens the Strategy Chamber with your question already on the table",
+     contextCarried: ["member's words (the Chamber's opening answer)", "strategy type when recognized"],
+-    cannot: "The Strategy Chamber advises; its conclusion comes back to chat only when you ask it to.",
++    cannot: "The Strategy Chamber advises; a direction counts as settled only once you confirm it.",
+     evidence:
+-      "createStrategyWorkItem + applyGuidedJourneyAnswer → openStrategyLibraryCore({ chamberWorkItemId }) → StrategiesPanel chamber-entry; return: StrategiesPanel onAsk → handlePlaybookAsk",
++      "createStrategyWorkItem + applyGuidedJourneyAnswer → openStrategyLibraryCore({ chamberWorkItemId }); read-back (OB-6): know.ts strategyAnswer → getActiveStrategyWorkItem / buildStrategyDecisionRecord / strategic memory",
+   },
+   create: {
+     ownerKey: "create",
+@@ -186,27 +185,25 @@ export const CAPABILITY_CONNECTIONS: Record<OneBrainCapabilityId, CapabilityConn
+     status: "connected",
+     reach: "say what you want to do every day, week or month",
+     contextCarried: ["member's words", "cadence", "time"],
+-    cannot: "Spark can't yet tell what 'this' means in 'do this every month' — name the thing.",
+     evidence: "remindersVsRhythms/conversationPending.ts; receipt + owner correction (OB-4)",
+   },
+   visual_thinking: {
+     ownerKey: "visual_thinking",
+     mode: "navigates",
+     handoff: "visual_open",
+-    returnPath: "originating_room",
+-    status: "partially_connected",
+-    reach: "Spark opens the Visual Thinking Studio; you bring in what to lay out",
+-    cannot: "The studio does not receive the conversation yet; you add what to lay out there.",
+-    contextCarried: ["member's words, as the Mind Map discovery seed only"],
++    returnPath: "main_chat",
++    status: "connected",
++    reach: "Spark opens the Visual Thinking Studio with what you've been working through",
++    contextCarried: ["the member's own recent words, as studio sources (Already brought in)"],
+     evidence:
+-      "completeVisualThinkingOpen({ purposeAnswer, contextTransfer }) → Cartographer's Studio; the capture-first front door (LooseThinkingCapture) reads only Research visual handoffs (bridgeResearchVisualHandoff), so chat content does not arrive (OB-5 final, browser)",
++      "bringConversationIntoLooseThinking (captureSource, member-stated) → VisualFocusWorkspacePanel hub entry (same intake as bridgeResearchVisualHandoff); read-back (OB-6): retrieveRelevantSituation visual collector",
+   },
+   client_avatars: {
+     ownerKey: "client_avatars",
+     mode: "acts_with_confirmation",
+     handoff: "avatar_builder",
+-    returnPath: "originating_room",
+-    status: "partially_connected",
++    returnPath: "main_chat",
++    status: "connected",
+     reach: "to build, finish, edit or review your client avatar; exploring who they are is Claire's",
+     contextCarried: ["what Claire already knows (shared People I Help store)", "member's words"],
+     evidence:
+@@ -216,8 +213,8 @@ export const CAPABILITY_CONNECTIONS: Record<OneBrainCapabilityId, CapabilityConn
+     ownerKey: "lmc",
+     mode: "advises",
+     handoff: "lmc_open",
+-    returnPath: "originating_room",
+-    status: "partially_connected",
++    returnPath: "main_chat",
++    status: "connected",
+     reach: "Spark opens My Business Estate straight onto your Living Model",
+     contextCarried: ["member's words (Claire picks them up)"],
+     evidence: "claireChatHandoff { openLmc } → BusinessProfileBp2aPrototype setLmcOpen(true)",
+diff --git a/lib/oneBrainCapability/handoffs.ts b/lib/oneBrainCapability/handoffs.ts
+index 7ee38975..9a556b6c 100644
+--- a/lib/oneBrainCapability/handoffs.ts
++++ b/lib/oneBrainCapability/handoffs.ts
+@@ -55,7 +55,12 @@ export type CapabilityHandoffPayload =
+   | { kind: "strategy_entry"; memberRequest: string; strategyType?: string }
+   | { kind: "strategy_library_open"; memberRequest: string }
+   | { kind: "day_designer"; memberRequest: string }
+-  | { kind: "visual_open"; memberRequest: string }
++  | {
++      kind: "visual_open";
++      memberRequest: string;
++      /** OB-6: what the member was working through (their own earlier words), captured at offer time. */
++      material?: string[];
++    }
+   | { kind: "avatar_builder"; memberRequest: string }
+   | { kind: "lmc_open"; memberRequest: string };
+ 
+diff --git a/lib/oneBrainCapability/know.ts b/lib/oneBrainCapability/know.ts
+new file mode 100644
+index 00000000..d16b5fdb
+--- /dev/null
++++ b/lib/oneBrainCapability/know.ts
+@@ -0,0 +1,429 @@
++/**
++ * OB-6 — KNOW: One Brain's read of what Spark already knows.
++ *
++ * UNDERSTAND → KNOW WHAT TYPE OF TRUTH IS NEEDED → FIND THE EXISTING SOURCE →
++ * RETRIEVE → LABEL → ANSWER → CONTINUE.
++ *
++ * No store, no registry, no retrieval authority of its own:
++ *   - the READ is the shared Situation façade (`retrieveRelevantSituation`),
++ *     scoped by source family and a time lens (current / history / reason);
++ *   - the Strategy Chamber's own store is read here through its own read
++ *     functions, because the façade's boundary forbids it importing the Chamber;
++ *   - "who knows what" is read from the Board's and the Chamber's own topic
++ *     selectors; "what can you do" from the OB-5 capability projection and the
++ *     executable-request availability map.
++ *
++ * Truth types are DERIVED from each source's own status / provenance / time
++ * fields (never stored). Precedence is deterministic, never left to the model.
++ */
++
++import { retrieveRelevantSituation } from "@/lib/relevantSituation";
++import { collectBusinessUnderstandingSnapshot } from "@/lib/profile/businessUnderstanding/readProvider";
++import { projectLivingModelCanvas } from "@/lib/profile/businessModelProjection/projectLivingModelCanvas";
++import { LMC_AREA_LABEL } from "@/lib/profile/businessModelProjection/areas";
++import { readSnapshotToProjection } from "@/lib/businessProfileFounder/snapshotBridge";
++import type { RelevantSituationItem, SituationKnowLens, SituationSourceFamily } from "@/lib/relevantSituation/types";
++import { mentionsPricing } from "@/lib/relevantSituation/collectBusinessUnderstandingItems";
++import { listCapabilityAvailability } from "@/lib/memberIntent/executableRequest";
++import {
++  readKnowQuestion,
++  subjectOf,
++  unavailableNamed,
++  WHERE_LIVES_RE,
++  type KnowQuestion,
++  type KnowSubject,
++} from "./knowQuestion";
++import {
++  getActiveStrategyWorkItem,
++  listStrategyWorkItems,
++} from "@/lib/strategyChamber/strategyWorkItemStore";
++import { buildStrategyDecisionRecord, decisionRecordIsReady } from "@/lib/strategyChamber/decisionRecord";
++import { getStrategyConclusionForContext } from "@/lib/strategyChamber/strategyChamberContinuity";
++import { listStrategicDecisionMemories } from "@/lib/strategyChamber/memory/strategicMemoryStore";
++import type { StrategyWorkItem } from "@/lib/strategyChamber/types";
++import { matchStrategyTypesFromText } from "@/lib/strategyChamber/intelligence/registry";
++import { inferMaterialDimensions } from "@/lib/board/reconstructed/selection/assessBoardSituation";
++import { allDomainScores } from "@/lib/board/reconstructed/selection/directorRelevanceModel";
++import { DIRECTOR_IDENTITIES } from "@/lib/board/reconstructed/identities";
++import { resolveExpertiseCategory } from "@/lib/chamber/expertiseCategory";
++import { CHAMBER_MEMBERS } from "@/lib/chamber/chamberMemberRegistry";
++import { CAPABILITY_CONNECTIONS, isOneBrainConnected } from "./connections";
++import { listCapabilityProjections } from "./projection";
++
++export { readKnowQuestion, type KnowQuestion, type KnowSubject } from "./knowQuestion";
++
++/** Re-exported for the page, which may not import the Situation façade directly. */
++export type KnowSituationLens = SituationKnowLens;
++export type KnowSourceFamily = SituationSourceFamily;
++
++// ── Truth types (derived, never stored) ──────────────────────────────────────
++
++export type KnowTruthType =
++  | "CURRENT_AUTHORITATIVE"
++  | "HISTORICAL_SUPERSEDED"
++  | "TENTATIVE"
++  | "PLANNED"
++  | "RESEARCH"
++  | "MEMORY_CONTEXT"
++  | "SPECIALIST_OPINION"
++  | "SAMPLE_DEMO"
++  | "UNKNOWN";
++
++/**
++ * Derive the truth type from the source's own fields. SAMPLE_DEMO cannot be
++ * derived today: facts carry no per-fact sample flag (the two seeds are
++ * test / founder-proof only). Reported as a gap, not guessed.
++ */
++export function truthTypeOf(item: RelevantSituationItem): KnowTruthType {
++  if (item.temporal?.state === "superseded" || item.temporal?.state === "retired") return "HISTORICAL_SUPERSEDED";
++  if (item.origin === "board_deliberation") return "SPECIALIST_OPINION";
++  if (item.informationType === "CURRENT_SOURCED_RESEARCH" || item.epistemicStatus === "research_finding") return "RESEARCH";
++  if (item.sourceAuthority.startsWith("companion-research-library")) return "RESEARCH";
++  if (item.representAs === "unknown" || item.informationType === "UNKNOWN") return "UNKNOWN";
++  if (
++    item.epistemicStatus === "hypothesis" ||
++    item.epistemicStatus === "inference" ||
++    item.epistemicStatus === "stale_or_uncertain" ||
++    item.representAs === "assumption" ||
++    item.informationType === "ASSUMPTION"
++  ) {
++    return "TENTATIVE";
++  }
++  if (item.role === "nextMeaningfulMove" || item.origin === "events_intelligence") return "PLANNED";
++  if (item.epistemicStatus === "member_established_fact" || item.epistemicStatus === "decision") return "CURRENT_AUTHORITATIVE";
++  return "MEMORY_CONTEXT";
++}
++
++/** Deterministic precedence for "what is true now": lower = stronger. */
++const PRECEDENCE: Record<KnowTruthType, number> = {
++  CURRENT_AUTHORITATIVE: 0,
++  PLANNED: 1,
++  MEMORY_CONTEXT: 2,
++  RESEARCH: 3,
++  SPECIALIST_OPINION: 4,
++  TENTATIVE: 5,
++  UNKNOWN: 6,
++  HISTORICAL_SUPERSEDED: 7,
++  SAMPLE_DEMO: 8,
++};
++
++export function byTruthPrecedence(a: RelevantSituationItem, b: RelevantSituationItem): number {
++  return PRECEDENCE[truthTypeOf(a)] - PRECEDENCE[truthTypeOf(b)];
++}
++
++// UNDERSTAND lives in ./knowQuestion (light: capability selection imports it).
++// ── RETRIEVE → LABEL → ANSWER ────────────────────────────────────────────────
++
++export type KnowPlan =
++  | {
++      kind: "answer";
++      reply: string;
++      question: KnowQuestion;
++      /** The sources the answer came from (for provenance; never shown as jargon). */
++      sourceRefs: string[];
++      truthTypes: KnowTruthType[];
++    }
++  | {
++      /** Nothing decisive in a structured store: the model answers, with the scoped labelled context. */
++      kind: "context";
++      question: KnowQuestion;
++      sources: readonly SituationSourceFamily[];
++    };
++
++const FAMILIES: Record<Exclude<KnowSubject, "specialists" | "capabilities" | "strategy">, readonly SituationSourceFamily[]> = {
++  board: ["board"],
++  research: ["research"],
++  events: ["events"],
++  visual: ["visual"],
++  business_model: ["business"],
++  avatar: ["business"],
++  pricing: ["business", "decisions"],
++  work: ["work"],
++  decisions: ["decisions", "business", "board"],
++  business: ["business"],
++};
++
++/** Member-language status (no architecture words). */
++function memberLabel(item: RelevantSituationItem): string {
++  switch (truthTypeOf(item)) {
++    case "CURRENT_AUTHORITATIVE":
++      return item.epistemicStatus === "decision" ? "your decision" : "confirmed";
++    case "RESEARCH":
++      return item.informationType === "CURRENT_SOURCED_RESEARCH"
++        ? "from your research, sourced"
++        : "from your research — an interpretation, not a sourced finding";
++    case "SPECIALIST_OPINION":
++      return "the Board's view — advice, not a decision";
++    case "TENTATIVE":
++      return "not settled yet";
++    case "HISTORICAL_SUPERSEDED":
++      return item.temporal?.state === "retired" ? "retired, no longer current" : "earlier — no longer current";
++    default:
++      return "";
++  }
++}
++
++function line(item: RelevantSituationItem): string {
++  const label = memberLabel(item);
++  return label ? `${item.summary} (${label})` : item.summary;
++}
++
++function read(q: KnowQuestion, text: string): RelevantSituationItem[] {
++  if (q.subject === "specialists" || q.subject === "capabilities" || q.subject === "strategy") return [];
++  if (q.subject === "business_model") return livingModelItems();
++  const slice = retrieveRelevantSituation({
++    intent: { memberStatement: text, aim: "think" },
++    consumerRole: "conversation",
++    lens: q.lens,
++    sources: FAMILIES[q.subject],
++  });
++  let items = slice.items;
++  if (q.subject === "pricing") items = items.filter((i) => mentionsPricing(i.summary));
++  if (q.subject === "avatar") items = items.filter((i) => i.id.startsWith("bu:person:"));
++  return items;
++}
++
++const NOTHING_SAVED: Partial<Record<KnowSubject, string>> = {
++  board: "I don't see a Board discussion with a result yet — nothing's come back from the Board.",
++  research: "There's no saved research yet, so I don't have findings to share.",
++  events: "You don't have an event in progress right now.",
++  strategy: "There's no strategy work saved yet.",
++  visual: "You haven't saved a visual map yet.",
++  business_model: "Your Living Model doesn't have anything confirmed in it yet.",
++  avatar: "I don't have an ideal client saved yet.",
++  pricing: "I don't have a confirmed price saved.",
++};
++
++/** Plan the KNOW turn. Null = not a KNOW question. */
++export function planKnowTurn(text: string): KnowPlan | null {
++  const q = readKnowQuestion(text);
++  if (!q) return null;
++  if (q.subject === "specialists") return answer(q, whoKnows(text), [], []);
++  if (q.subject === "capabilities") return answer(q, whatSparkCanDo(text), [], []);
++  if (q.subject === "strategy") return strategyAnswer(q);
++
++  const items = read(q, text);
++  const current = items.filter((i) => truthTypeOf(i) !== "HISTORICAL_SUPERSEDED").sort(byTruthPrecedence);
++  const earlier = items.filter((i) => truthTypeOf(i) === "HISTORICAL_SUPERSEDED");
++
++  if (q.lens === "reason") return reasonAnswer(q, current, earlier);
++  if (q.lens === "history") return historyAnswer(q, current, earlier);
++
++  if (!current.length) {
++    const none = NOTHING_SAVED[q.subject];
++    return none ? answer(q, none, [], ["UNKNOWN"]) : { kind: "context", question: q, sources: FAMILIES[q.subject as keyof typeof FAMILIES] };
++  }
++  const top = current.slice(0, q.subject === "business" || q.subject === "business_model" || q.subject === "decisions" ? 4 : 3);
++  return answer(q, `${LEAD[q.subject] ?? "Here's what's saved:"}\n${top.map((i) => `• ${line(i)}`).join("\n")}`, top.map((i) => i.sourceRef), top.map(truthTypeOf));
++}
++
++const LEAD: Partial<Record<KnowSubject, string>> = {
++  board: "Here's what came out of your Board:",
++  research: "Here's what your research found:",
++  events: "Here's the event you're working on:",
++  visual: "Here's your latest visual map:",
++  business_model: "Here's how your business model looks right now:",
++  avatar: "Here's what's saved about your ideal client:",
++  pricing: "Here's the price on record right now:",
++  work: "Here's what you were working on:",
++  decisions: "Here's what's been decided:",
++  business: "Here's what I know about your business right now:",
++};
++
++function historyAnswer(q: KnowQuestion, current: RelevantSituationItem[], earlier: RelevantSituationItem[]): KnowPlan {
++  if (!earlier.length) {
++    const now = current[0];
++    const reply = now
++      ? `I don't have an earlier version on record — only the current one: ${line(now)}.`
++      : "I don't have an earlier version of that on record.";
++    return answer(q, reply, now ? [now.sourceRef] : [], now ? [truthTypeOf(now)] : ["UNKNOWN"]);
++  }
++  const lines = earlier.slice(0, 3).map((i) => `• Earlier: ${i.summary} (no longer current)`);
++  // "Now" is what REPLACED the earlier version (its own supersession chain),
++  // not merely the strongest current line.
++  const successor = earlier[0].temporal?.supersededById;
++  const now =
++    (successor ? current.find((i) => i.sourceRef === `fact:${successor}` || i.sourceRef === `ledger:${successor}`) : undefined) ??
++    current.find((i) => truthTypeOf(i) === "CURRENT_AUTHORITATIVE");
++  if (now) lines.push(`• Now: ${now.summary}`);
++  const used = [...earlier.slice(0, 3), ...(now ? [now] : [])];
++  return answer(q, `Here's the earlier version on record:\n${lines.join("\n")}`, used.map((i) => i.sourceRef), used.map(truthTypeOf));
++}
++
++function reasonAnswer(q: KnowQuestion, current: RelevantSituationItem[], earlier: RelevantSituationItem[]): KnowPlan {
++  const changed = current.find((i) => i.temporal?.changeReason?.trim()) ?? earlier.find((i) => i.temporal?.changeReason?.trim());
++  if (changed) {
++    const was = earlier.find((e) => e.temporal?.supersededById && `fact:${e.temporal.supersededById}` === changed.sourceRef);
++    const from = was ? ` from ${was.summary}` : "";
++    return answer(
++      q,
++      `When it changed${from} to ${changed.summary}, you said: “${changed.temporal!.changeReason!.trim()}”`,
++      [changed.sourceRef, ...(was ? [was.sourceRef] : [])],
++      [truthTypeOf(changed), ...(was ? [truthTypeOf(was)] : [])],
++    );
++  }
++  if (earlier.length) {
++    const now = current.find((i) => truthTypeOf(i) === "CURRENT_AUTHORITATIVE");
++    return answer(
++      q,
++      `I can see it changed (earlier: ${earlier[0].summary}${now ? `; now: ${now.summary}` : ""}), but there's no reason on record — I won't guess. Do you remember what prompted it?`,
++      [earlier[0].sourceRef, ...(now ? [now.sourceRef] : [])],
++      ["HISTORICAL_SUPERSEDED", ...(now ? [truthTypeOf(now)] : [])],
++    );
++  }
++  return answer(q, "I don't have a record of that changing, so I don't know why — I won't guess.", [], ["UNKNOWN"]);
++}
++
++/**
++ * Living Model Canvas — the canvas is a pure projection of Business
++ * Understanding (no store of its own), built from the same BU snapshot the
++ * shared read path uses. Projected here (One Brain) rather than in the shared
++ * façade so every façade consumer does not pay for the projection engine.
++ * One line per populated area; unconfirmed lines say so.
++ */
++function livingModelItems(): RelevantSituationItem[] {
++  const snapshot = collectBusinessUnderstandingSnapshot();
++  let projection: ReturnType<typeof projectLivingModelCanvas>;
++  try {
++    projection = projectLivingModelCanvas(readSnapshotToProjection(snapshot), { kind: "WHOLE_BUSINESS" });
++  } catch {
++    return [];
++  }
++  const out: RelevantSituationItem[] = [];
++  for (const section of projection.sections) {
++    const confirmed = section.items.filter((i) => i.epistemicStatus === "CONFIRMED").map((i) => i.text.trim()).filter(Boolean);
++    const tentative = section.items.filter((i) => i.epistemicStatus !== "CONFIRMED").map((i) => i.text.trim()).filter(Boolean);
++    if (!confirmed.length && !tentative.length) continue;
++    const label = LMC_AREA_LABEL[section.areaId] ?? section.areaId;
++    const summary = confirmed.length
++      ? `${label}: ${confirmed.slice(0, 3).join("; ")}${tentative.length ? ` (also still open: ${tentative.slice(0, 2).join("; ")})` : ""}`
++      : `${label}: ${tentative.slice(0, 3).join("; ")}`;
++    out.push({
++      id: `lmc:${section.areaId}`,
++      informationType: "MEMBER_BUSINESS_CONTEXT",
++      sourceAuthority: "business_understanding:living_model",
++      sourceRef: `lmc:${section.areaId}`,
++      representAs: confirmed.length ? "settled" : "assumption",
++      summary,
++      relevanceReason: "business_understanding",
++      epistemicStatus: confirmed.length ? "member_established_fact" : "hypothesis",
++      origin: "living_model_canvas",
++    });
++  }
++  return out;
++}
++
++// ── Strategy Chamber (read through its own store; the façade may not import it) ──
++
++function latestStrategyWork(): StrategyWorkItem | null {
++  return getActiveStrategyWorkItem() ?? listStrategyWorkItems().filter((i) => i.status !== "archived")[0] ?? null;
++}
++
++function strategyAnswer(q: KnowQuestion): KnowPlan {
++  const item = latestStrategyWork();
++  if (item) {
++    const record = buildStrategyDecisionRecord(item);
++    if (decisionRecordIsReady(item) && record.directionYouChose) {
++      const settled = item.decisionRecordConfirmed || item.status === "completed" || item.status === "handed_off";
++      const why = record.whyThisDirectionFits ? ` — because ${lowerFirst(record.whyThisDirectionFits)}` : "";
++      const head = settled ? "You settled on" : "You chose a direction (not confirmed yet)";
++      return answer(
++        q,
++        `${head}: ${record.directionYouChose}${why}. That was for: “${record.whatYouWereDeciding}”.`,
++        [`strategy:${item.id}`],
++        [settled ? "CURRENT_AUTHORITATIVE" : "TENTATIVE"],
++      );
++    }
++    return answer(
++      q,
++      `You're still working through “${record.whatYouWereDeciding}” in the Strategy Chamber — nothing's settled yet.`,
++      [`strategy:${item.id}`],
++      ["TENTATIVE"],
++    );
++  }
++  const memory = listStrategicDecisionMemories()[0];
++  const chosen = memory?.chosenDirection;
++  if (memory && chosen?.direction?.trim()) {
++    return answer(
++      q,
++      `Last time you ${chosen.userConfirmed ? "decided" : "leaned toward (not confirmed)"}: ${chosen.direction.trim()}${chosen.rationale ? ` — because ${chosen.rationale}` : ""} (on “${memory.strategicQuestion}”).`,
++      [`strategy-memory:${memory.id}`],
++      [chosen.userConfirmed ? "CURRENT_AUTHORITATIVE" : "TENTATIVE"],
++    );
++  }
++  const conclusion = getStrategyConclusionForContext();
++  if (conclusion?.trim()) {
++    return answer(q, `The Strategy Chamber's last conclusion: ${conclusion.trim()} (its advice — not something you've confirmed).`, ["strategy:conclusion"], ["SPECIALIST_OPINION"]);
++  }
++  return answer(q, NOTHING_SAVED.strategy!, [], ["UNKNOWN"]);
++}
++
++// ── Who knows what (the Board's and the Chamber's own topic selectors) ──────
++
++function topicOf(text: string): string {
++  const m = text.match(/\b(?:about|with|on|for)\s+(.+?)[?.!]*$/i);
++  return (m?.[1] ?? text).trim();
++}
++
++function firstSentenceWith(bio: string, re: RegExp): string {
++  const sentences = bio.split(/(?<=[.!?])\s+/);
++  return sentences.find((s) => re.test(s)) ?? sentences[sentences.length - 1] ?? "";
++}
++
++export function whoKnows(text: string): string {
++  const topic = topicOf(text);
++  const lines: string[] = [];
++  const scores = allDomainScores(inferMaterialDimensions({ memberText: topic, suppressPreDeliberationQuestion: true }))
++    .filter((s) => s.score > 0)
++    .sort((a, b) => b.score - a.score);
++  if (scores[0]) {
++    const identity = DIRECTOR_IDENTITIES[scores[0].director];
++    const bring = firstSentenceWith(identity.memberBio, /\bBring (?:her|him|them)\b/);
++    lines.push(`On your Board: ${identity.displayName} (${identity.memberDescriptor}). ${bring}`.trim());
++  }
++  const chamber = resolveExpertiseCategory(topic);
++  const member = chamber ? CHAMBER_MEMBERS.find((m) => m.id === chamber.memberId) : null;
++  if (member) lines.push(`In the Chamber of Momentum: ${member.displayName} (${member.specialty}).`);
++  const strategy = matchStrategyTypesFromText(topic)[0];
++  if (strategy) lines.push(`The Strategy Chamber can work through it with you as ${strategy.type.name}.`);
++  if (!lines.length) return `I'm not sure who fits “${topic}” best yet — tell me a little more about what you're trying to figure out?`;
++  return lines.join("\n");
++}
++
++// ── What Spark can do (the OB-5 capability projection + availability map) ──
++
++export function whatSparkCanDo(text: string): string {
++  const t = text.trim();
++  const unavailable = unavailableNamed(t);
++  if (unavailable.length) {
++    return `Not yet — I can't add or change anything on your ${unavailable[0]} from here. I can set a reminder or a Rhythm for it instead.`;
++  }
++  if (WHERE_LIVES_RE.test(t)) {
++    const subject = subjectOf(t);
++    const id = subject === "business_model" ? "lmc" : subject === "avatar" ? "client_avatars" : subject === "events" ? "events" : subject === "visual" ? "visual_thinking" : subject === "research" ? "research" : subject === "board" ? "board" : subject === "strategy" ? "strategy_chamber" : "claire";
++    const projection = listCapabilityProjections().find((p) => p.id === id);
++    if (projection) return `${projection.name}: ${projection.connection.reach}.`;
++  }
++  if (/\bcan'?t\b|\bnot\b/i.test(t)) {
++    const limits = listCapabilityProjections()
++      .filter((p) => p.connection.cannot)
++      .map((p) => `• ${p.name}: ${p.connection.cannot}`);
++    const notYet = listCapabilityAvailability()
++      .filter(([, availability]) => availability === "not_available_from_chat")
++      .map(([cap]) => `• Add or change things on your ${cap}.`);
++    return ["Here's what I can't do yet:", ...notYet, ...limits].join("\n");
++  }
++  const connected = listCapabilityProjections().filter((p) => isOneBrainConnected(p.id) || CAPABILITY_CONNECTIONS[p.id].handoff === "owner_seam");
++  const names = connected.map((p) => p.name);
++  const board = Object.keys(DIRECTOR_IDENTITIES).length;
++  return `Here's what I can help with — just tell me what you need and I'll bring in the right place: ${names.join(", ")}. You also have a Board of ${board} directors and ${CHAMBER_MEMBERS.length} Chamber specialists to think with.`;
++}
++
++/** "It lowers…" → "it lowers…" when joined mid-sentence (never an acronym). */
++function lowerFirst(text: string): string {
++  return /^[A-Z][a-z]/.test(text) ? text[0].toLowerCase() + text.slice(1) : text;
++}
++
++function answer(q: KnowQuestion, reply: string, sourceRefs: string[], truthTypes: KnowTruthType[]): KnowPlan {
++  return { kind: "answer", reply, question: q, sourceRefs, truthTypes };
++}
+diff --git a/lib/oneBrainCapability/knowQuestion.ts b/lib/oneBrainCapability/knowQuestion.ts
+new file mode 100644
+index 00000000..ae416146
+--- /dev/null
++++ b/lib/oneBrainCapability/knowQuestion.ts
+@@ -0,0 +1,104 @@
++/**
++ * OB-6 KNOW — UNDERSTAND: is this a question about what Spark already knows,
++ * which version of the truth does it ask for, and about which existing source?
++ *
++ * Deliberately light (lexicon + owner recognizers only): capability selection
++ * imports it on every turn. Retrieval and answers live in ./know.
++ */
++
++import type { SituationKnowLens } from "@/lib/relevantSituation/types";
++import {
++  KNOW_HISTORY_RE,
++  KNOW_REASON_RE,
++  KNOW_RECALL_RE,
++  WH_OPEN_RE,
++} from "@/lib/conversationBoundaryLexicon";
++import { detectClaireTopic } from "@/lib/businessProfileFounder/claireTopicResponses";
++import { listCapabilityAvailability } from "@/lib/memberIntent/executableRequest";
++import { namesBusinessModel, questionAboutCapability } from "./readPath";
++
++// ── UNDERSTAND: is this a question about what Spark already knows? ─────────
++
++export type KnowSubject =
++  | "board"
++  | "research"
++  | "events"
++  | "strategy"
++  | "visual"
++  | "business_model"
++  | "avatar"
++  | "pricing"
++  | "work"
++  | "decisions"
++  | "business"
++  | "specialists"
++  | "capabilities";
++
++export type KnowQuestion = { subject: KnowSubject; lens: SituationKnowLens };
++
++/**
++ * Each existing source, named by the owner's own record noun (the thing the
++ * member calls it). Order = specificity: the most specific owner wins.
++ */
++const SUBJECT_NOUNS: readonly [Exclude<KnowSubject, "specialists" | "capabilities">, RegExp][] = [
++  ["board", /\b(?:board|directors?)\b/i],
++  ["research", /\bresearch/i],
++  ["events", /\bevents?\b/i],
++  ["strategy", /\bstrateg/i],
++  ["visual", /\b(?:visual(?:ly)?|mapp?(?:ed|ing)?|mind\s*maps?|diagrams?)\b/i],
++  ["avatar", /\b(?:avatar|ideal client|client avatar)\b/i],
++  ["pricing", /\b(?:charg\w*|pric\w*|cost\w*)\b/i],
++  ["work", /\b(?:working on|left off|were we (?:doing|on))\b/i],
++  ["decisions", /\b(?:decid\w*|settled|agreed|landed on)\b/i],
++  ["business", /\b(?:(?:my|our) business|about me)\b/i],
++];
++
++function isQuestionForm(t: string): boolean {
++  return WH_OPEN_RE.test(t) || /\?\s*$/.test(t) || /\bdidn'?t\s+we\b|\b(?:remind|tell) me what\b/i.test(t);
++}
++
++function lensOf(t: string): SituationKnowLens {
++  if (KNOW_REASON_RE.test(t)) return "reason";
++  if (KNOW_HISTORY_RE.test(t)) return "history";
++  return "current";
++}
++
++const WHO_KNOWS_RE = /\bwho\b[^?.!]{0,40}\b(?:knows?|should help|can help|could help|is best|expert)\b|\bwhich\s+(?:specialist|director|expert|board member|chamber member)\b/i;
++const CAN_YOU_RE = /^(?:(?:so|and|ok(?:ay)?|hey)[,\s]+)*(?:can|could|will|would)\s+you\b|\bare you able to\b/i;
++const SELF_SCOPE_RE = /\bwhat\s+(?:else\s+)?(?:can|could)\s+you\s+(?:do|help)\b|\bwhat\s+tools\b|\bwhat\s+can'?t\s+you\b|\bwhat\s+(?:can|could)\s+(?:spark|you)\s+not\b/i;
++export const WHERE_LIVES_RE = /\bwhere\s+(?:does|do|is|are|can i find)\b[^?.!]{0,40}\b(?:live|kept|stored|saved|find)\b|\bwhere\s+(?:is|are)\s+(?:my|our)\b/i;
++
++/** Read the member's question; null when it is not a KNOW question. */
++export function readKnowQuestion(text: string): KnowQuestion | null {
++  const t = text.trim();
++  if (!t) return null;
++  // Asking what a capability DOES is OB-5C's explain path, not a recall.
++  if (questionAboutCapability(t)) return null;
++  if (WHO_KNOWS_RE.test(t)) return { subject: "specialists", lens: "current" };
++  if (SELF_SCOPE_RE.test(t)) return { subject: "capabilities", lens: "current" };
++  if (CAN_YOU_RE.test(t) && unavailableNamed(t).length) return { subject: "capabilities", lens: "current" };
++  if (WHERE_LIVES_RE.test(t) && subjectOf(t)) return { subject: "capabilities", lens: "current" };
++  if (!isQuestionForm(t)) return null;
++  const lens = lensOf(t);
++  if (!KNOW_RECALL_RE.test(t) && lens === "current") return null;
++  const subject = subjectOf(t);
++  return subject ? { subject, lens } : null;
++}
++
++/** Capabilities the availability map says are NOT available from chat, named in the text (by the map's own names). */
++export function unavailableNamed(t: string): string[] {
++  return listCapabilityAvailability()
++    .filter(([cap, availability]) => availability === "not_available_from_chat" && new RegExp(`\\b${cap}s?\\b`, "i").test(t))
++    .map(([cap]) => cap);
++}
++
++export function subjectOf(t: string): Exclude<KnowSubject, "specialists" | "capabilities"> | null {
++  if (namesBusinessModel(t) || /\bliving model\b/i.test(t)) return "business_model";
++  if (detectClaireTopic(t) === "people-i-help") return "avatar";
++  for (const [subject, noun] of SUBJECT_NOUNS) if (noun.test(t)) return subject;
++  // "Why did we change that?" / "What was the old version?" — the thing is the
++  // business record the conversation is about.
++  if (KNOW_REASON_RE.test(t) || KNOW_HISTORY_RE.test(t)) return "business";
++  return null;
++}
++
+diff --git a/lib/oneBrainCapability/projection.ts b/lib/oneBrainCapability/projection.ts
+index b9aa7d8a..f24a0e1f 100644
+--- a/lib/oneBrainCapability/projection.ts
++++ b/lib/oneBrainCapability/projection.ts
+@@ -208,8 +208,13 @@ function estateSelfKnowledgeLines(): string[] {
+   const rooms = getCanonLiveRooms()
+     .map((r) => `${r.name} (${firstSentence(r.purpose).replace(/\.$/, "")})`)
+     .join("; ");
++  // OB-6 — each Director's own "bring her/him when…" line (from the identity
++  // bio) so "who on my Board knows about X?" is answerable from the canon.
+   const directors = Object.values(DIRECTOR_IDENTITIES)
+-    .map((d) => `${d.displayName} — ${d.memberDescriptor}`)
++    .map((d) => {
++      const bring = d.memberBio.split(/(?<=[.!?])\s+/).find((sentence) => /\bBring (?:her|him|them)\b/.test(sentence));
++      return `${d.displayName} — ${d.memberDescriptor}${bring ? ` (${bring.replace(/\.$/, "")})` : ""}`;
++    })
+     .join("; ");
+   const chamber = CHAMBER_MEMBERS.map((m) => `${m.displayName} (${m.specialty})`).join("; ");
+   return [
+diff --git a/lib/oneBrainCapability/readPath.ts b/lib/oneBrainCapability/readPath.ts
+index 88971b7f..543f9fe2 100644
+--- a/lib/oneBrainCapability/readPath.ts
++++ b/lib/oneBrainCapability/readPath.ts
+@@ -138,6 +138,11 @@ function isExploring(t: string): boolean {
+  * Run the existing owner recognizers on the member's text. Pure reads — no
+  * owner state is written. Order is irrelevant; selection ranks by strength.
+  */
++/** OB-6 KNOW — the member named their business model (the LMC's canonical object). */
++export function namesBusinessModel(text: string): boolean {
++  return Boolean(LMC_OBJECT_RE?.test(text));
++}
++
+ export function recognizeCapabilities(text: string): CapabilityRecognition[] {
+   const t = text.trim();
+   if (!t) return [];
+diff --git a/lib/oneBrainCapability/selectCapability.ts b/lib/oneBrainCapability/selectCapability.ts
+index efd2bec1..2f249641 100644
+--- a/lib/oneBrainCapability/selectCapability.ts
++++ b/lib/oneBrainCapability/selectCapability.ts
+@@ -28,6 +28,7 @@ import {
+ } from "@/lib/conversationBoundaryRoomGate";
+ import { isOneBrainConnected, type OneBrainCapabilityId } from "./connections";
+ import { questionAboutCapability, recognizeCapabilities, type CapabilityRecognition } from "./readPath";
++import { readKnowQuestion } from "./knowQuestion";
+ 
+ export type CapabilitySelection =
+   | { kind: "route"; id: OneBrainCapabilityId; recognition: CapabilityRecognition }
+@@ -44,7 +45,9 @@ export type CapabilitySelection =
+         | "relation"
+         | "held_on_thread"
+         | "discussion"
+-        | "no_capability";
++        | "no_capability"
++        /** OB-6: the member asked what Spark already knows — KNOW answers, no owner is opened. */
++        | "knowledge";
+     };
+ 
+ /** Kill switch: OB-5 capability connection (default on). */
+@@ -61,6 +64,18 @@ export function resolveCapabilitySelection(input: {
+   correctionBinding: CorrectionBinding | null;
+ }): CapabilitySelection | null {
+   if (!isCapabilityConnectEnabled()) return null;
++  // OB-6 KNOW — a question about what Spark already knows ("What did the Board
++  // say?", "What did we originally plan to charge?") is answered from the
++  // owners' records, never by opening a room. Only a live pending reply or a
++  // correction owns the turn first; a follow-up question held on the thread or
++  // asked as discussion is still a KNOW question. "What does X do?" stays OB-5C's.
++  const bound =
++    (input.pendingBinding && input.pendingBinding.kind !== "none") ||
++    (input.correctionBinding && input.correctionBinding.kind !== "none");
++  if (!bound && !questionAboutCapability(input.userText) && readKnowQuestion(input.userText)) {
++    return { kind: "none", reason: "knowledge" };
++  }
++
+   // Boundary's meaning, read through the One Brain gate (the one reader).
+   const eligibility = capabilityTurnEligibility(input);
+   if (eligibility.kind === "not_eligible" && eligibility.reason === "discussion") {
+@@ -83,6 +98,7 @@ export function resolveCapabilitySelection(input: {
+   const about = questionAboutCapability(input.userText);
+   if (about) return { kind: "explain", id: about };
+ 
++
+   const recognitions = applyOwnershipRules(recognizeCapabilities(input.userText));
+   // A significant decision that is ALSO explicit strategy work: both Founder
+   // owners fit, so ask once (short clarification), never guess.
+diff --git a/lib/oneBrainCertification/capabilityConnect.ob5.test.ts b/lib/oneBrainCertification/capabilityConnect.ob5.test.ts
+index 2b6c4bb6..a8ace1ee 100644
+--- a/lib/oneBrainCertification/capabilityConnect.ob5.test.ts
++++ b/lib/oneBrainCertification/capabilityConnect.ob5.test.ts
+@@ -531,8 +531,9 @@ describe("Safety: ambiguity, discussion, unsupported, questions, stale, clarific
+     expect(memberSnapshot()).toBe(before);
+   });
+ 
+-  it("capability question → no route; the model answers from the projection", () => {
+-    expect(kindOf(turn("What can you do?", 1).selection)).toBe("none:no_capability");
++  // OB-6: "What can you do?" is answered by KNOW from the same projection (no room opens).
++  it("capability question → no route; answered from the capability projection", () => {
++    expect(kindOf(turn("What can you do?", 1).selection)).toBe("none:knowledge");
+     expect(buildCapabilityPromptBlock()).toMatch(/Reach:/);
+   });
+ 
+diff --git a/lib/oneBrainCertification/finalConnection.ob5f.test.ts b/lib/oneBrainCertification/finalConnection.ob5f.test.ts
+index 84439244..2b786273 100644
+--- a/lib/oneBrainCertification/finalConnection.ob5f.test.ts
++++ b/lib/oneBrainCertification/finalConnection.ob5f.test.ts
+@@ -329,14 +329,14 @@ const MATRIX: {
+   returns: "main_chat" | "originating_room";
+ }[] = [
+   { id: "claire", text: "I need to update what my business does.", handoff: "claire_topic", returns: "main_chat" },
+-  { id: "client_avatars", text: "Help me build my client avatar.", handoff: "avatar_builder", returns: "originating_room" },
+-  { id: "lmc", text: "Let's look at my business model.", handoff: "lmc_open", returns: "originating_room" },
++  { id: "client_avatars", text: "Help me build my client avatar.", handoff: "avatar_builder", returns: "main_chat" },
++  { id: "lmc", text: "Let's look at my business model.", handoff: "lmc_open", returns: "main_chat" },
+   { id: "board", text: "I have a big decision to make.", handoff: "board_invite", returns: "main_chat" },
+   { id: "research", text: "Research this for me.", handoff: "research_launch", returns: "main_chat" },
+-  { id: "events", text: "I'm planning an event and don't know where to start.", handoff: "events_doorway", returns: "originating_room" },
++  { id: "events", text: "I'm planning an event and don't know where to start.", handoff: "events_doorway", returns: "main_chat" },
+   { id: "strategy_chamber", text: "I need to rethink my pricing.", handoff: "strategy_entry", returns: "main_chat" },
+   { id: "plan_my_day", text: "Help me plan my day.", handoff: "day_designer", returns: "main_chat" },
+-  { id: "visual_thinking", text: "I need to see this visually.", handoff: "visual_open", returns: "originating_room" },
++  { id: "visual_thinking", text: "I need to see this visually.", handoff: "visual_open", returns: "main_chat" },
+   { id: "rhythms", text: "I want to review my numbers every Monday at 9am.", handoff: "owner_seam", returns: "main_chat" },
+   { id: "create", text: "Help me write a blog post about burnout.", handoff: "owner_seam", returns: "main_chat" },
+ ];
+@@ -368,9 +368,12 @@ describe("The connected capability set — ordinary conversation reaches every o
+     expect(r.plan?.kind === "execute" || r.plan?.kind === "offer").toBe(true);
+   });
+ 
+-  it("partially connected owners say so (no chat summary of their result yet)", () => {
++  // OB-6 closed the five partial returns: each owner's result is read back into
++  // chat by KNOW (certified in know.ob6.test.ts), so the rows now say connected.
++  it("the five formerly partial owners return their results to chat (OB-6)", () => {
+     for (const id of ["events", "strategy_chamber", "visual_thinking", "client_avatars", "lmc"] as const) {
+-      expect(CAPABILITY_CONNECTIONS[id].status).toBe("partially_connected");
++      expect(CAPABILITY_CONNECTIONS[id].status).toBe("connected");
++      expect(CAPABILITY_CONNECTIONS[id].returnPath).toBe("main_chat");
+     }
+   });
+ });
+diff --git a/lib/oneBrainCertification/know.ob6.test.ts b/lib/oneBrainCertification/know.ob6.test.ts
+new file mode 100644
+index 00000000..2d5c7bd5
+--- /dev/null
++++ b/lib/oneBrainCertification/know.ob6.test.ts
+@@ -0,0 +1,585 @@
++// @vitest-environment jsdom
++/**
++ * OB-6 — KNOW certification: Unified Knowledge Access.
++ *
++ * Every fixture is written through the OWNER's own writer (Business
++ * Understanding writer, avatar store, event store, Strategy work-item store,
++ * Board delivery builder, research persistence, Decision Ledger, Visual Focus
++ * intake). KNOW reads them back through the shared Situation read path, labels
++ * the truth type, applies deterministic precedence and answers in member
++ * language. Ordinary member questions only.
++ */
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { getOrCreateConversationSpine } from "@/lib/conversationSession/spine";
++import { resetConversationSessionMemoryForTests } from "@/lib/conversationSession/store";
++import { captureBoundaryPreTurnSnapshot, resolveTurnBoundaryDecision } from "@/lib/conversationBoundaryInputs";
++import { resolveCorrectionBinding, resolvePendingBinding } from "@/lib/conversationBoundaryRoomGate";
++import { resolveCapabilitySelection, type CapabilitySelection } from "@/lib/oneBrainCapability/selectCapability";
++import { planKnowTurn, readKnowQuestion, truthTypeOf, type KnowPlan } from "@/lib/oneBrainCapability/know";
++import { buildEstateSelfKnowledgeBlock } from "@/lib/oneBrainCapability/projection";
++import { CAPABILITY_CONNECTIONS } from "@/lib/oneBrainCapability/connections";
++import { gateRelevantSituationForConversation } from "@/lib/conversationGate/gateRelevantSituationForConversation";
++import { retrieveRelevantSituation } from "@/lib/relevantSituation";
++import { saveQuantityFact } from "@/lib/profile/businessUnderstanding/writeHelpers";
++import { saveAvatar, saveBusinessProfile } from "@/lib/companionStore";
++import { upsertEventRecord } from "@/lib/eventsIntelligence/eventRecordStore";
++import { createEmptyEventSections } from "@/lib/eventsIntelligence/eventSections";
++import type { EventRecord } from "@/lib/eventsIntelligence/types";
++import {
++  __resetStrategyChamberStoresForTests,
++  createStrategyWorkItem,
++  updateStrategyWorkItem,
++} from "@/lib/strategyChamber/strategyWorkItemStore";
++import { saveResearchCollectionRecord } from "@/lib/researchLibrary/persistence";
++import { recordDecision } from "@/lib/decisionLedger";
++import { resetDecisionLedgerForTests } from "@/lib/decisionLedger/store";
++import {
++  createEmptyBoardIntakeDraft,
++  upsertBoardDirectorDiscussion,
++} from "@/lib/board/boardDiscussion/boardDirectorDiscussion";
++import { createBoardDiscussionFromCertifiedDelivery } from "@/lib/board/delivery/createBoardDiscussionFromCertifiedDelivery";
++import type { CertifiedBoardDelivery } from "@/lib/board/delivery/types";
++import { buildMockSynthesisResult } from "@/lib/board/reconstructed/synthesis/synthesisFixtures";
++import { assembleBoardSynthesisRequest } from "@/lib/board/reconstructed/synthesis/assembleSynthesisInput";
++import { createBoardDeliberationSession } from "@/lib/board/reconstructed/orchestration/sparkBoardOrchestrator";
++import { SYNTHESIS_CERT_PRICING } from "@/lib/board/reconstructed/certification/synthesisCertCases";
++import {
++  bringConversationIntoLooseThinking,
++  consumeConversationVisualHandoffIntoLooseThinking,
++} from "@/lib/visualFocus/looseThinking/bridgeConversationVisualHandoff";
++
++const HOLD = "NEXT_PUBLIC_BOUNDARY_MEANING_HOLD";
++let saved: string | undefined;
++beforeEach(() => {
++  saved = process.env[HOLD];
++  delete process.env[HOLD];
++  localStorage.clear();
++  sessionStorage.clear();
++  __resetStrategyChamberStoresForTests();
++  resetDecisionLedgerForTests();
++  resetConversationSessionMemoryForTests();
++  getOrCreateConversationSpine();
++});
++afterEach(() => {
++  if (saved === undefined) delete process.env[HOLD];
++  else process.env[HOLD] = saved;
++});
++
++// ── fixtures, each through the owner's own writer ───────────────────────────
++
++const PRICE_REASON = "Pilot buyers said $99 was too steep for a first workshop.";
++
++function seedPriceHistory() {
++  const first = saveQuantityFact({
++    path: "offer:workshop.price",
++    quantity: { measure: "price", value: 99, unit: "USD", provenance: "MEMBER_STATED" },
++  });
++  if (!first.ok) throw new Error(first.reason);
++  const second = saveQuantityFact({
++    id: first.value.id,
++    path: "offer:workshop.price",
++    quantity: { measure: "price", value: 49, unit: "USD", provenance: "MEMBER_STATED" },
++    changeReason: PRICE_REASON,
++  });
++  if (!second.ok) throw new Error(second.reason);
++}
++
++function seedAvatar() {
++  saveAvatar({
++    name: "New managers",
++    who: "First-time managers at mid-size companies",
++    painPoints: "Promoted without training; drowning in one-on-ones",
++    goals: "Run a calm team without burning out",
++    isPrimary: true,
++  } as never);
++}
++
++function seedEvent(overrides: Partial<EventRecord> = {}) {
++  const now = new Date().toISOString();
++  upsertEventRecord({
++    id: "evt-spring",
++    title: "Spring Leadership Workshop",
++    eventType: "workshop",
++    eventTypeLabel: "Workshop",
++    purpose: "Help new managers run better one-on-ones",
++    audience: "New managers",
++    outcomes: "",
++    format: "in_person",
++    dates: "April 12",
++    venue: "",
++    budget: "",
++    lifecyclePhase: "planning",
++    runtimeState: "PLANNING",
++    sections: createEmptyEventSections({ event_type: "Workshop" }),
++    tasks: [],
++    milestones: [],
++    decisions: [
++      { decision: "Venue", resolved: true, resolvedValue: "Downtown library" },
++      { decision: "Catering", resolved: false },
++    ],
++    dependencies: [],
++    owners: [],
++    memberRoles: [],
++    eventOwnership: "self",
++    nextAction: "Confirm the speaker list",
++    activeQuestionId: null,
++    conversationContext: "",
++    projectHomeId: null,
++    companionProjectId: null,
++    canonicalWorkId: "evt-spring",
++    createdAt: now,
++    updatedAt: now,
++    ...overrides,
++  } as EventRecord);
++}
++
++function seedStrategy(confirmed: boolean) {
++  const item = createStrategyWorkItem({ entryReason: "member_request", title: "Pricing for the workshop" } as never);
++  updateStrategyWorkItem(item.id, {
++    decisionStatement: "How should I price the workshop?",
++    chosenDirection: "Keep the $49 entry workshop and add a $300 cohort",
++    decisionRationale: "It lowers the first yes and gives a path up",
++    status: "direction_chosen",
++    decisionRecordConfirmed: confirmed,
++  } as never);
++}
++
++function seedResearch() {
++  const now = new Date().toISOString();
++  saveResearchCollectionRecord({
++    id: "col-pricing",
++    title: "Workshop pricing benchmarks",
++    topic: "workshop pricing",
++    purpose: "benchmarks",
++    researchQuestion: "What do comparable workshops charge?",
++    intendedOutcome: null,
++    sourceExperience: "conversation",
++    sourceEntityId: null,
++    returnContext: null,
++    status: "active",
++    sourceSelectionIds: [],
++    researchSessionIds: [],
++    linkedProjectIds: [],
++    summary: "Comparable workshops charge $120–$180.",
++    findings: [
++      {
++        id: "f1",
++        title: "Benchmark",
++        content: "Comparable half-day manager workshops charge $120–$180 per seat.",
++        evidenceBasis: "interpretation",
++      },
++    ],
++    facts: [], themes: [], examples: [], options: [], comparisons: [], recommendations: [],
++    implications: [], risks: [], cautions: [], questions: [], conflicts: [], uncertainties: [],
++    gaps: [],
++    createdAt: now,
++    updatedAt: now,
++  } as never);
++}
++
++function seedBoard() {
++  const draft = createEmptyBoardIntakeDraft([], { source: "chat_invite" });
++  draft.decision = "Should I raise the workshop price to $99?";
++  const session = createBoardDeliberationSession({ memberMessage: draft.decision, materialDimensions: {} });
++  const request = assembleBoardSynthesisRequest({
++    ...session,
++    firstPassResults: SYNTHESIS_CERT_PRICING.firstPasses,
++    phase: "STOP_REVIEW",
++    stopReviewResult: { outcome: "READY_FOR_SYNTHESIS", rationale: "test" },
++  });
++  const synthesis = { ...buildMockSynthesisResult(request), strongestDissent: "Raising too early could stall first sales." };
++  const delivery = {
++    synthesis,
++    memberFacingText: "The Board examined the price.",
++    presentation: {
++      headline: "Price question",
++      strongestCase: "Test first.",
++      memberAgencyLine: "You decide.",
++      nextUsefulAction: "",
++      primaryText: "The Board examined the price.",
++      continuationPrompts: [],
++    },
++    directorSummaries: [],
++  } as unknown as CertifiedBoardDelivery;
++  upsertBoardDirectorDiscussion(createBoardDiscussionFromCertifiedDelivery(draft, delivery));
++}
++
++const MEMBER_STORES = [
++  "companion-business-profile-v1",
++  "companion-ideal-clients-v1",
++  "companion-projects-v1",
++  "companion-reminders-v1",
++  "spark.board.director-discussions.v1",
++  "companion-research-library-collections-v1",
++  "companion-decision-ledger-v1",
++  "companion-events-intelligence-v1",
++  "companion-visual-focus-maps-v1",
++];
++const memberSnapshot = () => MEMBER_STORES.map((k) => localStorage.getItem(k)).join("\u0001");
++
++const reply = (plan: KnowPlan | null) => (plan?.kind === "answer" ? plan.reply : "");
++
++/** The page's One Brain step for this turn: selection (KNOW questions yield). */
++function selectionFor(text: string, lastAssistantText = ""): CapabilitySelection | null {
++  const snap = captureBoundaryPreTurnSnapshot();
++  const decision = resolveTurnBoundaryDecision({ userText: text, turn: 0, lastAssistantText, snapshot: snap });
++  const pb = resolvePendingBinding({ decision, pending: snap.pendingOwner, currentTurn: 1 });
++  const cb = resolveCorrectionBinding({ decision, pending: snap.pendingOwner, receipt: snap.receipt, currentTurn: 1 });
++  return resolveCapabilitySelection({ decision, userText: text, pendingBinding: pb, correctionBinding: cb });
++}
++
++// ── 1. Current / historical / reason (the pricing test) ──────────────────────
++
++describe("Current, historical and reason truth — from the Business Understanding temporal chain", () => {
++  it("'What are we charging now?' → the current price only, never the superseded one", () => {
++    seedPriceHistory();
++    const plan = planKnowTurn("What are we charging now?");
++    expect(reply(plan)).toMatch(/\$49/);
++    expect(reply(plan)).not.toMatch(/\$99/);
++    expect(plan?.kind === "answer" && plan.truthTypes).toEqual(["CURRENT_AUTHORITATIVE"]);
++  });
++
++  it("'What did we originally plan to charge?' → the earlier version, marked not current, plus now", () => {
++    seedPriceHistory();
++    const text = reply(planKnowTurn("What did we originally plan to charge?"));
++    expect(text).toMatch(/Earlier: price: \$99 \(no longer current\)/);
++    expect(text).toMatch(/Now: price: \$49/);
++  });
++
++  it("history: 'Now' is what replaced the earlier version (its chain), even beside a pricing decision (found in the browser)", () => {
++    seedPriceHistory();
++    recordDecision({
++      scope: { kind: "business", id: "business", label: "Business" },
++      key: "entry-pricing",
++      label: "Entry pricing",
++      value: "Keep the entry workshop at $49 until 20 sales",
++      origin: "member_authored",
++    });
++    expect(reply(planKnowTurn("What did we originally plan to charge?"))).toMatch(/• Now: price: \$49$/m);
++  });
++
++  it("a follow-up KNOW question right after a KNOW answer is still KNOW (held-on-thread follow-ups too; found in the browser)", () => {
++    seedPriceHistory();
++    const first = reply(planKnowTurn("What are we charging now?"));
++    expect(selectionFor("What did we originally plan to charge?", first)).toMatchObject({ kind: "none", reason: "knowledge" });
++    expect(selectionFor("Why did we change the price?", first)).toMatchObject({ kind: "none", reason: "knowledge" });
++  });
++
++  it("'Why did we change the price?' → the member's own recorded reason, verbatim", () => {
++    seedPriceHistory();
++    const text = reply(planKnowTurn("Why did we change the price?"));
++    expect(text).toContain(PRICE_REASON);
++    expect(text).toMatch(/from price: \$99 to price: \$49/);
++  });
++
++  it("no recorded reason → says so and never invents one", () => {
++    const first = saveQuantityFact({ path: "offer:coaching.price", quantity: { measure: "price", value: 200, unit: "USD", provenance: "MEMBER_STATED" } });
++    if (!first.ok) throw new Error(first.reason);
++    saveQuantityFact({ id: first.value.id, path: "offer:coaching.price", quantity: { measure: "price", value: 250, unit: "USD", provenance: "MEMBER_STATED" } });
++    const text = reply(planKnowTurn("Why did we change the price?"));
++    expect(text).toMatch(/no reason on record — I won't guess/);
++  });
++
++  it("'What was the old version?' → history lens on the business record", () => {
++    seedPriceHistory();
++    expect(reply(planKnowTurn("What was the old version?"))).toMatch(/Earlier: price: \$99/);
++  });
++
++  it("the reason and the earlier value now travel on the read path (were dropped before OB-6)", () => {
++    seedPriceHistory();
++    const slice = retrieveRelevantSituation({
++      intent: { memberStatement: "why did the price change", aim: "think" },
++      consumerRole: "conversation",
++      lens: "reason",
++      sources: ["business"],
++    });
++    const current = slice.items.find((i) => i.summary === "price: $49");
++    const earlier = slice.items.find((i) => i.summary === "price: $99");
++    expect(current?.temporal).toMatchObject({ state: "current", changeReason: PRICE_REASON });
++    expect(earlier?.temporal).toMatchObject({ state: "superseded" });
++    expect(truthTypeOf(earlier!)).toBe("HISTORICAL_SUPERSEDED");
++  });
++
++  it("the chat model gets the same labels and a fixed precedence rule", () => {
++    seedPriceHistory();
++    const gate = gateRelevantSituationForConversation({
++      memberStatement: "What did we originally plan to charge?",
++      lens: "history",
++      sources: ["business"],
++    });
++    expect(gate.promptBlock).toMatch(/price: \$99 \[earlier version — superseded, not current\]/);
++    expect(gate.promptBlock).toMatch(/price: \$49 \[member-established\]/);
++    expect(gate.promptBlock).toMatch(/Truth precedence: a current member-established line wins/);
++  });
++
++  it("current-lens retrieval never leaks the superseded value (default, unchanged Atomic 3 behavior)", () => {
++    seedPriceHistory();
++    const slice = retrieveRelevantSituation({ intent: { memberStatement: "workshop price", aim: "think" }, consumerRole: "conversation" });
++    expect(slice.items.some((i) => i.summary.includes("$99"))).toBe(false);
++  });
++});
++
++// ── 2. The five formerly partial returns + Board / Research ──────────────────
++
++describe("Owner results return to conversation (read from each owner's own store)", () => {
++  it("Avatar: 'What do we know about my ideal client?'", () => {
++    seedAvatar();
++    const text = reply(planKnowTurn("What do we know about my ideal client?"));
++    expect(text).toMatch(/New managers — First-time managers at mid-size companies/);
++  });
++
++  it("LMC: 'What does my business model say now?' → per area, confirmed lines", () => {
++    seedPriceHistory();
++    seedAvatar();
++    const text = reply(planKnowTurn("What does my business model say now?"));
++    expect(text).toMatch(/business model looks right now/);
++    expect(text).toMatch(/How Money Comes In: price: \$49/);
++    expect(text).not.toMatch(/\$99/);
++  });
++
++  it("Events: 'What event am I working on?' → the active event's state", () => {
++    seedEvent();
++    const text = reply(planKnowTurn("What event am I working on?"));
++    expect(text).toMatch(/Spring Leadership Workshop \(Workshop\)/);
++    expect(text).toMatch(/next: Confirm the speaker list/);
++    expect(text).toMatch(/decided: Downtown library/);
++    expect(text).toMatch(/1 decision still open/);
++  });
++
++  it("Events, stale: a canceled event is history, never 'what you're working on'", () => {
++    seedEvent({ runtimeState: "CANCELED" } as Partial<EventRecord>);
++    const plan = planKnowTurn("What event am I working on?");
++    expect(plan?.kind === "answer" && plan.truthTypes).not.toContain("PLANNED");
++    expect(reply(plan)).not.toMatch(/Here's the event you're working on/);
++  });
++
++  it("Strategy, settled: 'What strategy did we settle on?' → the confirmed direction and why", () => {
++    seedStrategy(true);
++    const plan = planKnowTurn("What strategy did we settle on?");
++    expect(reply(plan)).toMatch(/You settled on: Keep the \$49 entry workshop and add a \$300 cohort — because it lowers the first yes/);
++    expect(plan?.kind === "answer" && plan.truthTypes).toEqual(["CURRENT_AUTHORITATIVE"]);
++  });
++
++  it("Strategy, tentative vs settled: a chosen-but-unconfirmed direction is never 'settled'", () => {
++    seedStrategy(false);
++    const plan = planKnowTurn("What strategy did we settle on?");
++    expect(reply(plan)).toMatch(/not confirmed yet/);
++    expect(plan?.kind === "answer" && plan.truthTypes).toEqual(["TENTATIVE"]);
++  });
++
++  it("Visual Thinking: 'What did we map out?' → the saved map and what it holds", () => {
++    bringConversationIntoLooseThinking({ texts: ["Course launch, podcast and three client projects all at once"], title: "My three commitments" });
++    const text = reply(planKnowTurn("What did we map out?"));
++    expect(text).toMatch(/My three commitments/);
++    expect(text).toMatch(/Course launch, podcast and three client projects/);
++  });
++
++  it("Board: 'What did the Board say?' → their view, labelled advice, never a decision", () => {
++    seedBoard();
++    const plan = planKnowTurn("What did the Board say?");
++    expect(reply(plan)).toMatch(/Should I raise the workshop price to \$99\?/);
++    expect(reply(plan)).toMatch(/the Board's view — advice, not a decision/);
++    expect(plan?.kind === "answer" && plan.truthTypes).toContain("SPECIALIST_OPINION");
++  });
++
++  it("Research: 'What did Research find?' → the finding, labelled by its own evidence basis", () => {
++    seedResearch();
++    const text = reply(planKnowTurn("What did Research find?"));
++    expect(text).toMatch(/\$120–\$180/);
++    expect(text).toMatch(/an interpretation, not a sourced finding/);
++  });
++
++  it("Decisions: 'What did we decide about pricing?' → the member's own ledger decision + the current price", () => {
++    seedPriceHistory();
++    recordDecision({
++      scope: { kind: "business", id: "business", label: "Business" },
++      key: "entry-pricing",
++      label: "Entry pricing",
++      value: "Keep the entry workshop at $49 until 20 sales",
++      origin: "member_authored",
++    });
++    const text = reply(planKnowTurn("What did we decide about pricing?"));
++    expect(text).toMatch(/Keep the entry workshop at \$49 until 20 sales \(your decision\)/);
++  });
++
++  it("the five formerly partial owners are connected with a return path to chat", () => {
++    for (const id of ["events", "strategy_chamber", "visual_thinking", "client_avatars", "lmc"] as const) {
++      expect(CAPABILITY_CONNECTIONS[id]).toMatchObject({ status: "connected", returnPath: "main_chat" });
++    }
++  });
++});
++
++// ── 3. Visual Thinking context bridge ────────────────────────────────────────
++
++describe("Visual Thinking receives the conversation (same intake as the Research bridge)", () => {
++  it("the member's own words become studio sources ('Already brought in'), verbatim, member-stated", () => {
++    const map = bringConversationIntoLooseThinking({ texts: ["I'm juggling a course launch and a podcast", "and three client projects"] })!;
++    const sources = Object.values(map.sources ?? {});
++    expect(sources.map((s) => s.text)).toEqual(["I'm juggling a course launch and a podcast", "and three client projects"]);
++    expect(sources.every((s) => s.claimState === "member-stated")).toBe(true);
++    expect(map.mode).toBe("unsorted");
++  });
++
++  it("the studio's hub entry consumes it exactly once", () => {
++    const map = bringConversationIntoLooseThinking({ texts: ["Everything I need to launch in May"] })!;
++    expect(consumeConversationVisualHandoffIntoLooseThinking()?.id).toBe(map.id);
++    expect(consumeConversationVisualHandoffIntoLooseThinking()).toBeNull();
++  });
++
++  it("nothing to bring (only very short words) → nothing is captured", () => {
++    expect(bringConversationIntoLooseThinking({ texts: ["ok", " "] })).toBeNull();
++  });
++});
++
++// ── 4. Specialists and Estate self-knowledge ────────────────────────────────
++
++describe("Who knows what — from the Board's and the Chamber's own selectors", () => {
++  it("'Who on my Board knows about pricing?' → Sofia Ramirez with her own 'bring her when' line", () => {
++    const text = reply(planKnowTurn("Who on my Board knows about pricing?"));
++    expect(text).toMatch(/On your Board: Sofia Ramirez/);
++    expect(text).toMatch(/Bring her when pricing, demand, or willingness to pay is on the line/);
++  });
++
++  it("'Who should help me with cash flow?' → a Board director and a Chamber specialist", () => {
++    const text = reply(planKnowTurn("Who should help me with cash flow?"));
++    expect(text).toMatch(/On your Board: /);
++    expect(text).toMatch(/In the Chamber of Momentum: /);
++  });
++
++  it("the chat model's self-knowledge now carries each Director's expertise line", () => {
++    expect(buildEstateSelfKnowledgeBlock()).toMatch(/Sofia Ramirez — [^;]*Bring her when pricing/);
++  });
++});
++
++describe("Estate self-knowledge — from the capability projection and availability map", () => {
++  it("'What can you help me with?' → the connected capabilities, by name", () => {
++    const text = reply(planKnowTurn("What can you help me with?"));
++    for (const name of ["Board Room", "Research Library", "Events", "Strategy Chamber", "Visual Thinking Studio", "Living Model Canvas"]) {
++      expect(text).toContain(name);
++    }
++  });
++
++  it("'Can you update my calendar?' → an honest no (availability map), with what Spark can do instead", () => {
++    expect(reply(planKnowTurn("Can you update my calendar?"))).toMatch(/^Not yet — I can't add or change anything on your calendar/);
++  });
++
++  it("'What can't you do yet?' → calendar plus each capability's own stated limit", () => {
++    const text = reply(planKnowTurn("What can't you do yet?"));
++    expect(text).toMatch(/Add or change things on your calendar/);
++    expect(text).toMatch(/Reminders: A reminder can't be edited in place from chat/);
++  });
++
++  it("'Where does my business model live?' → the Living Model Canvas", () => {
++    expect(reply(planKnowTurn("Where does my business model live?"))).toMatch(/^Living Model Canvas:/);
++  });
++
++  it("'What does the Strategy Chamber do?' stays OB-5C's explanation (not a recall)", () => {
++    expect(readKnowQuestion("What does the Strategy Chamber do?")).toBeNull();
++  });
++});
++
++// ── 5. Conflicts: deterministic precedence ───────────────────────────────────
++
++describe("Knowledge conflicts — precedence by source authority and status", () => {
++  it("research vs member truth: 'What are we charging now?' answers the member's price, not the benchmark", () => {
++    seedPriceHistory();
++    seedResearch();
++    const text = reply(planKnowTurn("What are we charging now?"));
++    expect(text).toMatch(/\$49/);
++    expect(text).not.toMatch(/\$120/);
++  });
++
++  it("Board opinion vs canonical fact: the Board's view never becomes the current price", () => {
++    seedPriceHistory();
++    seedBoard();
++    const text = reply(planKnowTurn("What are we charging now?"));
++    expect(text).toMatch(/\$49/);
++    expect(text).not.toMatch(/Board/);
++  });
++
++  it("legacy summary vs canonical profile: the old prose price never answers 'now'", () => {
++    seedPriceHistory();
++    saveBusinessProfile({ role: "Coach", goals: [], sells: "Workshops at $99", idealClient: "", traits: [], tone: "", audienceResearch: "" } as never);
++    const text = reply(planKnowTurn("What are we charging now?"));
++    expect(text).toMatch(/\$49/);
++    expect(text).not.toMatch(/\$99/);
++  });
++
++  it("precedence order is fixed: current > planned > memory > research > Board view > tentative > earlier", () => {
++    seedPriceHistory();
++    seedResearch();
++    seedBoard();
++    const slice = retrieveRelevantSituation({
++      intent: { memberStatement: "workshop price", aim: "think" },
++      consumerRole: "conversation",
++      lens: "history",
++      sources: ["business", "research", "board"],
++    });
++    const types = slice.items.map(truthTypeOf);
++    expect(types).toContain("CURRENT_AUTHORITATIVE");
++    expect(types).toContain("HISTORICAL_SUPERSEDED");
++    expect(types).toContain("SPECIALIST_OPINION");
++  });
++});
++
++// ── 6. Unknown stays unknown; negative controls; 0 false actions ─────────────
++
++describe("Honesty, negative controls and 0 false actions", () => {
++  it.each([
++    ["What did the Board say?", /nothing's come back from the Board/],
++    ["What did Research find?", /no saved research yet/],
++    ["What event am I working on?", /don't have an event in progress/],
++    ["What strategy did we settle on?", /no strategy work saved yet/],
++    ["What did we map out?", /haven't saved a visual map yet/],
++    ["What do we know about my ideal client?", /don't have an ideal client saved yet/],
++    ["What are we charging now?", /don't have a confirmed price saved/],
++  ])("empty store: %s → says it has nothing, never invents", (question, expected) => {
++    expect(reply(planKnowTurn(question))).toMatch(expected);
++  });
++
++  it.each([
++    "What is a mind map?",
++    "What should I charge for a workshop?",
++    "Did I leave the stove on?",
++    "I decided to raise my prices.",
++    "What does the board think about hiring a VA while cash is tight?",
++  ])("not a KNOW question: %s", (text) => {
++    expect(readKnowQuestion(text)).toBeNull();
++  });
++
++  it("KNOW questions never open a room: selection yields ('knowledge'); 'What does the board think…' is still the invite", () => {
++    expect(selectionFor("What did the Board say?")).toMatchObject({ kind: "none", reason: "knowledge" });
++    expect(selectionFor("What did Research find?")).toMatchObject({ kind: "none", reason: "knowledge" });
++    expect(selectionFor("What does the board think about hiring a VA while cash is tight?")).toMatchObject({ kind: "route", id: "board" });
++  });
++
++  it("0 false actions: every KNOW read and answer leaves all member stores byte-identical", () => {
++    seedPriceHistory();
++    seedAvatar();
++    seedEvent();
++    seedStrategy(true);
++    seedResearch();
++    seedBoard();
++    const before = memberSnapshot();
++    for (const q of [
++      "What are we charging now?",
++      "What did we originally plan to charge?",
++      "Why did we change the price?",
++      "What did the Board say?",
++      "What did Research find?",
++      "What do we know about my ideal client?",
++      "What event am I working on?",
++      "What strategy did we settle on?",
++      "What did we map out?",
++      "What does my business model say now?",
++      "What do you already know about my business?",
++      "Who on my Board knows about pricing?",
++      "What can you help me with?",
++      "Can you update my calendar?",
++    ]) {
++      planKnowTurn(q);
++      selectionFor(q);
++    }
++    expect(memberSnapshot()).toBe(before);
++  });
++});
+diff --git a/lib/oneBrainCertification/oneBrainConsumers.test.ts b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+index 7ae3074b..2686338b 100644
+--- a/lib/oneBrainCertification/oneBrainConsumers.test.ts
++++ b/lib/oneBrainCertification/oneBrainConsumers.test.ts
+@@ -225,7 +225,9 @@ describe("OB-2 One Brain consumers", () => {
+     expect(page).toMatch(/case "events_doorway":[\s\S]{0,120}openCreateEventsDoorwayCore\(\)/);
+     expect(page).toMatch(/case "strategy_entry":[\s\S]{0,400}openStrategyLibraryCore\(\{ chamberWorkItemId: work\.id \}\)/);
+     expect(page).toMatch(/case "day_designer":[\s\S]{0,300}beginDayDesignerFlow\(\)/);
+-    expect(page).toMatch(/case "visual_open":[\s\S]{0,900}completeVisualThinkingOpen\(/);
++    // OB-6: the conversation first goes through the studio's own source intake
++    // (bringConversationIntoLooseThinking); otherwise its existing open.
++    expect(page).toMatch(/case "visual_open":[\s\S]{0,400}bringConversationIntoLooseThinking\([\s\S]{0,1300}completeVisualThinkingOpen\(/);
+     expect(page).toMatch(/case "avatar_builder":\s*\n\s*startClientAvatarBuilderKickoff\(\)/);
+     expect(page).toMatch(/case "lmc_open":[\s\S]{0,200}openLmc: true/);
+     expect(page).toMatch(/researchReturnForConversation\(researchHandoffRef\.current\)/);
+diff --git a/lib/profile/businessUnderstanding/readProvider.ts b/lib/profile/businessUnderstanding/readProvider.ts
+index ad83f0b6..3e84cf4b 100644
+--- a/lib/profile/businessUnderstanding/readProvider.ts
++++ b/lib/profile/businessUnderstanding/readProvider.ts
+@@ -185,6 +185,11 @@ function factToProjectionFact(fact: FactRecord): BusinessUnderstandingProjection
+     validFrom: fact.validFrom,
+     validTo: fact.validTo,
+     supersededById: fact.supersededById,
++    // OB-6 KNOW: the temporal chain and the reason the member gave travel with
++    // the fact (they were dropped here; LMC history always showed undefined).
++    supersedesId: fact.supersedesId,
++    changeReason: fact.changeReason,
++    confirmedAt: fact.confirmedAt,
+   };
+ }
+ 
+diff --git a/lib/profile/businessUnderstanding/types.ts b/lib/profile/businessUnderstanding/types.ts
+index cddba522..68b08a29 100644
+--- a/lib/profile/businessUnderstanding/types.ts
++++ b/lib/profile/businessUnderstanding/types.ts
+@@ -264,6 +264,11 @@ export type BusinessUnderstandingProjectionFact = {
+   validFrom?: string;
+   validTo?: string;
+   supersededById?: string;
++  /** OB-6: the record this one replaced (temporal chain). */
++  supersedesId?: string;
++  /** OB-6: why it changed — the member's own words at the time, when recorded. */
++  changeReason?: string;
++  confirmedAt?: string;
+ };
+ 
+ export type CollectBusinessUnderstandingSnapshotOptions = {
+diff --git a/lib/relevantSituation/collectBusinessUnderstandingItems.ts b/lib/relevantSituation/collectBusinessUnderstandingItems.ts
+index 45c3d759..8e226f9b 100644
+--- a/lib/relevantSituation/collectBusinessUnderstandingItems.ts
++++ b/lib/relevantSituation/collectBusinessUnderstandingItems.ts
+@@ -8,8 +8,10 @@
+ import { collectBusinessUnderstandingSnapshot } from "@/lib/profile/businessUnderstanding/readProvider";
+ import type { BusinessUnderstandingReadSnapshot } from "@/lib/profile/businessUnderstanding/types";
+ import { BUSINESS_UNDERSTANDING_SOURCE_AUTHORITY } from "@/lib/profile/businessUnderstanding/types";
++import { quantityFactSummary } from "@/lib/profile/businessUnderstanding/quantityFact";
++import type { QuantitativeFactData } from "@/lib/profile/businessModelProjection/types";
+ import { hasDistinctiveValueOverlap } from "./distinctiveValues";
+-import type { RelevantSituationItem, SituationEpistemicStatus } from "./types";
++import type { RelevantSituationItem, SituationEpistemicStatus, SituationKnowLens } from "./types";
+ 
+ const BU_ITEM_CAP = 8;
+ 
+@@ -37,6 +39,11 @@ function overlapCount(a: Set<string>, b: Set<string>): number {
+   return n;
+ }
+ 
++/** OB-6 KNOW — the text is about price (the same hint the ranking boosts). */
++export function mentionsPricing(text: string): boolean {
++  return PRICING_HINTS.test(text) || /\bprice:/i.test(text);
++}
++
+ function topicBoost(memberStatement: string, hay: string): number {
+   let boost = 0;
+   if (PRICING_HINTS.test(memberStatement) && PRICING_HINTS.test(hay)) boost += 2;
+@@ -74,15 +81,36 @@ function scoreItem(
+   memberStatement: string,
+   hay: string,
+   baseRank: number,
++  scoped = false,
+ ): number {
+   const wordOverlap = overlapCount(query, tokens(hay));
+   const distinctive = hasDistinctiveValueOverlap(memberStatement, hay);
+   const boost = topicBoost(memberStatement, hay);
+   const distinctiveBonus = distinctive ? 1 : 0;
+-  if (wordOverlap === 0 && boost === 0 && !distinctiveBonus) return 0;
++  // A scoped read (the member asked about their business by name) keeps the
++  // owner's record even without word overlap; ranking still orders it.
++  if (wordOverlap === 0 && boost === 0 && !distinctiveBonus && !scoped) return 0;
+   return baseRank + wordOverlap + boost + distinctiveBonus;
+ }
+ 
++/** OB-6 KNOW — a quantity reads as "price: $49", never as raw JSON. */
++function readableFactSummary(summary: string, structured?: Record<string, unknown>): string {
++  if (structured && structured.kind === "quantity" && typeof structured.value === "number") {
++    try {
++      return quantityFactSummary(structured as unknown as QuantitativeFactData);
++    } catch {
++      return summary;
++    }
++  }
++  return summary;
++}
++
++/** OB-6 KNOW options — the lens and whether the member asked for this source. */
++export type BusinessUnderstandingKnowOptions = {
++  lens?: SituationKnowLens;
++  scoped?: boolean;
++};
++
+ /** Estate section paths retrieved from authoritative BU for this query. */
+ export function legacyEstatePathsRetrievedByBuItems(
+   buItems: readonly Pick<RelevantSituationItem, "id" | "relevanceReason" | "sourceRef">[],
+@@ -105,15 +133,23 @@ export function collectBusinessUnderstandingItemsFromSnapshot(
+   query: Set<string>,
+   memberStatement: string,
+   snapshot: BusinessUnderstandingReadSnapshot,
++  options: BusinessUnderstandingKnowOptions = {},
+ ): RankedBuItem[] {
+   const ranked: RankedBuItem[] = [];
++  const lens = options.lens ?? "current";
++  const scoped = Boolean(options.scoped);
+   const offerNames = new Map(snapshot.offers.map((o) => [o.id, o.name]));
+   const personNames = new Map(snapshot.persons.map((p) => [p.id, p.name]));
++  // The projection bag carries the structured value and the temporal chain for
++  // every FactRecord (current, and superseded when the snapshot includes them).
++  const projection = new Map((snapshot.projectionFacts ?? []).map((f) => [f.id, f]));
+ 
+   for (const fact of snapshot.confirmedFacts) {
+     if (isBlockedEpistemic(fact.epistemicStatus)) continue;
+-    const hay = `${fact.path} ${fact.summary}`;
+-    const rank = scoreItem(query, memberStatement, hay, 72);
++    const full = projection.get(fact.id);
++    const summary = readableFactSummary(fact.summary, full?.structured);
++    const hay = `${fact.path} ${fact.summary} ${summary}`;
++    const rank = scoreItem(query, memberStatement, hay, 72, scoped);
+     if (rank === 0) continue;
+     ranked.push({
+       id: `bu:fact:${fact.id}`,
+@@ -121,14 +157,56 @@ export function collectBusinessUnderstandingItemsFromSnapshot(
+       sourceAuthority: BUSINESS_UNDERSTANDING_SOURCE_AUTHORITY,
+       sourceRef: fact.sourceRef,
+       representAs: representAsForEpistemic(fact.epistemicStatus),
+-      summary: fact.summary,
++      summary,
+       relevanceReason: "business_understanding",
+       epistemicStatus: fact.epistemicStatus,
+       origin: fact.path.startsWith("legacy-approved:") ? "member_authored" : "business_understanding",
++      ...(full && (full.supersedesId || full.changeReason)
++        ? {
++            temporal: {
++              state: "current" as const,
++              validFrom: full.validFrom,
++              supersedesId: full.supersedesId,
++              changeReason: full.changeReason,
++            },
++          }
++        : {}),
+       rank,
+     });
+   }
+ 
++  // OB-6 KNOW history / reason lens — earlier versions, clearly superseded.
++  // Only versions the member once confirmed; never a draft or a hypothesis.
++  if (lens !== "current") {
++    for (const fact of snapshot.projectionFacts ?? []) {
++      if (!fact.supersededById && !fact.validTo) continue;
++      if (fact.status !== "CONFIRMED") continue;
++      const summary = readableFactSummary(fact.summary, fact.structured);
++      const hay = `${fact.path} ${fact.summary} ${summary}`;
++      const rank = scoreItem(query, memberStatement, hay, 71, scoped);
++      if (rank === 0) continue;
++      ranked.push({
++        id: `bu:history:${fact.id}`,
++        informationType: "MEMBER_BUSINESS_CONTEXT",
++        sourceAuthority: BUSINESS_UNDERSTANDING_SOURCE_AUTHORITY,
++        sourceRef: fact.sourceRef,
++        representAs: "memory",
++        summary,
++        relevanceReason: "business_understanding",
++        origin: "business_understanding",
++        temporal: {
++          state: "superseded",
++          validFrom: fact.validFrom,
++          validTo: fact.validTo,
++          supersedesId: fact.supersedesId,
++          supersededById: fact.supersededById,
++          changeReason: fact.changeReason,
++        },
++        rank,
++      });
++    }
++  }
++
+   for (const person of snapshot.persons) {
+     if (isBlockedEpistemic(person.epistemicStatus)) continue;
+     const hay = [
+@@ -141,7 +219,7 @@ export function collectBusinessUnderstandingItemsFromSnapshot(
+     ]
+       .filter(Boolean)
+       .join(" ");
+-    const rank = scoreItem(query, memberStatement, hay, person.isPrimary ? 74 : 68);
++    const rank = scoreItem(query, memberStatement, hay, person.isPrimary ? 74 : 68, scoped);
+     if (rank === 0) continue;
+     const summaryParts = [person.name];
+     if (person.who) summaryParts.push(person.who);
+@@ -162,10 +240,13 @@ export function collectBusinessUnderstandingItemsFromSnapshot(
+ 
+   for (const offer of snapshot.offers) {
+     if (isBlockedEpistemic(offer.epistemicStatus)) continue;
++    // OB-6 KNOW: a retired offer is history, never current truth.
++    const retired = offer.lifecycle === "retired";
++    if (retired && lens === "current") continue;
+     const hay = [offer.name, offer.description, offer.offerKind, offer.lifecycle]
+       .filter(Boolean)
+       .join(" ");
+-    const rank = scoreItem(query, memberStatement, hay, 73);
++    const rank = scoreItem(query, memberStatement, hay, 73, scoped);
+     if (rank === 0) continue;
+     ranked.push({
+       id: `bu:offer:${offer.id}`,
+@@ -179,6 +260,7 @@ export function collectBusinessUnderstandingItemsFromSnapshot(
+       relevanceReason: "business_understanding",
+       epistemicStatus: offer.epistemicStatus,
+       origin: "business_understanding",
++      ...(retired ? { temporal: { state: "retired" as const } } : {}),
+       rank,
+     });
+   }
+@@ -198,7 +280,7 @@ export function collectBusinessUnderstandingItemsFromSnapshot(
+     ]
+       .filter(Boolean)
+       .join(" ");
+-    const rank = scoreItem(query, memberStatement, hay, 75);
++    const rank = scoreItem(query, memberStatement, hay, 75, scoped);
+     if (rank === 0) continue;
+     const summaryParts: string[] = [`${offerName} ↔ ${personName}`];
+     if (edge.valueProposition) summaryParts.push(edge.valueProposition);
+diff --git a/lib/relevantSituation/retrieveRelevantSituation.ts b/lib/relevantSituation/retrieveRelevantSituation.ts
+index 2b46c30d..e92c1d80 100644
+--- a/lib/relevantSituation/retrieveRelevantSituation.ts
++++ b/lib/relevantSituation/retrieveRelevantSituation.ts
+@@ -41,6 +41,10 @@ import { CITATION_EVIDENCE_BASES } from "@/lib/research/types";
+ import { listSavedResearch, resolveActiveInquiry } from "@/lib/researchLibrary";
+ import type { ResearchFindingRecord } from "@/lib/researchLibrary/types";
+ import { collectLinkedWorkThreadOutcomes } from "@/lib/workThreadOutcomeReturn";
++import { buildCertifiedV2BoardContextProjection } from "@/lib/board/contextTransfer/certifiedV2BoardContextProjection";
++import { getActiveEventRecord } from "@/lib/eventsIntelligence/eventRecordStore";
++import { getActiveVisualFocusMap, listVisualFocusMaps } from "@/lib/visualFocus/store";
++import type { VisualFocusMap } from "@/lib/visualFocus/types";
+ import {
+   hasDistinctiveValueOverlap,
+ } from "./distinctiveValues";
+@@ -52,6 +56,7 @@ import {
+   type RelevantSituationSlice,
+   type RetrieveRelevantSituationInput,
+   type SituationConsumerRole,
++  type SituationSourceFamily,
+ } from "./types";
+ 
+ const STOP_WORDS = new Set([
+@@ -396,6 +401,8 @@ function collectResearchItems(
+   query: Set<string>,
+   projectId: string | null,
+   researchInquiryId: string | null,
++  /** OB-6 KNOW: the member asked what Research found — the saved findings are eligible. */
++  scoped = false,
+ ): RankedItem[] {
+   const collections = listSavedResearch();
+   // Tier 1: findings that belong to the resolved inquiry — always eligible,
+@@ -431,7 +438,7 @@ function collectResearchItems(
+         query,
+         tokens(`${finding.title} ${finding.content}`),
+       );
+-      if (!inquiryLinked && !linked && findingOverlap === 0 && collectionOverlap === 0) {
++      if (!inquiryLinked && !linked && findingOverlap === 0 && collectionOverlap === 0 && !scoped) {
+         continue;
+       }
+ 
+@@ -701,6 +708,161 @@ function collectBoardSharedHandoffItems(
+   return ranked.sort((a, b) => b.rank - a.rank).slice(0, 3);
+ }
+ 
++/**
++ * OB-6 KNOW — the member's own decisions at any scope (business / topic, not
++ * only the active project's or the Board's). The ledger's own rule: only a
++ * member-authored entry is the member's decision; a superseded entry is read
++ * only under the history lens and is marked superseded.
++ */
++function collectMemberDecisionItems(
++  query: Set<string>,
++  memberStatement: string,
++  scoped: boolean,
++  lens: string,
++): RankedItem[] {
++  const ranked: RankedItem[] = [];
++  for (const entry of loadDecisionLedger().entries) {
++    if (entry.origin !== MEMBER_DECISION_ORIGIN) continue;
++    const superseded = entry.supersededBy !== null;
++    if (superseded && lens === "current") continue;
++    const hay = `${entry.label ?? ""} ${entry.key} ${entry.value}`;
++    const count = overlapCount(query, tokens(hay)) + (hasDistinctiveValueOverlap(memberStatement, hay) ? 1 : 0);
++    if (count === 0 && !scoped) continue;
++    const item = ledgerItem(entry, (superseded ? 70 : 92) + count, "lexical_overlap");
++    ranked.push(
++      superseded
++        ? { ...item, id: `ledger-history:${entry.id}`, representAs: "memory", temporal: { state: "superseded", supersededById: entry.supersededBy ?? undefined, supersedesId: entry.supersedes ?? undefined } }
++        : item,
++    );
++  }
++  return ranked.sort((a, b) => b.rank - a.rank).slice(0, 4);
++}
++
++// ── OB-6 KNOW: results of owners the façade did not read before ─────────────
++// Each reads the owner's OWN store through its own read function. No copy, no
++// new store. Unscoped reads keep the Atomic 3 rule (word overlap required);
++// scoped reads (the member asked about that owner) return its current record.
++
++function overlapOrScoped(query: Set<string>, hay: string, scoped: boolean): number | null {
++  const n = overlapCount(query, tokens(hay));
++  if (n === 0 && !scoped) return null;
++  return n;
++}
++
++/** Events — the active (else newest) event record's working state. */
++function collectEventItems(query: Set<string>, scoped: boolean): RankedItem[] {
++  const record = getActiveEventRecord();
++  if (!record || !record.title?.trim()) return [];
++  const openDecisions = (record.decisions ?? []).filter((d) => !d.resolved).length;
++  const settled = (record.decisions ?? []).filter((d) => d.resolved && d.resolvedValue?.trim());
++  const hay = [record.title, record.eventTypeLabel, record.purpose, record.audience, record.nextAction].join(" ");
++  const n = overlapOrScoped(query, hay, scoped);
++  if (n === null) return [];
++  const parts = [`${record.title}${record.eventTypeLabel ? ` (${record.eventTypeLabel})` : ""}`];
++  parts.push(`stage: ${String(record.lifecyclePhase).replace(/_/g, " ")}`);
++  if (record.nextAction?.trim()) parts.push(`next: ${record.nextAction.trim()}`);
++  if (settled.length) parts.push(`decided: ${settled.map((d) => d.resolvedValue!.trim()).slice(0, 3).join("; ")}`);
++  if (openDecisions) parts.push(`${openDecisions} decision${openDecisions === 1 ? "" : "s"} still open`);
++  const canceled = record.runtimeState === "CANCELED";
++  return [
++    {
++      id: `event:${record.id}`,
++      informationType: "MEMBER_BUSINESS_CONTEXT",
++      sourceAuthority: "companion-events-intelligence-v1",
++      sourceRef: `event:${record.id}`,
++      representAs: "memory",
++      summary: parts.join(" · "),
++      relevanceReason: "lexical_overlap",
++      origin: "events_intelligence",
++      ...(canceled ? { temporal: { state: "retired" as const } } : {}),
++      rank: 58 + n,
++    },
++  ];
++}
++
++function visualMapItemCount(map: VisualFocusMap): number {
++  const walk = (node: { children?: unknown[] } | undefined): number =>
++    !node?.children ? 0 : node.children.reduce<number>((acc, c) => acc + 1 + walk(c as { children?: unknown[] }), 0);
++  return walk(map.root as { children?: unknown[] });
++}
++
++/** Visual Thinking — the active (else newest) visual map and what it holds. */
++function collectVisualItems(query: Set<string>, scoped: boolean): RankedItem[] {
++  const map =
++    getActiveVisualFocusMap() ??
++    listVisualFocusMaps().filter((m) => m.lifecycleStatus !== "archived")[0] ??
++    null;
++  if (!map) return [];
++  const sources = Object.values(map.sources ?? {}).map((src) => src.text.trim()).filter(Boolean);
++  const hay = [map.title, map.summary ?? "", map.purposeAnchor?.userAnswer ?? "", ...sources].join(" ");
++  const n = overlapOrScoped(query, hay, scoped);
++  if (n === null) return [];
++  const items = visualMapItemCount(map);
++  const parts = [`${map.title || "Untitled map"} (${String(map.mode).replace(/-/g, " ")})`];
++  if (items) parts.push(`${items} item${items === 1 ? "" : "s"}`);
++  if (map.summary?.trim()) parts.push(map.summary.trim());
++  else if (sources[0]) parts.push(`brought in: ${sources[0].slice(0, 140)}`);
++  return [
++    {
++      id: `visual:${map.id}`,
++      informationType: "MEMBER_SAVED_MEMORY",
++      sourceAuthority: "companion-visual-focus-maps-v1",
++      sourceRef: `visual:${map.id}`,
++      representAs: "memory",
++      summary: parts.join(" · "),
++      relevanceReason: "lexical_overlap",
++      origin: "visual_thinking",
++      ...(map.lifecycleStatus === "archived" ? { temporal: { state: "retired" as const } } : {}),
++      rank: 56 + n,
++    },
++  ];
++}
++
++/**
++ * The Board's view (read only when the member asks about the Board): the
++ * certified projection the Board itself exposes. Advice, never a decision —
++ * the member's own settled decision stays a separate, labelled item.
++ */
++function collectBoardViewItems(): RankedItem[] {
++  const out: RankedItem[] = [];
++  for (const record of listBoardDirectorDiscussions(20)) {
++    const projection = buildCertifiedV2BoardContextProjection(record);
++    if (!projection) continue;
++    const parts = [`On “${projection.issueFraming}”: ${projection.boardCurrentDirection}`];
++    if (projection.materialDissent?.trim()) parts.push(`strongest dissent: ${projection.materialDissent.trim()}`);
++    const open = projection.unresolvedEvidence.map((u) => u.trim()).filter(Boolean);
++    if (open[0]) parts.push(`still unresolved: ${open[0]}`);
++    out.push({
++      id: `board-view:${projection.discussionId}`,
++      informationType: "CURATED_DURABLE_INTELLIGENCE",
++      sourceAuthority: "spark.board.director-discussions.v1",
++      sourceRef: `board:${projection.discussionId}:view`,
++      representAs: "assumption",
++      summary: parts.join(" · "),
++      relevanceReason: "lexical_overlap",
++      epistemicStatus: "inference",
++      origin: "board_deliberation",
++      rank: 90 - out.length,
++    });
++    if (projection.memberSettledDecision?.trim()) {
++      out.push({
++        id: `board-member-decision:${projection.discussionId}`,
++        informationType: "CURATED_DURABLE_INTELLIGENCE",
++        sourceAuthority: "spark.board.director-discussions.v1",
++        sourceRef: `board:${projection.discussionId}:memberDecision`,
++        representAs: "settled",
++        summary: projection.memberSettledDecision.trim(),
++        relevanceReason: "lexical_overlap",
++        epistemicStatus: "decision",
++        origin: "member_authored",
++        rank: 95 - out.length,
++      });
++    }
++    if (out.length >= 4) break;
++  }
++  return out;
++}
++
+ function finalizeItems(
+   ranked: RankedItem[],
+   cap: number,
+@@ -743,30 +905,44 @@ export function retrieveRelevantSituation(
+   const situationRef = situationRefFromPointer();
+   const cap = itemCapFor(input.consumerRole);
+   const query = queryTokens(input, situationRef);
++  const lens = input.lens ?? "current";
++  const scope = input.sources?.length ? new Set<SituationSourceFamily>(input.sources) : null;
++  const wants = (family: SituationSourceFamily) => !scope || scope.has(family);
++  const scopedTo = (family: SituationSourceFamily) => Boolean(scope?.has(family));
+   const buSnapshot = collectBusinessUnderstandingSnapshot({
+     asOf: new Date().toISOString(),
++    // OB-6 KNOW: earlier versions are read only when the question asks for them.
++    includeSuperseded: lens !== "current",
+   });
+-  const buItems = collectBusinessUnderstandingItemsFromSnapshot(
+-    query,
+-    input.intent.memberStatement,
+-    buSnapshot,
+-  );
++  const buItems = wants("business")
++    ? collectBusinessUnderstandingItemsFromSnapshot(query, input.intent.memberStatement, buSnapshot, {
++        lens,
++        scoped: scopedTo("business"),
++      })
++    : [];
+   const buPathsRetrieved = legacyEstatePathsRetrievedByBuItems(buItems);
+ 
+   const ranked: RankedItem[] = dropSuppressedLegacyBoardroomItems([
+-    ...collectLinkedWorkThreadOutcomes(situationRef.activeWorkId),
+-    ...collectSuspendedWorkItems(),
+-    ...collectProjectItems(query),
+-    ...collectCertifiedBoardLedgerItems(query, input.intent.memberStatement),
+-    ...collectBoardSharedHandoffItems(query, input.intent.memberStatement),
++    ...(wants("work") ? collectLinkedWorkThreadOutcomes(situationRef.activeWorkId) : []),
++    ...(wants("work") ? collectSuspendedWorkItems() : []),
++    ...(wants("work") ? collectProjectItems(query) : []),
++    ...(wants("decisions") || wants("board") ? collectCertifiedBoardLedgerItems(query, input.intent.memberStatement) : []),
++    ...(wants("decisions") || wants("board") ? collectBoardSharedHandoffItems(query, input.intent.memberStatement) : []),
++    ...(scopedTo("decisions") ? collectMemberDecisionItems(query, input.intent.memberStatement, true, lens) : []),
++    ...(scopedTo("board") ? collectBoardViewItems() : []),
+     ...buItems,
+-    ...collectEstateItems(query, input.intent.memberStatement, buPathsRetrieved),
+-    ...collectVaultItems(query),
+-    ...collectResearchItems(
+-      query,
+-      situationRef.projectId,
+-      situationRef.researchInquiryId ?? null,
+-    ),
++    ...(wants("business") ? collectEstateItems(query, input.intent.memberStatement, buPathsRetrieved) : []),
++    ...(wants("evidence") ? collectVaultItems(query) : []),
++    ...(wants("research")
++      ? collectResearchItems(
++          query,
++          situationRef.projectId,
++          situationRef.researchInquiryId ?? null,
++          scopedTo("research"),
++        )
++      : []),
++    ...(wants("events") ? collectEventItems(query, scopedTo("events")) : []),
++    ...(wants("visual") ? collectVisualItems(query, scopedTo("visual")) : []),
+   ]);
+ 
+   return {
+diff --git a/lib/relevantSituation/types.ts b/lib/relevantSituation/types.ts
+index e2573af9..9ad48f94 100644
+--- a/lib/relevantSituation/types.ts
++++ b/lib/relevantSituation/types.ts
+@@ -105,8 +105,48 @@ export type RelevantSituationItem = {
+   freshness?: string;
+   /** At most one item in a slice may carry this. Never invented. */
+   role?: "nextMeaningfulMove";
++  /**
++   * OB-6 KNOW — the source's own temporal facts, copied (never inferred):
++   * whether this version is current, superseded or retired, the chain, and the
++   * reason recorded when it changed.
++   */
++  temporal?: SituationTemporal;
++};
++
++/** OB-6 KNOW — copied temporal metadata (FactRecord / offer lifecycle / record state). */
++export type SituationTemporal = {
++  state: "current" | "superseded" | "retired";
++  validFrom?: string;
++  validTo?: string;
++  supersedesId?: string;
++  supersededById?: string;
++  /** The member's own words recorded when it changed; absent = no reason on record. */
++  changeReason?: string;
+ };
+ 
++/**
++ * OB-6 KNOW lens — which version of the truth the question asks for.
++ * current: what is true now (superseded never included);
++ * history: earlier versions too (clearly marked superseded / retired);
++ * reason:  why it changed (recorded change reasons, never invented).
++ */
++export type SituationKnowLens = "current" | "history" | "reason";
++
++/**
++ * OB-6 KNOW — existing source families a scoped read may ask for. A scoped read
++ * returns that owner's current record even without word overlap (the member
++ * asked about it by name).
++ */
++export type SituationSourceFamily =
++  | "business"
++  | "work"
++  | "decisions"
++  | "board"
++  | "research"
++  | "evidence"
++  | "events"
++  | "visual";
++
+ /**
+  * The Situation pointer Atomic 2 already owns.
+  * Retrieval copies these fields; it never writes or replaces them.
+@@ -143,6 +183,10 @@ export type RetrieveRelevantSituationInput = {
+     aim: SituationIntentAim;
+   };
+   consumerRole: SituationConsumerRole;
++  /** OB-6 KNOW: defaults to "current" (the Atomic 3 behavior). */
++  lens?: SituationKnowLens;
++  /** OB-6 KNOW: restrict to these source families (scoped read). Absent = all. */
++  sources?: readonly SituationSourceFamily[];
+ };
+ 
+ export const DEFAULT_SITUATION_ITEM_CAP = 12;
+diff --git a/lib/visualFocus/looseThinking/bridgeConversationVisualHandoff.ts b/lib/visualFocus/looseThinking/bridgeConversationVisualHandoff.ts
+new file mode 100644
+index 00000000..a6956efd
+--- /dev/null
++++ b/lib/visualFocus/looseThinking/bridgeConversationVisualHandoff.ts
+@@ -0,0 +1,54 @@
++/**
++ * OB-6 — Conversation → Visual Thinking Studio bridge.
++ *
++ * The studio's capture-first front door reads Loose Thinking SOURCES ("Already
++ * brought in"). Research reaches it through `bridgeResearchVisualHandoff`; the
++ * conversation reaches it through the SAME intake: the member's own words are
++ * captured with `captureSource` (verbatim, claimState "member-stated") into an
++ * "unsorted" Loose Thinking map, then opened on hub entry. Nothing is split,
++ * grouped or interpreted here — "Help me see this" stays the only place loose
++ * items are made.
++ *
++ * The pointer is one-shot (sessionStorage), consumed once on hub entry, the
++ * same lifecycle the Research handoff uses.
++ */
++
++import { createVisualFocusMap, saveVisualFocusMap, type VisualFocusMap } from "@/lib/visualFocus";
++import { getVisualFocusMapById } from "@/lib/visualFocus/store";
++import { captureSource } from "./sourceEditing";
++import { finalizeLooseThinkingCaptureMap } from "./ensureLooseThinkingVisualLayout";
++
++const CONVERSATION_VISUAL_PENDING_KEY = "companion-visual-focus-conversation-pending-v1";
++
++/** Capture the member's conversation material as sources and queue it for the studio. */
++export function bringConversationIntoLooseThinking(input: {
++  texts: readonly string[];
++  title?: string | null;
++}): VisualFocusMap | null {
++  const texts = input.texts.map((t) => t.trim()).filter((t) => t.length >= 3);
++  if (!texts.length) return null;
++  let map = createVisualFocusMap("unsorted");
++  for (const text of texts) map = captureSource(map, text, { claimState: "member-stated" });
++  const saved = saveVisualFocusMap(finalizeLooseThinkingCaptureMap(map, { title: input.title ?? null }));
++  if (typeof sessionStorage !== "undefined") {
++    try {
++      sessionStorage.setItem(CONVERSATION_VISUAL_PENDING_KEY, saved.id);
++    } catch {
++      /* ignore — the map is still saved and listed under Previous work */
++    }
++  }
++  return saved;
++}
++
++/** One-shot: the conversation map queued for the studio's front door, if any. */
++export function consumeConversationVisualHandoffIntoLooseThinking(): VisualFocusMap | null {
++  if (typeof sessionStorage === "undefined") return null;
++  try {
++    const id = sessionStorage.getItem(CONVERSATION_VISUAL_PENDING_KEY);
++    if (!id) return null;
++    sessionStorage.removeItem(CONVERSATION_VISUAL_PENDING_KEY);
++    return getVisualFocusMapById(id);
++  } catch {
++    return null;
++  }
++}
+-- 
+2.43.0
+
