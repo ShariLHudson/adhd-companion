@@ -81,10 +81,14 @@ Row-level security does **not** stop `TRUNCATE`, so these privileges were a real
 
 | Suite | Result |
 |---|---|
-| Founder speech → visual aids → choice → development → Susan reminder → return; refresh; second browser; sign-out/sign-in | _STABILITY_ |
-| Research → grounded answer with sources → VTS comparison of chosen findings → back → on the other browser | PASS in every run |
+| Founder speech → visual aids → choice → development → Susan reminder → return; refresh; second browser; sign-out/sign-in | 10/10 PASS |
+| Research → grounded answer with sources → VTS comparison of chosen findings → back → on the other browser | 5/5 PASS |
 | Two accounts, one browser: screens, stores, chat context, late answers; same account in two browsers; migration; failed saves; concurrent edits; server auth | 24/24 PASS |
 | Strategy Remove/Undo across browsers | 5/5 PASS |
+
+**Final clean run on `901057b6e`: 44/44.** That is flows 15/15, Strategy 5/5 and isolation/persistence 24/24, run one after another on a freshly started server.
+
+Earlier runs on this machine were disturbed twice: the local dev server ran out of memory, and once the test script clicked before the screen had rendered. Neither was an app fault; the script now waits for each control.
 
 **One intermittent failure: fixed and re-checked.**
 - In 1 of 5 runs, the second browser opened without the resumed conversation.
@@ -128,7 +132,7 @@ Production stays on **HOLD** until all of these are ✅:
 |---|---|
 | Database migration applied, verified, backed up | ✅ |
 | Account separation enforced by the production database | ✅ (rolled-back probe) |
-| Browser-context checks on the merged code (flows, isolation, Strategy Undo) | ✅ (stability runs in §4) |
+| Browser-context checks on the merged code (flows, isolation, Strategy Undo) | ✅ 44/44 on `901057b6e` |
 | Protected preview deployed **and its commit verified as `901057b6e`** | ⛔ needs §5 step (a) or (b) |
 | Key flows with real Spark replies and live research on that preview | ⛔ needs §5 |
 | Real-phone test (§6) | ⛔ needs you |
