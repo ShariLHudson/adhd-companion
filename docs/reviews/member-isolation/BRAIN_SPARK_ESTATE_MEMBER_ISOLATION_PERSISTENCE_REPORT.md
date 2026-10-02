@@ -130,23 +130,23 @@ Your work now follows you between browsers, and a second member using the same b
 | # | Check | Candidate | Baseline |
 |---|---|---|---|
 | **Founder speech → visual aids → choice → development → Susan reminder → return** | | | |
-| F1.1 | Speech, visual aids, choice and development stay in one conversation | PASS | _see §5a_ |
-| F1.2 | A day-only reminder keeps the day and asks only the time | PASS | |
-| F1.3 | "Back to the speech": reminder held, not claimed saved; speech question restored | PASS | |
-| F1.4 | The next reply continues the speech with its history | PASS | |
-| F1.5 | "9am" completes the held reminder (tomorrow 9:00) | PASS | |
+| F1.1 | Speech, visual aids, choice and development stay in one conversation | PASS | PASS |
+| F1.2 | A day-only reminder keeps the day and asks only the time | PASS | **FAIL**: "When would you like me to remind you?" (day dropped) |
+| F1.3 | "Back to the speech": reminder held, not claimed saved; speech question restored | PASS | **FAIL**: re-asks the time; speech not resumed |
+| F1.4 | The next reply continues the speech with its history | PASS | FAIL |
+| F1.5 | "9am" completes the held reminder (tomorrow 9:00) | PASS | **FAIL**: no reminder saved |
 | **Refresh and sign-in continuity** | | | |
-| F1.6 | Refresh reopens the work and its pending question | PASS | |
-| F1.7 | Second browser context (phone-sized) gets the same conversation, pending question and reminder | PASS | |
-| F1.8 | Continuing there keeps the full history | PASS | |
-| F1.9 | Sign-out hides the work; signing back in returns it, including the other browser's turn | PASS | |
-| F1.10 | Signing out on one device leaves the other signed in | PASS | |
+| F1.6 | Refresh reopens the work and its pending question | PASS | **FAIL**: blank home after refresh |
+| F1.7 | Second browser context (phone-sized) gets the same conversation, pending question and reminder | PASS | **FAIL**: nothing carries to the second browser |
+| F1.8 | Continuing there keeps the full history | PASS | FAIL |
+| F1.9 | Sign-out hides the work; signing back in returns it, including the other browser's turn | PASS | FAIL |
+| F1.10 | Signing out on one device leaves the other signed in | PASS | PASS |
 | **Research → grounded answer → selected-findings VTS → return** | | | |
-| F2.1 | Research saved in one browser is read back in the other from the saved findings, with no model call | PASS | |
-| F2.2 | The read-back shows clickable sources; retrieval dates are intact | PASS | |
-| F2.3 | Two chosen findings compared inside the visual ("Comparing 2 of 7") | PASS | |
-| F2.4 | Back returns to the originating research | PASS | |
-| F2.5 | The VTS map is on the account and in the other browser | PASS | |
+| F2.1 | Research saved in one browser is read back in the other from the saved findings, with no model call | PASS | **FAIL**: "I don't have any research saved yet" |
+| F2.2 | The read-back shows clickable sources; retrieval dates are intact | PASS | FAIL |
+| F2.3 | Two chosen findings compared inside the visual ("Comparing 2 of 7") | PASS | FAIL (no research there) |
+| F2.4 | Back returns to the originating research | PASS | FAIL |
+| F2.5 | The VTS map is on the account and in the other browser | PASS | FAIL |
 | **Two accounts, one browser** | | | |
 | S1.0–1.2 | Sign-out; A's work never appears on B's screen | PASS | PASS (but A's data remained readable) |
 | S1.3 | B's stores contain none of A's information | **PASS** | **FAIL** (B reads A's ideal client) |
@@ -164,6 +164,12 @@ Your work now follows you between browsers, and a second member using the same b
 
 **Candidate: 39/39.**
 
+**Baseline, same scripts:**
+- **Flows:** 2/15 pass (F1.1 and F1.10).
+- **Isolation suite:** fails every isolation, persistence and legacy check it reaches.
+  - Its run stopped at S5.2, because the baseline has no member-scoped storage to place legacy data in.
+  - The baseline S6 results were measured directly against its chat route.
+
 **Database (live, local Supabase):** 11/11. This covers:
 - two browsers converge through the account, including concurrent edits;
 - tombstone and restore;
@@ -172,8 +178,21 @@ Your work now follows you between browsers, and a second member using the same b
 
 **Unit tests (new):** 58 pass. They cover the scope shim, merge, sync engine (including the newest-wins conversation rules), server member check, route rejection, legacy claim, resume line, conversation archive and the held-reminder flow.
 
-### 5a. Baseline flow results and full-suite comparison
-_Filled in from the identical runs below._
+### 5a. Full unit suite (same command, same environment, compared by test identity)
+
+The command was `vitest run --maxWorkers=3`, run on each worktree.
+
+| | Tests | Passed | Failed |
+|---|---|---|---|
+| Baseline `d472838f8` | 16,270 | 15,834 | 423 |
+| Candidate `f4c833c79` | 16,332 | 15,892 | 423 |
+
+- The candidate has 62 more tests: the new ones added here.
+- Failing tests were compared by identity (file + test name, 853 identities including file-level errors): **0 new failures and 0 fixed.**
+  - The two failing sets are identical, so every failure is pre-existing in this environment.
+  - Examples: the `unpdf` package the repo declares is not installed here, and some suites hit cold import timeouts.
+- **TypeScript:** 366 errors on both, an identical set (all pre-existing).
+- **Lint:** no change in findings on the 37 changed files.
 
 ---
 
