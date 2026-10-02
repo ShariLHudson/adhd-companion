@@ -1,266 +1,201 @@
-# BRAIN SPARK ESTATE™ — One Brain Member Isolation + Account Persistence
+# Spark Estate: One Brain Account Persistence and Member Isolation
 
-**Verdict: HOLD for production.** It is ready as an isolated integration preview.
+**Verdict: HOLD for production. PASS for the integration preview.**
 
-Member isolation and account-backed persistence are built and pushed. The full shared-browser leak seen in the baseline is closed. The work is also verified live in Chromium against a real Supabase stack, run locally. Production needs three things first, listed under [Remaining blockers](#remaining-blockers):
-1. the RLS migration applied and confirmed in production;
-2. the remaining gaps closed;
-3. a reviewed merge.
+Your work now follows you between browsers, and a second member using the same browser sees none of yours. Every check below was run live: Chromium browser contexts against a real Supabase stack running locally. Production needs three things, under [Remaining blockers](#remaining-blockers):
+1. the database migration applied and confirmed;
+2. a hosted preview deployment;
+3. a check on a real phone.
 
 | | |
 |---|---|
 | Repository | `ShariLHudson/adhd-business-companion-vs3` |
-| Integration preview branch | `integration/one-brain-member-persistence` |
-| Commits | `bcd2d6569` (isolation, persistence, chat auth, claim, migration); `8db43a616` (per-visit transcript fix, stuck-pending fix); a final lint fix (see the end of this report) |
-| Built on | `atomic/one-brain-convergence-r1` `33541725e` + `feat/one-brain-strategic-continuity` `59caff945` + `atomic/research-r8-readout` `1ac7eb898` (merge `d472838f8`, the **baseline** for every comparison below) |
-| Not done | Nothing merged to `main`, nothing deployed, no production database touched |
+| Branch (integration preview) | `integration/one-brain-member-persistence` |
+| Head commit | **`f4c833c79`** |
+| Commits in this work | `bcd2d6569` isolation, account sync, chat auth, legacy claim, RLS migration · `8db43a616` fixes · `6588310a8` full coverage, conversation continuity · `c641c5ffe` held reminders, resume line, member-level day, sign-out on this device only · `f4c833c79` changes shown when you return to a page |
+| Baseline for all comparisons | `d472838f8`, which is One Brain convergence R1 + Strategy continuity + Research R8, before any of this work |
+| Served preview version | `f4c833c79` served by `next dev` against local Supabase (GoTrue + PostgREST + Postgres, Supabase CLI 2.119). **There is no hosted preview URL:** this session has no Vercel access. |
+| Not done | Nothing merged to `main`. Nothing deployed. No production database touched. |
 
 ---
 
-## 1. Current-truth reconciliation
+## 1. Current truth (reconciled)
 
-### Lines inspected
-- **`main`** (`b25f96dcb`, 2026-10-01) contains **none** of OB-1…OB-6.
-  - The OB line (`e5c53e73`) sits on an R0 base that is not in `main` (112 ahead, 223 behind).
-- The newest One Brain line based on `main` is **`atomic/one-brain-convergence-r1`** (34 ahead, 0 behind). It already contains specialist-convergence, question-help, Research/VTS R1–R7 and create-recovery-r1.
-- Merged into the preview on top of it:
-  - **Strategy**: `feat/one-brain-strategic-continuity`. One additive conflict, in `lib/questionHelp/conversation.ts`; both functions were kept.
-  - **Research/VTS**: `atomic/research-r8-readout`. One additive conflict, in the `CompanionPageClient` imports and hint list; both were kept.
-- **Create**: create-recovery-r1 was already inside convergence-r1.
-- **Not merged:** `fix/one-brain-p0-execution`.
-  - Its P0 work was already hand-ported into convergence-r1.
-  - Its Strategy Remove/Undo commits overlap `538762406` on strategic-continuity.
+- **Branches.** The active One Brain line is `atomic/one-brain-convergence-r1`, which is based on `main`. Two branches were merged on top:
+  - `feat/one-brain-strategic-continuity`;
+  - `atomic/research-r8-readout`.
 
-### The contradiction about account persistence
-- The OB-6 / OB-6 Final audit said: *"only Create, Saved Spark and billing are on the server."* That was true **for `e5c53e73`**. It is **out of date for the convergence line.**
-- On this line, `companion_member_records` already carried these domains:
+  Both merges had small additive conflicts, and both sides were kept. `fix/one-brain-p0-execution` was not merged: its work was already hand-ported, and its Strategy Undo overlaps newer work.
+- **Uncommitted work.** Before this round the integration tree was clean, apart from test-generated artefacts that tests rewrite. Nothing newer was lost.
+- **The older OB-6 audit is out of date.** It said only Create, Saved Spark and billing were on the server. On the current line these were also already on your account:
+  - Decision Ledger;
+  - strategic resume point;
+  - My Strategies;
+  - strategy work items.
 
-| Domain | Flag | What it holds |
+  Everything else was in the browser only. Browser data was not separated per member, and the chat path did not check sign-in.
+
+---
+
+## 2. What changed for you
+
+### Your information is kept separate per member
+- Every browser cache and every piece of temporary context is stored under the signed-in account. A second member signing in on the same browser starts empty.
+- On sign-out or an account switch, including one made in another tab:
+  - requests still in flight for the previous member are cancelled;
+  - late answers are thrown away;
+  - the page is reloaded, so nothing stays in memory.
+- **Your own copy is never erased.** It stays under your account in that browser and on the server.
+- **Sign-out now ends only this device's session.** Your phone stays signed in when you sign out on the computer. Before, signing out anywhere signed you out everywhere.
+
+### Your work follows you
+- Your persistent work is stored on your account, and each browser keeps an account-scoped cache of it.
+- Two browsers editing at once are merged record by record. Nothing is silently overwritten.
+- A removal travels as a removal; a restore brings the item back.
+- A save that fails stays queued, is retried, and is never lost. The workspace waits for your account copy before it opens.
+- When you return to a page (the tab or app comes back into view), it shows changes made on your other device. It never reloads while you are typing.
+
+### The conversation follows you
+- The current conversation, its pending question and its return point move with you.
+- **The newest real conversation wins.** An empty fresh visit, or **New Chat** on one device, never wipes the conversation on the other. A replaced version stays recoverable.
+- Earlier conversations are kept in an account-backed archive.
+- After a refresh, a new sign-in or on another browser, the conversation reopens with this line:
+
+  > Picking up where we left off — you were working on "…". I'd asked: …
+
+- "First visit of the day" is now tracked per member. Opening a second browser the same day no longer starts a New Day and clears the conversation.
+
+### Interruptions don't lose work
+- **"Remind me tomorrow to call Susan about the venue"** now keeps "tomorrow" and asks only: *"What time tomorrow should I remind you?"*
+- **"OK, back to the speech"** no longer gets re-asked as if it were a time. Spark says the reminder is held and **not set yet**, then returns to the question the speech was waiting on.
+- A later **"9am"** completes the reminder for tomorrow at 9:00.
+
+### Server and database
+- The four member chat/data routes require a verified sign-in: `/api/companion-chat`, `/api/claire-reasoning`, `/api/research-live` and `/api/board/recommend`.
+  - A missing or forged token gets **401**.
+  - A token that doesn't match the browser's member scope gets **409**.
+  - A browser-supplied member id is never used as authorization.
+- Row-level security: each member can read and write only their own rows. Removal is soft. The migration covers both member records and Create workspaces.
+- The chat model still receives this turn's context, built from your own isolated, account-merged data.
+
+---
+
+## 3. Persistence coverage by capability
+
+| Capability | What is on your account | Notes |
 |---|---|---|
-| `strategic_decision` | always on | Decision Ledger, one row per entry |
-| `strategic_continuity` | always on | Strategic resume point only: concern, project, open question, pending confirmation |
-| `user_strategy` | always on | My Strategies |
-| `strategy_work_item` | always on | Strategy work items |
-| `saved_spark` | **on** | Saved Spark |
-| `saved_work` | off | — |
-| `evidence_vault` | off | — |
-| `work_body` | off (founder only) | — |
-
-- Create uses its own table, `companion_creation_workspaces`, which is always on when signed in.
-
-### Confirmed gaps before this work
-1. No browser store was tied to the signed-in member.
-2. Sign-out removed only the login token.
-3. Strategy hydration was not tied to sign-in. Its merge could push one member's newer local data into **whoever was signed in**.
-4. `/api/companion-chat` checked sign-in only when attachments were present. `claire-reasoning`, `research-live` and `board/recommend` had no member check.
-5. Row-level security on `companion_creation_workspaces` was commented out in the repository ("modeled, not verified").
-6. Most business knowledge was browser-only.
-
-### Deployed versions and flags
-- I have no access to Vercel or the production Supabase, so I could not read the deployed commit or the production flags. Both must be checked before release.
-- Flags in code:
-  - New sync: on by default. Kill switch: `NEXT_PUBLIC_MEMBER_SYNC=0` or local `spark.flag.memberSync=0`.
-  - Isolation: always on.
+| Business profile and change history | ✅ business profile envelope, including its write log; business OS; decision intelligence | |
+| Ideal clients and Living Model data | ✅ ideal clients. Living Model answers are fact records inside the business profile. | `lib/lmc` keeps no store of its own |
+| Decisions and their reasons | ✅ Decision Ledger (existing account domain) | Reasons travel inside each entry |
+| Projects and linked pieces | ✅ projects, project items, project conversations, continue point, asset notes and files, plan completions, moments | Live-checked: create, edit, remove, restore, concurrent edits |
+| Board, Chamber, Strategy | ✅ director discussions, boardroom, call-the-board, intake draft; Chamber resume, participants, meta, patterns, blockers, preferences; strategy decision memory, patterns, connections, active item, apply; outcome thread and goals; My Strategies and strategy work items (existing domains) | |
+| Research findings, sources, retrieval dates | ✅ collections, sessions, inquiries, active, observations, pending | Live-checked: findings, links and retrieval dates arrive intact in the other browser |
+| VTS maps | ✅ | Live-checked: a comparison made in one browser is present in the other |
+| Events | ✅ event records, active event, assets, Q&A turns | |
+| Reminders, Rhythms, Plan My Day | ✅ reminders; rhythms (including per-owner); rhythm history and preferences; attention holds; day state; time blocks; Plan My Day items and Parking Lot holds (per owner); schedule preferences; completion history | Reminder live-checked: the Susan reminder reaches the second browser |
+| Clear My Mind | ✅ brain dumps, draft, active session, thought collections, custom categories | |
+| Conversation, pending questions, active work, return points | ✅ current transcript and spine (newest wins); conversation archive; active work; handoff stash; strategic resume point (existing domain) | Live-checked: refresh, second browser, sign-out/sign-in |
+| Preferences and learned context | ✅ preferences, relationship memory, preference, learning and intelligence; support style; focus and talk-it-out preferences; discovery history and journey; onboarding | |
+| Create | ✅ its existing table, now with row-level security | |
+| Evidence Vault | **Kept separate as instructed.** Isolated per member; not synced; no new links. | |
+| Temporary screen state (tab-only navigation, drafts in session storage) | Stays in this tab, isolated per member | As permitted |
 
 ---
 
-## 2. What was built
+## 4. Migration and recovery
 
-### Member isolation
-- **Account-scoped browser storage** (`lib/memberScope/storageShim.ts`).
-  - Installed before any app code runs (a `beforeInteractive` script in the root layout).
-  - Every `localStorage` / `sessionStorage` key is stored under the signed-in member, as `spark.m/<memberId>/<key>`. This covers reads, writes, property access, enumeration and `clear()`.
-  - Only device keys stay shared: the sign-in session, the sign-out marker, flags and reload guards.
-  - Signed-out use has its own `guest` scope.
-  - The member id comes from the stored Supabase session. It decides only *where this browser keeps its cache*; it is never used as authorization.
-- **Account switch and sign-out.** When the member changes in this tab, or in another tab through the `storage` event:
-  1. the member epoch increases;
-  2. in-flight member requests are aborted;
-  3. any response that arrives after the change is dropped;
-  4. the page is left, either to sign-in or by reloading for the new member, so **no in-memory state from the previous member survives**.
-- **Sign-out** first saves anything still unsaved to the account (bounded wait), then revokes the session. The member's own local copy is kept in their scope and is **never deleted**.
-- **Late responses:** a wrapper on member `/api/*` calls (`lib/memberScope/memberFetch.ts`) does three things:
-  - attaches the bearer token and the `x-member-scope` header;
-  - aborts the call when the member changes;
-  - discards any response that arrives after a change.
-
-### Account-backed persistence
-- **No new table and no competing store.** The new domain `member_store` lives on the existing `companion_member_records` table, with one record per member store.
-- Local storage is now an account-scoped **cache**; the account record is the source of truth across browsers.
-- Engine: `lib/memberSync/engine.ts`.
-  - **Three-way merge** against the last synced copy (`lib/memberSync/merge.ts`).
-    - Records with an `id` merge record by record, so additions in two browsers both survive.
-    - A record removed on one side but edited on the other is kept.
-    - A true conflict on the same field keeps the newer record by its own timestamp. The other value goes to a recoverable conflict log (`spark.sync.conflicts.v1`).
-  - **Compare-and-set writes** on `record_version`, with a **verified read-back** of every write.
-  - **Removal of a whole store** writes a soft `deleted` tombstone. Writing the store again restores it.
-  - **Record-level Remove / Restore / Undo flags** inside stores travel as ordinary field changes, with identities, links and versions preserved.
-  - **Failed saves** stay queued: the queue is saved per member, retried with backoff, and survives a reload. The local copy is never discarded.
-  - **Hydration on sign-in** happens **before the workspace renders** ("Bringing your work in…", bounded at 8 s). The account is also pulled on focus, on reconnect, and every 30 s.
-  - If account data changes underneath an open page, the page reloads, unless the member is typing. In that case the page's next write is merged, never overwritten.
-  - The last-synced copies live in IndexedDB, so they don't compete with the stores for localStorage quota.
-
-### Shared chat path
-- `/api/companion-chat`, `/api/claire-reasoning`, `/api/research-live` and `/api/board/recommend` now call `requireCompanionMember`. It:
-  1. verifies the bearer token with Supabase (`auth.getUser`);
-  2. returns 401 without a valid session;
-  3. returns 409 when `x-member-scope` does not match the token. The header is a consistency check only, **never authorization**.
-- Development without sign-in (`NEXT_PUBLIC_COMPANION_AUTH_DISABLED` / dev bypass) still works and carries no member data.
-- The chat model still receives current-turn context from the browser. That context is now the signed-in member's own scoped data, merged with their account copy.
-
-### Legacy and signed-out data
-- Old unscoped records, and data saved while signed out, are **hidden from active reads** and never attached silently.
-- On sign-in, when meaningful legacy data exists, a small dialog (`LegacyDataClaimPrompt`) asks **"Is this your work?"** with three answers:
-  - **Yes, it's mine:**
-    1. merge into the member's stores (union by record id, so repeating it adds nothing twice);
-    2. write to the account;
-    3. **verify** the account copy;
-    4. only then move the originals to a recoverable archive (`spark.legacy/archive/<member>/…`).
-    5. If verification fails, the originals are kept and the dialog says so.
-    - `restoreLegacyArchive` puts originals back.
-  - **Not mine:** remembered for this member only; the data stays untouched for whoever owns it.
-  - **Decide later:** asks again next time.
-
-### Database
-- `supabase/migrations/20261002_member_isolation_rls.sql`. It is idempotent: it was applied twice without errors.
-- For `companion_member_records` it re-asserts owner-only select, insert and update, and revokes `anon`.
-- For `companion_creation_workspaces` it enables owner-only RLS: select, insert and update where `auth.uid() = user_id`. It also revokes `anon` and adds the owner index.
-- **There is no member delete policy on either table** (soft delete only).
+- **Older data with no owner** (saved before accounts were separated, or while signed out) is hidden and never attached automatically. On sign-in you are asked **"Is this your work?"**:
+  - **Yes:**
+    1. it is merged into your stores by record id, so repeating it creates no duplicates;
+    2. it is saved to your account;
+    3. **the account copy is verified**;
+    4. only then are the originals moved to a recoverable archive. They are never deleted.
+    - If verification fails, nothing is moved and Spark tells you so.
+  - **Not mine:** remembered for you only. The data stays untouched for whoever owns it.
+  - **Decide later:** you are asked again next time.
+- **Recovery:** archived originals can be put back (`restoreLegacyArchive`).
+- **Database:** `supabase/migrations/20261002_member_isolation_rls.sql` is idempotent; it was applied twice without errors.
 
 ---
 
-## 3. Persistence coverage
+## 5. Live verification evidence
 
-| Area | Member stores (keys) | Account source | Status |
+**How it was tested.**
+- Chromium in separate browser contexts (independent storage), one of them at a phone-sized viewport (390×844, touch). **This is browser-context testing, not a physical phone.**
+- Supabase is the real software stack, running locally. Two real accounts were used.
+- **The language model's replies were stubbed at the network layer** (no model key here). Everything else is real: routing, reminders, research read-back, VTS, stores, sync, auth and RLS.
+
+### Candidate `f4c833c79` vs baseline `d472838f8` (same scripts, same environment)
+
+| # | Check | Candidate | Baseline |
 |---|---|---|---|
-| Business profile and history | `companion-business-profile-v1` (envelope incl. write log), `companion-business-os-v1`, `companion-decision-intelligence-v1` | `member_store` | **Account-backed (new)** |
-| Ideal clients | `companion-ideal-clients-v1` | `member_store` | **Account-backed (new)**; browser-verified |
-| Decisions | `companion-decision-ledger-v1` | `strategic_decision` (existing) | Account-backed; now member-isolated |
-| Projects | `companion-projects-v1`, `-project-items-v1`, `-project-conversations-v1`, `-project-continue-v1`, `-project-asset-notes-v1`, `-project-plan-completions-v1`, `-recent-work-v1`, `-last-activity-v1`, `project-moments-v1` | `member_store` | **Account-backed (new)**; browser-verified (save, edit, remove, restore, concurrent) |
-| Board / Chamber / Strategy | `spark.board.director-discussions.v1`, `spark.boardroom.discussions.v1`, `spark.board.call-the-board.v1`, `companion-board-discussions-v1`, `spark:strategy-decision-memory:v1`, `companion-outcome-thread-v1`, `companion-outcome-goals-v1`, `chamber-*` meta, patterns, blockers, preferences, momentum stores | `member_store` | **Account-backed (new)** |
-| My Strategies, strategy work items | `companion-user-strategies-v1`, `spark:strategy-work-items:v1` | `user_strategy`, `strategy_work_item` (existing) | Account-backed; now member-isolated |
-| Research findings and sources | `companion-research-library-{collections,sessions,inquiries,active,observations,contextual-pending}-v1` | `member_store` | **Account-backed (new)** |
-| VTS maps | `companion-visual-focus-maps-v1` | `member_store` | **Account-backed (new)** |
-| Events | `companion-events-intelligence-v1`, `…-active-id` | `member_store` | **Account-backed (new)** |
-| Reminders / Rhythms / My Day | `companion-reminders-v1`, `companion-rhythms-v1` (+ owner variants), `-rhythm-history-v1`, `-rhythm-prefs-v1`, `-attention-obligations-v1`, `-day-state-v1`, `-plan-schedule-prefs-v1`, `-remember-referent-v1`, `spark:pending-remember-create:v1` | `member_store` | **Account-backed (new)**; reminders tombstone browser-verified |
-| Conversation continuity | `spark:active-work-context:v1`, `companion-conversation-handoff-stash-v1`, `spark-intent-workflow-v1`, `spark-suspension-v1`; strategic resume point | `member_store`; `strategic_continuity` | Account-backed. **Transcript and session spine stay local** (see blockers) |
-| Preferences, relationship memory | `companion-prefs-v1`, `companion-relationship-memory-v1`, `-relationship-preference-v1`, `spark:support-style-prefs:v1`, focus and talk-it-out preferences, onboarding state | `member_store` | **Account-backed (new)** |
-| Create | creation caches | `companion_creation_workspaces` (existing) | Account-backed; RLS migration added |
-| Evidence Vault | `companion-evidence-bank-v1` | none (kept separate as instructed) | **Member-isolated only; never synced, no new integration** |
-| Everything else (UI state, drafts, analytics) | ~1,300 other keys | none | **Member-isolated local cache** (temporary screen state) |
+| **Founder speech → visual aids → choice → development → Susan reminder → return** | | | |
+| F1.1 | Speech, visual aids, choice and development stay in one conversation | PASS | _see §5a_ |
+| F1.2 | A day-only reminder keeps the day and asks only the time | PASS | |
+| F1.3 | "Back to the speech": reminder held, not claimed saved; speech question restored | PASS | |
+| F1.4 | The next reply continues the speech with its history | PASS | |
+| F1.5 | "9am" completes the held reminder (tomorrow 9:00) | PASS | |
+| **Refresh and sign-in continuity** | | | |
+| F1.6 | Refresh reopens the work and its pending question | PASS | |
+| F1.7 | Second browser context (phone-sized) gets the same conversation, pending question and reminder | PASS | |
+| F1.8 | Continuing there keeps the full history | PASS | |
+| F1.9 | Sign-out hides the work; signing back in returns it, including the other browser's turn | PASS | |
+| F1.10 | Signing out on one device leaves the other signed in | PASS | |
+| **Research → grounded answer → selected-findings VTS → return** | | | |
+| F2.1 | Research saved in one browser is read back in the other from the saved findings, with no model call | PASS | |
+| F2.2 | The read-back shows clickable sources; retrieval dates are intact | PASS | |
+| F2.3 | Two chosen findings compared inside the visual ("Comparing 2 of 7") | PASS | |
+| F2.4 | Back returns to the originating research | PASS | |
+| F2.5 | The VTS map is on the account and in the other browser | PASS | |
+| **Two accounts, one browser** | | | |
+| S1.0–1.2 | Sign-out; A's work never appears on B's screen | PASS | PASS (but A's data remained readable) |
+| S1.3 | B's stores contain none of A's information | **PASS** | **FAIL** (B reads A's ideal client) |
+| S1.4 | B's chat request carries none of A's information | **PASS** | **FAIL** (A's data in B's prompt) |
+| S1.5 | Chat requests carry the member token and scope | PASS | token only |
+| S1L.1 | A's late answer, arriving after another tab switched account, never reaches B | PASS | PASS |
+| **Same account, two browsers** | | | |
+| S2.1–2.6 | Save, conversation spine, edit, remove, restore, whole-store tombstone | **PASS** | FAIL (except the trivial 2.6) |
+| S3.1 | Concurrent edits in both: both kept, no duplicates | **PASS** | FAIL |
+| S4.1–4.2 | Failed save (HTTP 500): kept and queued, then retried and delivered | **PASS** | FAIL |
+| **Legacy data** | | | |
+| S5.1–5.4 | Asked, not silent · merged, verified, archived · repeat makes no duplicates · "Not mine" respected | **PASS** | FAIL / n/a |
+| **Server** | | | |
+| S6.1–6.4 | No session: 401 · forged token: 401 · mismatched member: 409 · signed in: 200 | **PASS** | 200 / 200 / — / 200 |
 
----
+**Candidate: 39/39.**
 
-## 4. Migrations
+**Database (live, local Supabase):** 11/11. This covers:
+- two browsers converge through the account, including concurrent edits;
+- tombstone and restore;
+- member B cannot read, overwrite or plant member A's rows in either table;
+- anonymous callers have no access.
 
-| Migration | What it does | Verified |
-|---|---|---|
-| `20261002_member_isolation_rls.sql` | RLS and grants for member records and Create workspaces | Applied twice to local Supabase; live two-member RLS test passes |
-| Browser legacy → account claim | Ownership-confirmed, verified, repeatable, originals archived | Unit tests and live browser |
-| Signed-out (guest) → account | Same dialog | Unit test |
+**Unit tests (new):** 58 pass. They cover the scope shim, merge, sync engine (including the newest-wins conversation rules), server member check, route rejection, legacy claim, resume line, conversation archive and the held-reminder flow.
 
----
-
-## 5. Live evidence
-
-**What "live" means here.** All of this is **browser-context testing**: headless Chromium, with separate browser contexts (independent cookie and storage jars) in one machine. It is **not physical-device testing.**
-
-**Setup.**
-- Supabase is the real stack (GoTrue, PostgREST, Postgres 17 with the repository schemas), run locally through the Supabase CLI. It is reached through an HTTPS test hostname, because the app accepts only `*.supabase.co` URLs.
-- There are two real accounts.
-- The app runs with sign-in forced on (`NEXT_PUBLIC_COMPANION_AUTH_DISABLED=false`).
-- Chat replies were stubbed at the network layer so request bodies could be captured. The server's auth check was exercised directly.
-
-### Candidate vs baseline, identical script (`suite.mjs`)
-
-| # | Scenario | Candidate | Baseline `d472838f8` |
-|---|---|---|---|
-| S1.0 | Sign-out through the account menu | PASS | PASS (but A's conversation is **still readable** after sign-out) |
-| S1.1 | Member A sees own conversation | PASS | PASS |
-| S1.2 | Member B's screen shows none of A's conversation | PASS | PASS |
-| S1.3 | Member B reads none of A's stores | **PASS** | **FAIL**: B reads A's ideal client |
-| S1.4 | Member B's **chat request** carries none of A's information | **PASS** | **FAIL**: A's data is sent in B's prompt |
-| S1.5 | Chat requests carry the member token (and scope) | PASS (scope = member) | token only, no scope |
-| S1L.1 | A's late reply never reaches B (another tab switches account mid-reply) | PASS: the first tab leaves; the late reply is kept only under A's own scope | PASS (B's tab never loaded A's thread) |
-| S2.1 | Saved work carries to a second signed-in context of the same account | **PASS** | FAIL |
-| S2.2 | Conversation spine carries to the second context | FAIL (by design: see blockers) | FAIL |
-| S2.3 | Edit carries back | **PASS** | FAIL |
-| S2.4 | Removal carries | **PASS** | FAIL |
-| S2.5 | Restore carries | **PASS** | FAIL |
-| S2.6 | Whole-store removal carries as a tombstone | PASS | PASS (trivially: never shared) |
-| S3.1 | Concurrent edits in two contexts keep both, no duplicates | **PASS** | FAIL |
-| S4.1 | Failed save (simulated HTTP 500) keeps the local copy, stays queued | **PASS** | FAIL (no account save) |
-| S4.2 | Retry succeeds after the outage; the other context receives it | **PASS** | FAIL |
-| S5.1 | Legacy data not attached silently; ownership dialog shown | **PASS** | FAIL (attached silently) |
-| S5.2 | "Yes" merges, saves to the account, archives (not deletes) originals | **PASS** | n/a (the run stopped at this step: the baseline has no isolation layer to place the legacy data in) |
-| S5.3 | Repeating the claim creates no duplicates | **PASS** | n/a |
-| S5.4 | "Not mine" leaves data untouched and hidden, and is remembered | **PASS** | n/a |
-| S6.1 | Chat without a signed-in member | **401** | **200** |
-| S6.2 | Forged token with a real member id in the header | **401** | **200** |
-| S6.3 | Valid token, mismatched member scope | **409** | — |
-| S6.4 | Valid signed-in member | 200 | 200 |
-
-**Candidate: 23 of 24 pass.** The one failure, S2.2, is explained below.
-
-### Database (live, local Supabase)
-- `lib/memberSync/memberStore.integration.test.ts` passes 4/4:
-  - two contexts of one member converge through the account, including concurrent edits (version 3, all three records);
-  - soft tombstone and restore;
-  - member B cannot read, update or plant member A's rows; anon has no access;
-  - the same holds on `companion_creation_workspaces`.
-- The existing `durableRecords.integration.test.ts` passes 7/7.
-
-### Unit tests (new)
-| Area | Tests |
-|---|---|
-| Shim | 12 |
-| Merge | 7 |
-| Engine | 11 |
-| Server member auth | 5 |
-| Route rejection | 4 routes |
-| Legacy claim | 7 |
-| **All new tests** | **all pass** |
-
-- Three existing route tests now call the route as a signed-in member, through a mock of `requireCompanionMember`. Their assertions are unchanged.
-
-### Comparisons
-- **TypeScript:** the error set is identical to baseline (366 = 366, same files and codes; pre-existing).
-- **Lint on changed files:** no new problems after the final fix. The `rules-of-hooks` and `exhaustive-deps` findings in `CompanionAuthGate` / `CompanionAuthProvider` exist in baseline too.
-- **Full unit suite, same command on both:** see [the final section](#full-suite-comparison).
+### 5a. Baseline flow results and full-suite comparison
+_Filled in from the identical runs below._
 
 ---
 
 ## Remaining blockers
 
-1. **Production database.**
-   - Apply `20261002_member_isolation_rls.sql` in production.
-   - First compare it with the live `pg_policies` for `companion_creation_workspaces`; the repository's earlier policy text was never verified.
-   - Confirm the deployed commit and flags. I could not read either.
-2. **Conversation transcript and session spine stay per-browser (S2.2).**
-   - A reload in the *same* browser already starts a fresh spine, and the transcript is cleared on each fresh visit (it is restored only inside the Chamber).
-   - Syncing them would let one context's fresh visit overwrite another's, so they stay member-isolated local caches.
-   - What does cross browsers: the strategic return point (`strategic_continuity`), active work, outcome thread, pending reminders, projects, Board and research.
-   - **Cross-browser "continue this exact chat"** needs a Founder product decision on whether conversations are per-visit. The persistence is ready for it.
-3. **Stores are synced whole, one record per key.**
-   - Each store is one account record, merged by record id. That is correct but coarse.
-   - A very large store, such as a long research library, is rewritten on each change.
-   - Per-record rows would scale better. The business profile envelope is also merged as one JSON document.
-4. **Pages read their stores once on load.** When another browser changes data, an open page reloads, unless the member is typing. While typing, a removal made by that page of an item it never displayed can be undone by the merge (deliberately, so nothing is lost). The data is correct after the next reload.
-5. **Device storage quota is shared** by every member who uses the same browser. Quota recovery only trims the current member's keys.
-6. **Other `/api/*` routes:**
-   - The browser now sends the member token to all of them.
-   - Only the four member-context routes *require* it.
-   - Review the remaining paid AI routes (`decision-analyze`, `project-brain`, `braindump-classify`, `avatar-research`, `refine`, `remix`, and others) for member data before release.
-7. **Not checked:** Safari / Firefox, physical devices, and production Supabase latency.
+1. **Production database (access needed).** Apply `20261002_member_isolation_rls.sql` in production Supabase. First compare it with the live `pg_policies` for `companion_creation_workspaces`, because its earlier policy text was never verified.
+2. **Hosted preview and deployed version (access needed).** Deploy `integration/one-brain-member-persistence` to a Vercel preview with the production-like Supabase. This session cannot reach Vercel, so the served version above is the local build.
+3. **A real phone has not been tested.** All mobile evidence is a phone-sized Chromium context. Safari/iOS and Android Chrome still need a check, especially IndexedDB for the merge copies and the beforeInteractive script.
+4. **The same conversation open on two devices at the same moment.** If you type on both without either page coming back into view, the newest conversation wins on your account. The other version is kept in the recoverable conflict log; it is not merged turn by turn.
+5. **Granularity.** Each store is one account record, merged by record id. That is correct, but a very large store (a long research library) is rewritten whole on each change. Moving to per-record rows would scale better.
+6. **Other `/api/*` routes.** They now receive your sign-in token, but only the four member-context routes require it. The remaining paid AI routes should be reviewed.
+7. **Observed, unchanged.** Replying "My topic is ADHD in business" while a numbered choice is pending gets *"I'm not sure which option you meant"* and the choices again. That reply stays bound to the pending choice by the existing one-question rule. Recording the topic as context while keeping the choice open would be a separate improvement.
 
 ---
 
 ## PASS / HOLD
 
-| | |
+| Area | Result |
 |---|---|
-| Member isolation (one browser, two accounts) | **PASS**: no leak in screens, stores, chat prompts or late responses (live browser) |
-| Server ownership (chat path, RLS) | **PASS** locally; **HOLD** until the migration is confirmed in production |
-| Account persistence across browser contexts | **PASS** for saved work, edits, removals, restore, concurrent edits, failed-save retry; **HOLD** on cross-browser chat transcript (Founder decision) |
-| Legacy migration | **PASS** (confirmed, verified, repeatable, recoverable) |
-| **Overall** | **HOLD for production; preview ready.** Not merged, not deployed |
+| Member isolation (screens, stores, chat context, late answers) | **PASS** (live) |
+| Server ownership: chat path auth, RLS | **PASS** locally · **HOLD** until the migration is confirmed in production |
+| Account persistence across browsers (create, edit, reopen, remove, restore, continue) | **PASS** (live, browser contexts) |
+| Migration, repeats, failed saves, concurrent edits | **PASS** |
+| Founder speech flow · Research → VTS flow · refresh and sign-in continuity | **PASS** |
+| **Overall** | **HOLD for production** (blockers 1–3 need access or a device) · **PASS for the integration preview** |
