@@ -141,3 +141,13 @@ After each step you report the reply. I then read that turn's **Brain trace** an
 Retest from step 1 on this preview. The full suite on `d111c947` is running.
 
 Note: the test Matters from run 1 remain on the test account. They do not affect focus or resume, and can be removed on request.
+
+## Live run 2: desktop first, preview `d111c947`
+
+- Deployed commit confirmed: branch head `d111c9471dfa` → Vercel "Deployment has completed" (https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/uwnmv9ZdeMq7ugzsoBtgYAFa37uF).
+- Run 2 counts only Brain records created after 2026-10-04 21:43 UTC. The two test Matters from run 1 are excluded, not deleted.
+- The full suite on `d111c947` is running.
+
+| # | Desktop step | Result | Brain record check |
+|---|---|---|---|
+| D1 | Original unpunctuated message | pending | |
