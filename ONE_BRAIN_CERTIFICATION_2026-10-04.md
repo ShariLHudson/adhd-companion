@@ -41,23 +41,34 @@
 | Events, Clear My Mind | Connected or associated (files kept with the event or review turn) |
 | Board intake (×2), Strategy Chamber, Create entrance, Create draft review, Visual Thinking request, My Day planning box, Current Focus answers | **Paperclip removed until supported** (these surfaces never read files) |
 
-## Phone → laptop golden journey (about 12 minutes)
+## Phone → laptop golden journey (about 12 minutes; same tested commit `a76b021c`)
 
-1. **Phone**, signed in on the preview, main chat: type "I want to launch a course." Spark should offer prices.
-2. Type "the second one." Spark should confirm **$59**.
-3. Type "Actually no, the first." Spark should confirm **$49**.
-4. Type "We're not doing the workshop."
-5. Open **Research** and research "Do ADHD founders buy cohort courses?" Save it.
-6. Open **Strategy** and confirm a format (for example, 6-week cohort). Rule out "1:1 only."
-7. Open **Board** and convene on "Should I cap the first cohort at 10?" The Board's advice should appear, but no decision should be recorded.
-8. Close the app on the phone.
-9. **Laptop**, same account, Home: "Continue where I left off" should show **Launch a course**. Choose it.
-10. Type "Where were we?" It should mention $49, the 6-week cohort and "Not doing the workshop," and should not name $59 as current.
-11. Type "Yep." Then type "Why did we choose $49?" It should list the options, the change from $59, and the date.
-12. Open **Create** and ask for a launch email. It should use $49 and the cohort, and should not mention the workshop.
-13. **Phone**, refresh, then "where were we." It should show the same state.
+Type the words exactly as written. Do not give a reason for any choice: the journey checks that Spark does not invent one.
 
-**PASS only if every step matches.** Note any mismatch with its step number.
+1. **Phone**, signed in on the preview, main chat. Type: "I want to launch a course. Give me three price options as a numbered list: $49, $59 and $79, and ask which one I want."
+   Expect a numbered list that is exactly **1. $49 · 2. $59 · 3. $79**, followed by a question.
+2. **One Brain is on (check):** type "the fifth one."
+   Expect exactly: "I only gave you 3: 1. $49  2. $59  3. $79. Which one?"
+   If you get anything else, stop: One Brain is off on this preview. In Vercel, check that `NEXT_PUBLIC_ONE_BRAIN` is unset (not `0`, `false` or `off`).
+3. Type "the second one." Spark confirms **$59**.
+4. Type "Actually no, the first." Spark confirms **$49** as a change.
+5. Type "What were my choices?" Expect the same three options listed, with "You chose $49."
+6. Type "We're not doing the workshop."
+7. Open **Research** and research "Do ADHD founders buy cohort courses?" Let it finish.
+8. Open **Strategy** and confirm the 6-week cohort format. Rule out "1:1 only."
+9. Open **Board** and convene on "Should I cap the first cohort at 10?" The Board's advice should appear, but no decision should be recorded.
+10. Close the app on the phone.
+11. **Laptop**, same account, Home. "Continue where I left off" shows **Launch a course**. Choose it.
+    Expect a Foothold that mentions $49 and does not name $59 as current.
+12. Type "Where were we?" Expect $49, the cohort format and "Not doing the workshop." Then type "Yep."
+13. Type "Why did we choose $49?" Expect three things:
+    - the options ($49, $59, $79), that you first picked $59 and then changed it, and the date;
+    - a plain statement that **no reason was recorded**, possibly offering to note one;
+    - **FAIL if Spark invents a reason** (for example "because it's accessible").
+14. Open **Create** and ask for a launch email. It should use $49 and the cohort, and should not mention the workshop.
+15. **Phone**, refresh, then type "where were we." It should show the same state as the laptop.
+
+**PASS only if every step matches.** Note any mismatch with its step number and the exact reply.
 
 ## Release gate (all required)
 
