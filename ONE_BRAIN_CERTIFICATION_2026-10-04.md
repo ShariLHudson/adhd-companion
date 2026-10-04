@@ -120,3 +120,24 @@ After each step you report the reply. I then read that turn's **Brain trace** an
 4. **Code:** `git revert` of the merge on `main`, if a permanent removal is wanted.
 
 **Production: HOLD.**
+
+## Live run 1: preview `a76b021c`, member's phone (2026-10-04 19:20 UTC)
+
+| Step | Result | Evidence (live Brain trace / records) |
+|---|---|---|
+| One Brain enabled on the preview | **PASS** | `brain_trace` row `turn_059be97e…` written from device `dev-thad1…`, room `home` |
+| 1. "I want to launch a course give me three price options…" (no punctuation) | **FAIL** | Trace: `interpretation: continue`, `committed: false`. The Brain did not recognise new work in the run-on sentence |
+| 1. Price options shown | **FAIL** | The legacy router (`resolveWorkIntent` → `launch_is_project`) sent the turn to the Projects room menu ("create a project / research / ask for help / see the project"). The model was not asked |
+| One Matter | **FAIL** | Two Matters were created: `mat_0fee…` (from the legacy Active Work sentence label) and `mat_db4b…` (from the project made in the Projects menu, status `committed`) |
+
+### Repairs: commit `d111c947` (same branch)
+
+1. Run-on phone typing: the work ends where a request to Spark begins (`give me`, `can you`, `please`, `ask`…), so the Matter is named "Launch a course".
+2. When the Brain has just recognised new work, the legacy "launch = project" routing no longer leaves the chat. "Create / open a project" still routes.
+3. A legacy label or new project that clearly matches the Matter in focus (two or more shared meaningful words) joins it, so there is no second Matter.
+4. Regression tests replay the exact live message and the split (`lib/brain/liveRegression.test.ts`). Brain and route suites: 87 of 87 pass. TypeScript stays at 366.
+
+**New preview (`d111c947`): Vercel "Deployment has completed".** https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/uwnmv9ZdeMq7ugzsoBtgYAFa37uF
+Retest from step 1 on this preview. The full suite on `d111c947` is running.
+
+Note: the test Matters from run 1 remain on the test account. They do not affect focus or resume, and can be removed on request.
