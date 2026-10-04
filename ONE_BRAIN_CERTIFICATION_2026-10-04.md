@@ -86,3 +86,37 @@ Type the words exactly as written. Do not give a reason for any choice: the jour
 | No migrated capability with competing authority | PASS (see the retirement table in `docs/one-brain-estate-connection-report-2026-10-04.md`) |
 
 **Gate stays CLOSED** until the BLOCKED rows pass. Production remains on **HOLD** (`main` untouched).
+
+## Live certification session (commit `a76b021c`)
+
+### Environment facts (verified from here)
+
+| Item | Result | Evidence |
+|---|---|---|
+| Branch head = tested commit | **PASS** | `one-brain/convergence` → `a76b021c44d1` (git ls-remote) |
+| Preview build of `a76b021c` | **PASS** | Vercel commit status: "Deployment has completed" |
+| Live database ready for the Brain | **PASS** | `companion_member_records` has RLS `auth.uid() = user_id`; storage contract certified (rolled back) |
+| Brain records written by the preview so far | **0 rows** | Live query: no `brain_*` rows yet, so the preview has not been used |
+| Vercel environment variables (`OPENAI_API_KEY`, Supabase, `NEXT_PUBLIC_ONE_BRAIN`) | **BLOCKED** | No Vercel access from this environment (proxy 403, no Vercel connector). Secrets are never needed to check: the journey confirms behaviour |
+| Direct app URL | **BLOCKED** | Open the deployment page → copy the address under **Domains** → add `/companion` |
+| Real Spark replies and live research run from here | **BLOCKED** | `api.openai.com`, `*.supabase.co` and `*.vercel.app` refused by the network policy |
+
+### How each step is verified during your walkthrough
+
+After each step you report the reply. I then read that turn's **Brain trace** and the **Matter record** straight from the live database: interpretation, Matter id, committed operations, model called (yes/no), failure. So a failing step is diagnosed from evidence, never from wording.
+
+`[model-call]` lines appear in the Vercel function logs: Project → Deployments → this deployment → **Logs**, filter `model-call`.
+
+### Release recommendation (conditional)
+
+- **Release only if** steps 1–15 pass on the preview with the real model, the traces match, and member isolation holds on a second account.
+- Release means fast-forwarding `main` to `a76b021c` (main is an ancestor; no conflicts). No database migration is needed: Brain records live in the existing table, in new domains.
+
+### Rollback plan
+
+1. **Instant:** in Vercel, Promote / Instant Rollback to the previous production deployment (`b25f96dcb`). This takes seconds and needs no code change.
+2. **Feature-off without rollback:** set `NEXT_PUBLIC_ONE_BRAIN=0` and redeploy. The client gate and all Brain forwarding stop; legacy behaviour returns. The variable is built into the client bundle, so a redeploy is required.
+3. **Data:** Brain data is additive (`brain_matter`, `brain_member`, `brain_trace`, `brain_action` rows), with no schema change. It can be left in place, or removed per domain if ever required.
+4. **Code:** `git revert` of the merge on `main`, if a permanent removal is wanted.
+
+**Production: HOLD.**
