@@ -8,6 +8,8 @@
 - Vercel deployment for `a76b021c`: **Deployment has completed (success).**
 - **Preview URL:** https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/77R93DssRvzUE5GsZimSH8sv7Auf
   - This is the Vercel page for this exact deployment. Open it and press **Visit** to load the preview.
+- **Direct app URL: BLOCKED from here.** Vercel isn't reachable from this environment, and GitHub only exposes the dashboard link above. To get it, open the link and copy the address under **Domains** (or press **Visit**). Then sign in and open `/companion`.
+- **One Brain on this preview:** it is on by default in the code of `a76b021c`. It turns off only if `NEXT_PUBLIC_ONE_BRAIN` is set to `0`, `false` or `off`, and nothing in the repo sets it. I can't read the Vercel environment settings from here, so step 2 of the journey confirms it live.
 - Before testing, confirm in Vercel → Settings → Environment Variables (**Preview**) that these are set:
   - `OPENAI_API_KEY`
   - the Supabase URL and anon key
@@ -18,6 +20,7 @@
 |---|---|---|
 | Single integration branch | **PASS** | All work is on `one-brain/convergence`; the side branches were merged in and removed |
 | Preview build of the exact commit | **PASS** | Vercel status `success` on `a76b021c` |
+| One Brain enabled on the preview | **PASS (code) / confirm live at step 2** | On by default; no repo setting disables it |
 | Real model calls on the deployed preview | **BLOCKED** | This environment's network policy refuses `api.openai.com`, `*.supabase.co` and `*.vercel.app` (proxy 403). It needs your phone and laptop test below |
 | Phone → laptop golden journey on the preview | **BLOCKED** | Needs a real member and two real devices: steps below |
 | Short replies ("the second one", "$59", "option B", out of range, "what were my choices?") | **PASS (code)** | `lib/brain/offers.test.ts`, `goldenJourneys.test.ts` (GJ1 run 5×) |
@@ -29,7 +32,7 @@
 | Member isolation | **PASS** | Kernel and route tests, plus the live Postgres RLS check (rolled back) |
 | Honest failure / Brain trace / kill switch | **PASS (code)** | GJ6, trace assertions, `NEXT_PUBLIC_ONE_BRAIN=0` client tests |
 | No misleading paperclip | **PASS** | See below; `noMisleadingPaperclip.test.ts` enforces it |
-| Final full-suite comparison on `a76b021c` | **PENDING** | The run was still in progress at handoff. The previous full run (`4cc2dbb0`, 20,538 tests) found 0 new failures against the base: all 589 failures were pre-existing. Targeted suites on `a76b021c` show 0 new failures |
+| Final full-suite comparison on `a76b021c` | **PASS** | 20,556 tests. 589 fail in 261 files, and every one also fails on the pre-Brain base `228627b0`, so there are **0 new failures** |
 | TypeScript ratchet | **PASS** | 366 errors, against a baseline of 370 |
 
 ## Paperclips
@@ -78,8 +81,8 @@ Type the words exactly as written. Do not give a reason for any choice: the jour
 | Physical phone and laptop test | BLOCKED |
 | Cross-Room journey | PASS (code) |
 | Member isolation | PASS |
-| No new test failures | PENDING (final run) |
+| No new test failures | PASS (`a76b021c`, 0 new) |
 | Honest failure, Brain trace, kill switch | PASS |
 | No migrated capability with competing authority | PASS (see the retirement table in `docs/one-brain-estate-connection-report-2026-10-04.md`) |
 
-**Gate stays CLOSED** until the BLOCKED and PENDING rows pass.
+**Gate stays CLOSED** until the BLOCKED rows pass. Production remains on **HOLD** (`main` untouched).
