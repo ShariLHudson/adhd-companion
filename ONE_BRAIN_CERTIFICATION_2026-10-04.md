@@ -150,4 +150,5 @@ Note: the test Matters from run 1 remain on the test account. They do not affect
 
 | # | Desktop step | Result | Brain record check |
 |---|---|---|---|
-| D1 | Original unpunctuated message | pending | |
+| D1 | Original unpunctuated message | **PASS** | Trace `turn_ba2d…`: `new_matter`, ops `createMatter`+`focusMatter`, committed. **One** new Matter `mat_61a6…` titled **"Launch a course"** (the legacy Active Work label joined it: `active_work` link, no second Matter). Open Offer `price` with ids `opt_49`/`opt_59`/`opt_79`. Real model reply, no Projects menu. Note: the reply was recorded twice (an identical offer superseded the first), which is harmless and noted for cleanup |
+| D2 | "the second one" | pending | |
