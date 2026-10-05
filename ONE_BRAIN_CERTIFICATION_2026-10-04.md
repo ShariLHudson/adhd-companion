@@ -1,7 +1,95 @@
-# One Brain — Certification Report (2026-10-04)
+# One Brain — Certification Report (2026-10-04 → 2026-10-05)
 
-**Integration branch (single):** `one-brain/convergence` @ `a76b021c44d1fce0558392a6f222de82d512a173`
-**Production:** `main` untouched. **Release gate: CLOSED.**
+**Integration branch (single):** `one-brain/convergence` @ `ec9b9c01baa6f8ed59b2df88a7a78caba5655a81`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/62UgNdwnw6CHnSXyEudjjYGZsCLX (open it, press **Visit**)
+**Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
+
+## Current status (2026-10-05)
+
+### Verdict
+
+**Not ready for release.** Every live desktop step run so far either passes, or failed and was fixed and passed on retest. The remaining desktop checks, the phone, cross-device and member-isolation checks have not run yet.
+
+### Live desktop results (real member account, real model)
+
+| Area | Result | Evidence |
+|---|---|---|
+| Original unpunctuated message → **one** course Matter | **PASS** | D1: Matter `mat_61a6…` "Launch a course", price offer `opt_49`/`opt_59`/`opt_79` |
+| Short answer "2" → $59 | **PASS** (Brain) | D2: `offer_answer` → $59, real model called (992 ms). A duplicate send caused an extra menu, fixed in `cae3d795` |
+| Duplicate chat call without a Brain turn ID | **Fixed, code-verified** | The quality-repair rewrite no longer writes. Only the reply shown is recorded, on the same turn (`b72a8513`). Live recheck: step D3 |
+| Reload keeps the decision | **PASS** | R2: "You'd chosen price: $59… Still open: …". No price question |
+| Home → Continue shows the course | **PASS** | R3e: numbered list "1. Launch a course · You'd chosen price: $59", "2. Speaking Engagement in Chicago Checklist" |
+| Click Continue item → resumes the course | **pending** | R3f |
+| Duplicate send ("Actually no, the first." twice) | **pending** | D3 |
+| $49 correction | **pending** | D4 |
+| "What were my choices?" | **pending** | D5 |
+| Reload + "Where were we?" | **pending** | D6 |
+| Research → Strategy → Board → Create | **pending** | D7 |
+| Phone and cross-device | **not started** | Starts after desktop passes |
+| Member isolation on a second account | **not started** | |
+
+### Saved Brain state (member `80aa790b…`, read live from the database)
+
+- **One** live course Matter, `mat_61a649eb7caa4f1a` "Launch a course". Price **$59 current** is its only decision, decided by the member's "2". **No reason was given, so none is recorded.**
+- The open choice is the topic menu: content outline / marketing strategy / platform.
+- Two older Matters for the same course, `mat_0fee…` and `mat_db4b…`, are left over from the phone run of `a76b021c`. They were created before the one-Matter fix and hold no decisions or offers. They are **preserved, not deleted**, and hidden behind the real Matter on Home. Merging them is optional and needs the member's OK.
+- No decision or history was lost or rewritten during any repair.
+
+### Failures found live today, and their fixes (all on `one-brain/convergence`)
+
+| Commit | Failure seen | Root cause | Fix |
+|---|---|---|---|
+| `b72a8513` | A second offer was saved 3 s after a reply | The client quality-repair rewrite called chat without a Brain turn ID, and the server recorded its menu | The rewrite request never writes. The shown reply is recorded through `/api/brain/reply` on the same turn |
+| `83358267` | On reload Spark asked for the price again | The legacy resume line read a stale `spine.pendingQuestion` | The resume line comes from the Brain Foothold. The pending question is cleared when the Brain answers |
+| `71fa97e3` | Continue card showed an old workspace | The Welcome card read only the legacy workspace registry | The Brain's Matter leads Continue, and clicking it re-enters through the Brain |
+| `feabf347` | Still the old workspace | The account's onboarding flag (`complete: false`) hid all Continue options | Saved Brain work always counts. Numbered list added at the member's request |
+| `ec9b9c01` | Course listed 3 times, no numbers visible | Leftover run-1 copies; card styles hid the list numbers | Same-work entries collapse into one. Numbers are drawn explicitly |
+
+Every fix added regression tests built from the live records (15 new tests). TypeScript: **366 errors, unchanged** (baseline 370).
+
+### Full suite on `ec9b9c01`
+
+FULL_SUITE_PLACEHOLDER
+
+### Release gate
+
+| Requirement | Status |
+|---|---|
+| Real-model test | **PASS so far** (live Brain turns with the OpenAI call recorded in traces); remaining desktop steps pending |
+| Physical desktop test | **In progress**: R2 and R3e pass; R3f and D3–D7 pending |
+| Physical phone and cross-device test | **Not started** |
+| Cross-Room journey (Research → Strategy → Board → Create) | PASS (code); **live pending** (D7) |
+| Member isolation | PASS (code and RLS); **live second-account check pending** |
+| No new test failures | SEE_FULL_SUITE |
+| Honest failure, Brain trace, kill switch | PASS |
+| No competing authoritative state | **PASS after today's fixes**: the resume line and the Continue card now read the Brain. The legacy pending question and workspace registry remain as caches only |
+
+### Release recommendation
+
+**HOLD.** Release only when all of these pass on the same commit with no further code change:
+- R3f and D3–D7 on desktop;
+- the phone and cross-device steps;
+- the second-account isolation check;
+- 0 new failures in the full suite.
+
+If a fix is needed, the affected steps are re-run on the new preview. Release means fast-forwarding `main` to the certified commit. No database migration is needed.
+
+### Rollback plan
+
+1. **Instant:** Vercel → Promote / Instant Rollback to the previous production deployment. No code change.
+2. **Feature off without rollback:** set `NEXT_PUBLIC_ONE_BRAIN=0` and redeploy. The Brain gate, Brain resume line and Brain Continue items switch off, and legacy behaviour returns.
+3. **Data:** Brain rows are additive (`brain_matter`, `brain_member`, `brain_trace`, `brain_action`), with no schema change. They can be left in place.
+4. **Code:** `git revert` of the release merge on `main`.
+
+### Open items (not blocking the desktop run)
+
+- Optional: merge the two leftover run-1 course Matters into `mat_61a6…` (needs the member's OK).
+- The account's onboarding flag is still `complete: false`. It no longer hides work, but onboarding may still be offered.
+- Known from earlier rounds: legacy short-reply handlers; file delivery on the surfaces whose paperclip is hidden; Sheets and Forms on the Action Gateway; work links for Reminders and Rhythms.
+
+---
+
+## History (2026-10-04 onward, kept as recorded)
 
 ## Preview (exact commit)
 
@@ -167,9 +255,9 @@ Note: the test Matters from run 1 remain on the test account. They do not affect
 - **Duplicate chat call without a Brain turn ID: was NOT resolved on `cae3d795`.** Cause: the client's quality-repair rewrite (`CompanionPageClient`) calls companion-chat a second time without a turn ID. The server saved that rewrite's menu as an offer even when the rewrite was not shown.
 - **Fixed in `b72a8513`.** The rewrite request never writes. When the rewrite is shown, it is recorded once on the same Brain turn (`/api/brain/reply`). A rewrite that asks nothing withdraws the first reply's offer. 3 new regression tests pass, 114 Brain tests pass, and there are 366 type errors, the same as before.
 - Preview `b72a8513`: Vercel "Deployment has completed", https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/Cmco8HJGvDmpGQ4AsT1TSFpB3Vv2. It is the branch head.
-- The full-suite run on `b72a8513` was stopped because it was superseded. Full suite: the runs on `b72a8513` and `83358267` were stopped because they were superseded. Full suite: the run on `71fa97e3` was stopped because it was superseded. Full suite: the run on `feabf347` was stopped because it was superseded. Full suite on `ec9b9c01`: running.
+- Full-suite runs on `b72a8513`, `83358267`, `71fa97e3` and `feabf347` were stopped because each commit was superseded. The run on `ec9b9c01` is reported in Current status.
 
-| # | Desktop step (on `b72a8513`) | Result | Brain record check |
+| # | Desktop step (commit as noted) | Result | Brain record check |
 |---|---|---|---|
 | R1 | Open the preview and resume (on `b72a8513`) | **FAIL → fixed** | Spark reopened with "Picking up where we left off … I'd asked: $79 Which one would you like to choose?" and the member had to give $59 again. **Cause:** the reload rebuilt the chat with a legacy resume line (`conversationResumeCue`). It read `spine.pendingQuestion`, which still held yesterday's price question because nothing cleared it when the Brain resolved the price. The Brain was right the whole time: **$59 current, one decision** (`dec_443a…`), untouched. The "$59" typed at 11:38 (trace `turn_77b1…`, `continue`) changed nothing. **Fixed in `83358267`:** with One Brain on, the resume line comes from the Matter's Foothold, read fresh from the server ("Launch a course. You'd chosen price: $59. Still open: … Pick one: …"). The legacy pending question is cleared whenever the Brain answers. Decisions and history are preserved |
 | R2 | Reload (on `83358267`, Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/9oycx4XoNATY2UoF6tT1fydgJBqN) | **PASS** | Screenshot: "Picking up where we left off — Launch a course. You'd chosen price: $59. Still open: Which one would you like to dive into? Pick one: Create a course content outline, Develop a marketing strategy or Set up the platform." No price question. History kept above it. Brain: no write on reload; still **one** price decision, **$59 current**; one Matter |
