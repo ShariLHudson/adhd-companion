@@ -1,7 +1,7 @@
 # One Brain — Certification Report (2026-10-04 → 2026-10-05)
 
-**Integration branch (single):** `one-brain/convergence` @ `89aad5a3034e6566042b94a66858404ae04f2e7d`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/9AqnzkDYuj3q86HHUUsxUm2Ys8D5 (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `33a20d8dc01b7a38c53b45f40ace2f97727563e8`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HRYrkYCNPFuKhG1BGYmTEk4fHMoY (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
 ## Current status (2026-10-05)
@@ -10,7 +10,9 @@
 
 **Not ready for release.** Every live desktop step run so far either passes, or failed and was fixed and passed on retest. The remaining desktop checks, the phone, cross-device and member-isolation checks have not run yet.
 
-### Shared workflow: implemented on `33a20d8d` (2026-10-05)
+### Shared workflow: implemented on `33a20d8d` (2026-10-05; Vercel "Deployment has completed"; full suite running)
+
+**Live desktop (W-steps):** W1 Home shows the review notice → Review → Combine; W2 Continue shows one course entry with next step; W3 Undo/redo check; W4 work-identity turns. All pending.
 
 | Area | What is implemented | Verified how | Result |
 |---|---|---|---|
