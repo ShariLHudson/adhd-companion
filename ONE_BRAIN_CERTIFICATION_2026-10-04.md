@@ -1,7 +1,7 @@
 # One Brain — Certification Report (2026-10-04 → 2026-10-05)
 
-**Integration branch (single):** `one-brain/convergence` @ `12790bfdbdd7891d102e6845147d11f5b1fdf7bb`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/DSCRz7Nv8ZVQnxig71dqi7mYcEf2 (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `a65c5fb567971da08056e4c993991b1923d9e7e9`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/7Ja4FzDDpuRsGsZebaHXjv66WmN8 (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
 ## Current status (2026-10-05)
@@ -40,7 +40,7 @@
 | W1b | Include the mixed Matter | **FAIL → fixed (`12790bfd`)** | After the combine the review notice disappeared: the planner lost the trail because the work in focus when that Matter was made had itself been merged. Fixed: reconcile follows merged copies, and the notice stays while a kept-separate item remains (test reproduces the live order) |
 | W1c | Combine should open a Project | **Added (`12790bfd`)** | After combining, and when Continue opens work that has a Project, its Project home opens (next step, decisions, requirements, materials, "Pick up in conversation") |
 | W2 | Combine again (`12790bfd`, 15:35) | **PASS (Project) / FAIL (include) → fixed (`a65c5fb5`)** | PASS: after Combine the **Launch a course Project home opened**, showing "Still open: Which one would you like to tackle next?", "Decided: $59 · Creating a course content outline", both requirements in the member's words (the partial one marked), and "Pick up in conversation". FAIL: trace `turn_d0fa…` shows that Combine saved one requirement and did **not** include the mixed Matter. The include link was easy to miss, and the review kept re-offering a requirement that was already saved (a no-op, since the claim id was the same). Fixed: two clear buttons ("Combine all: … is part of … too" / "Combine, but keep it separate"), and a saved requirement is never offered again |
-| W3 | "Combine all" → one course entry in Continue (`a65c5fb5`) | pending | |
+| W3 | "Combine all" → one course entry in Continue (`a65c5fb5`, Vercel "Deployment has completed") | pending | |
 
 | Area | What is implemented | Verified how | Result |
 |---|---|---|---|
