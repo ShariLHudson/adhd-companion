@@ -10,6 +10,25 @@
 
 **Not ready for release.** Every live desktop step run so far either passes, or failed and was fixed and passed on retest. The remaining desktop checks, the phone, cross-device and member-isolation checks have not run yet.
 
+### VERIFY: how it works today, the gap, and the change (`c3773dae`)
+
+**How VERIFY works today (before this change):**
+- **Writes:** compare-and-set on every record version, so a stale device cannot overwrite newer state.
+- **Decisions:** only current decisions reach any model call; superseded ones are history. A short reply resolves only an Open Offer that is still open, and only on the work in focus. "Actually no…" corrects the last resolution only.
+- **Resume:** the line is read fresh from the server's saved place in the work (its Foothold), never from a browser cache or a stale pending question (fixed today).
+- **External actions (Action Gateway):** an approval is bound to the exact target and payload fingerprint, so a changed payload voids it. An idempotency key prevents double sends. Nothing is called done until the provider confirms it.
+- **Reconcile:** applies only the exact plan the member reviewed (fingerprint).
+
+**The gap this requirement exposes (real):** VERIFY checked execution and payload integrity, not whether the situation was still current at the moment of acting. Concretely:
+1. A conversation → Create build kept writing sections even if the member had since approved a different outline, or archived or combined the work.
+2. "keep writing" would resume on the old outline.
+3. The Action Gateway does not re-check, at execute time, that the work and decisions behind a prepared action are still current. The payload check catches edits, but not a newer decision or a reply that arrived meanwhile.
+
+**Smallest reliable change (done for 1 and 2; 3 is the next step):**
+- **Done (1 and 2):** a build records which approved outline it is based on. Each section re-checks on the server that the work is still open and current, and that the outline was not replaced. If not, it stops honestly and keeps what was written. "keep writing" after an outline change asks once instead of resuming. Silent when nothing changed. 4 new tests.
+- **Next (3), when the next external action is wired:** the gateway records the work's current decision ids at "prepared" and re-checks them at "execute". If they changed, or the follow-up's recipient has already replied, it returns `situation_changed` and asks once.
+- **Not built:** Authority Scope (what Spark may do externally). It stays a retained future requirement; the gateway's approval binding is today's boundary.
+
 ### Shared workflow: implemented on `33a20d8d` (2026-10-05; Vercel "Deployment has completed"; full suite running)
 
 **Live desktop (W-steps):** W1 Home shows the review notice → Review → Combine; W2 Continue shows one course entry with next step; W3 Undo/redo check; W4 work-identity turns. All pending.
