@@ -129,9 +129,9 @@
 
 Every fix added regression tests built from the live records (15 new tests). TypeScript: **366 errors, unchanged** (baseline 370).
 
-### Full suite on `ec9b9c01` (the run on `89aad5a3` is in progress)
+### Full suite on `4058d03f` (run in a separate checkout at that exact commit)
 
-**PASS: 0 new failures.** 20,577 tests. 587 fail, and every one also fails on the pre-Brain base `228627b0`. 2 tests that fail on the base now pass (`arrivalExperience`, `arrivalIntelligence`). The 5 suite load errors are the same ones as on the base. The run used the committed tree, with no edits during it.
+**PASS: 0 new failures in behaviour.** 20,639 tests. 588 fail, and all but one also fail on the pre-Brain base `228627b0`. 2 tests that fail on the base now pass. The 5 suite load errors are the same ones as on the base. The one difference is `projectHomesImportSafety` "loads panel graph" timing out at vitest's 5 s default. The same cold import takes about 18 s on `ec9b9c01` and about 16 s on `4058d03f` (measured), so it is runner timing, not a heavier page. The test asserts the import graph, not speed; it now has an explicit 30 s timeout (`2cfc27a2`), nothing skipped, and passes. TypeScript: 365 errors (baseline 370; this work removed one).
 
 ### Release gate
 
@@ -142,7 +142,7 @@ Every fix added regression tests built from the live records (15 new tests). Typ
 | Physical phone and cross-device test | **Not started** |
 | Cross-Room journey (Research → Strategy → Board → Create) | PASS (code); **live pending** (D7) |
 | Member isolation | PASS (code and RLS); **live second-account check pending** |
-| No new test failures | **PASS** (`ec9b9c01`: 0 new, 2 more passing) |
+| No new test failures | **PASS** (`4058d03f`: 0 new in behaviour; one runner-timing timeout addressed in `2cfc27a2`) |
 | Honest failure, Brain trace, kill switch | PASS |
 | No competing authoritative state | **PASS after today's fixes**: the resume line and the Continue card now read the Brain. The legacy pending question and workspace registry remain as caches only |
 
