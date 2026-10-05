@@ -31,7 +31,15 @@
 
 ### Shared workflow: implemented on `33a20d8d` (2026-10-05; Vercel "Deployment has completed"; full suite running)
 
-**Live desktop (W-steps, on `c3773dae`):** W0 (on `33a20d8d`, screenshot): the Continue card showed the four course entries plus "Some of your work was saved more than once. Review", so the notice appeared live. W1 Review → Include the mixed Matter → Combine; W2 Continue shows one course entry with its next step, and the Project carries the course name; W3 Undo/redo check; W4 work-identity turns. W1–W4 pending.
+**Live desktop (W-steps):**
+
+| # | Step | Result | Evidence |
+|---|---|---|---|
+| W0 | Review notice appears (`33a20d8d`) | **PASS** | Screenshot: "Some of your work was saved more than once. Review" |
+| W1 | Review → Combine (`c3773dae`, 15:25) | **PASS (partial)** | Live trace `turn_fbd2…` `reconcile`: Chicago unlinked, 4 merges, 2 requirements. `mat_0fee…`, `mat_db4b…`, `mat_58d7…` and `mat_27a8…` are now superseded with `mergedInto` = course (kept, not deleted). Course: **$59** and the outline choice still current; Project `1791141639086-ntyago` linked; Project **renamed to "Launch a course"** (synced record, 15:25:14). The "everything we write…" Matter was not included (the include option was not used) |
+| W1b | Include the mixed Matter | **FAIL → fixed (`12790bfd`)** | After the combine the review notice disappeared: the planner lost the trail because the work in focus when that Matter was made had itself been merged. Fixed: reconcile follows merged copies, and the notice stays while a kept-separate item remains (test reproduces the live order) |
+| W1c | Combine should open a Project | **Added (`12790bfd`)** | After combining, and when Continue opens work that has a Project, its Project home opens (next step, decisions, requirements, materials, "Pick up in conversation") |
+| W2 | One course entry in Continue; opens its Project | pending (`12790bfd`) | |
 
 | Area | What is implemented | Verified how | Result |
 |---|---|---|---|
