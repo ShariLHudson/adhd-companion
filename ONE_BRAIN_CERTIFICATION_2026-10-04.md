@@ -167,11 +167,13 @@ Note: the test Matters from run 1 remain on the test account. They do not affect
 - **Duplicate chat call without a Brain turn ID: was NOT resolved on `cae3d795`.** Cause: the client's quality-repair rewrite (`CompanionPageClient`) calls companion-chat a second time without a turn ID. The server saved that rewrite's menu as an offer even when the rewrite was not shown.
 - **Fixed in `b72a8513`.** The rewrite request never writes. When the rewrite is shown, it is recorded once on the same Brain turn (`/api/brain/reply`). A rewrite that asks nothing withdraws the first reply's offer. 3 new regression tests pass, 114 Brain tests pass, and there are 366 type errors, the same as before.
 - Preview `b72a8513`: Vercel "Deployment has completed", https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/Cmco8HJGvDmpGQ4AsT1TSFpB3Vv2. It is the branch head.
-- Full suite on `b72a8513`: running.
+- The full-suite run on `b72a8513` was stopped because it was superseded. Full suite on `83358267`: running.
 
 | # | Desktop step (on `b72a8513`) | Result | Brain record check |
 |---|---|---|---|
-| D3 | Duplicate send: "Actually no, the first." pressed twice quickly | pending | |
+| R1 | Open the preview and resume (on `b72a8513`) | **FAIL → fixed** | Spark reopened with "Picking up where we left off … I'd asked: $79 Which one would you like to choose?" and the member had to give $59 again. **Cause:** the reload rebuilt the chat with a legacy resume line (`conversationResumeCue`). It read `spine.pendingQuestion`, which still held yesterday's price question because nothing cleared it when the Brain resolved the price. The Brain was right the whole time: **$59 current, one decision** (`dec_443a…`), untouched. The "$59" typed at 11:38 (trace `turn_77b1…`, `continue`) changed nothing. **Fixed in `83358267`:** with One Brain on, the resume line comes from the Matter's Foothold, read fresh from the server ("Launch a course. You'd chosen price: $59. Still open: … Pick one: …"). The legacy pending question is cleared whenever the Brain answers. Decisions and history are preserved |
+| R2 | Reload and Continue show $59 without asking again (on `83358267`) | pending | |
+| D3 | Duplicate send: "Actually no, the first." pressed twice quickly | paused | |
 | D4 | $49 correction | pending | |
 | D5 | "What were my choices?" | pending | |
 | D6 | Reload, then "Where were we?" | pending | |
