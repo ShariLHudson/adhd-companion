@@ -156,3 +156,22 @@ Note: the test Matters from run 1 remain on the test account. They do not affect
 | D3 | "Actually no, the first." (on `cae3d795`) | pending | Checked offline: this phrase is not read as option 1 of the topic menu. It corrects the price choice to $49 |
 
 **New preview `cae3d795`** (repairs for D2): Vercel "Deployment has completed". https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/7Mythq9qXSHdRSep3DtY7FrfFHEj. The desktop run continues on it. The Matter saved so far is kept server-side, so the run resumes from D3. **Full suite on `cae3d795`: PASS.** 20,562 tests. 589 fail, every one already failing on the base, so **0 new failures**. The 5 suite load errors are the same ones as on the base. (The run on `d111c947` was stopped because that commit was superseded.)
+
+## Resume: 2026-10-05, desktop first
+
+**Checked before any typing:**
+- Branch `one-brain/convergence` was at `cae3d795` (GitHub and `git ls-remote` agree). No Brain activity since 2026-10-04 22:03 UTC, so the saved work is unchanged.
+- Saved course Matter `mat_61a6…` "Launch a course": **one** Matter for the course. Price decision **$59 current**, the only price decision, decided by the member's "2". The member gave no reason, and none is recorded.
+- Offers: the price offer `off_5b27…` is resolved ($59). The only open offer is the topic menu `off_60a6…` (content outline / marketing strategy / platform), the menu last shown.
+- What "Actually no, the first." refers to: the **price choice** (the Brain's last resolution), so it changes the price to **$49**. Checked against the code: the phrase is not read as option 1 of the open topic menu.
+- **Duplicate chat call without a Brain turn ID: was NOT resolved on `cae3d795`.** Cause: the client's quality-repair rewrite (`CompanionPageClient`) calls companion-chat a second time without a turn ID. The server saved that rewrite's menu as an offer even when the rewrite was not shown.
+- **Fixed in `b72a8513`.** The rewrite request never writes. When the rewrite is shown, it is recorded once on the same Brain turn (`/api/brain/reply`). A rewrite that asks nothing withdraws the first reply's offer. 3 new regression tests pass, 114 Brain tests pass, and there are 366 type errors, the same as before.
+- Full suite on `b72a8513`: running.
+
+| # | Desktop step (on `b72a8513`) | Result | Brain record check |
+|---|---|---|---|
+| D3 | Duplicate send: "Actually no, the first." pressed twice quickly | pending | |
+| D4 | $49 correction | pending | |
+| D5 | "What were my choices?" | pending | |
+| D6 | Reload, then "Where were we?" | pending | |
+| D7 | Research → Strategy → Board → Create | pending | |
