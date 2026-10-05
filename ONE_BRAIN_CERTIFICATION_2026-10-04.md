@@ -10,6 +10,38 @@
 
 **Not ready for release.** Every live desktop step run so far either passes, or failed and was fixed and passed on retest. The remaining desktop checks, the phone, cross-device and member-isolation checks have not run yet.
 
+### Shared-workflow diagnosis and plan (2026-10-05, before further implementation)
+
+**Evidence: the course conversation produced 6 Matters for one course.**
+
+| Matter | Created by | Shared cause |
+|---|---|---|
+| `mat_61a6…` "Launch a course" (real: $59, outline choice) | Brain `new_matter` | — |
+| `mat_0fee…` (run 1, active_work) | Legacy Active Work label from a chat sentence | A chat sentence could start work (closed in `89aad5a3`, record remains) |
+| `mat_db4b…` (run 1, holds the **Project** link) | Projects menu | The Project was created as separate work. The Project record is **not in the account's saved records** (browser-only) |
+| `mat_58d7…` "develop the entire outline…" | Legacy label | Same as `mat_0fee…` |
+| `mat_27a8…` "Start at the top and develp lesson 1" | **Brain** `new_matter` | Interpreter: any "let's <verb> …" is new work, **even with a Matter in focus** |
+| `mat_39c2…` "everything we write for the course needs … fun, humor" | Legacy label | A **requirement** treated as work; requirements are never saved |
+
+**Already connected:** offers, decisions, corrections and recall; resume line and Continue from the Brain Foothold; the Brain block in chat, generate and Create routes; the conversation → Create build (code-verified only).
+
+**Where the shared flow breaks:**
+1. Work identity has no "same work by default" rule.
+2. Requirements, scope changes and tasks are not saved on the work.
+3. Duplicates are only hidden, never reconciled.
+4. Projects are separate, browser-held, and not built from the work.
+5. Create materials are not reliably tied to the work or Project home.
+6. Continue merges three sources by title, and shows decisions rather than the next step.
+
+**Plan (shared paths only, no course rules, no forced Projects):**
+1. **Work identity:** while a Matter is in focus, every turn and Room proposal attaches to it. New work needs an explicit signal: the member names something different ("a new …", "another …", or a different object with no reference to the current work).
+2. **Requirements, scope and tasks:** saved on the Matter in the member's words; used by every model call and by Create; tasks move the Foothold's next step.
+3. **Reconcile:** a kernel merge moves links, claims, decisions and rooms into the surviving Matter. Each merged Matter is kept, marked superseded, with a pointer, and its sentence is preserved as a requirement or note. An unlink step removes the wrong Chicago link. Applied to this account through the same write path, with a trace. Nothing is deleted. The display-only collapse is then removed.
+4. **Projects:** a Project home, when the member makes one, reads its Matter: decisions, requirements, linked Create materials and next step. The Project link must survive across devices.
+5. **Create:** every piece is tied to its Matter (and the Project home, if one exists) by link, never by title.
+6. **Continue:** one entry per open Matter; legacy items only when not linked to a Matter; the line shows the next unfinished step.
+7. **Verify** three journeys (course, event, client proposal) through the real routes, with interruption, reload and device switch: one identity, decisions, requirements, linked materials, next step. Then live desktop for the course; phone after.
+
 ### Live desktop results (real member account, real model)
 
 | Area | Result | Evidence |
