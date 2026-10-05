@@ -1,7 +1,7 @@
 # One Brain — Certification Report (2026-10-04 → 2026-10-05)
 
-**Integration branch (single):** `one-brain/convergence` @ `33a20d8dc01b7a38c53b45f40ace2f97727563e8`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HRYrkYCNPFuKhG1BGYmTEk4fHMoY (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `c3773daed5c5c5f29093e3a559c1e2955d584cdb`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/48wfPkiUZb2bJcrJaK8mHR6PhVrt (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
 ## Current status (2026-10-05)
@@ -31,7 +31,7 @@
 
 ### Shared workflow: implemented on `33a20d8d` (2026-10-05; Vercel "Deployment has completed"; full suite running)
 
-**Live desktop (W-steps):** W1 Home shows the review notice → Review → Combine; W2 Continue shows one course entry with next step; W3 Undo/redo check; W4 work-identity turns. All pending.
+**Live desktop (W-steps, on `c3773dae`):** W0 (on `33a20d8d`, screenshot): the Continue card showed the four course entries plus "Some of your work was saved more than once. Review", so the notice appeared live. W1 Review → Include the mixed Matter → Combine; W2 Continue shows one course entry with its next step, and the Project carries the course name; W3 Undo/redo check; W4 work-identity turns. W1–W4 pending.
 
 | Area | What is implemented | Verified how | Result |
 |---|---|---|---|
