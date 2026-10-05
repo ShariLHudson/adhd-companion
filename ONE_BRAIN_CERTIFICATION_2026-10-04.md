@@ -1,7 +1,7 @@
 # One Brain — Certification Report (2026-10-04 → 2026-10-05)
 
-**Integration branch (single):** `one-brain/convergence` @ `dc828ff73801d09bdcbff322c7a478e341808273`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HPyCksuY5ZXKeHGPd5hJTWWz5z6w (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `89aad5a3034e6566042b94a66858404ae04f2e7d`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/9AqnzkDYuj3q86HHUUsxUm2Ys8D5 (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
 ## Current status (2026-10-05)
@@ -49,7 +49,7 @@
 
 Every fix added regression tests built from the live records (15 new tests). TypeScript: **366 errors, unchanged** (baseline 370).
 
-### Full suite on `ec9b9c01` (the run on `dc828ff7` is in progress)
+### Full suite on `ec9b9c01` (the run on `89aad5a3` is in progress)
 
 **PASS: 0 new failures.** 20,577 tests. 587 fail, and every one also fails on the pre-Brain base `228627b0`. 2 tests that fail on the base now pass (`arrivalExperience`, `arrivalIntelligence`). The 5 suite load errors are the same ones as on the base. The run used the committed tree, with no edits during it.
 
@@ -276,7 +276,8 @@ Note: the test Matters from run 1 remain on the test account. They do not affect
 | C4 | "develop the entire outline into the course completion" | **FAIL** | Trace `turn_797e…` `continue`, not handled. Spark returned **another outline in chat**. **No Create artifact** exists: the newest `companion_creation_workspaces` row is from 2026-09-30. The legacy Active Work label then created a **second Matter**, `mat_58d7…`, titled with the sentence, and **moved focus to it**. One course is now two Matters again |
 | C5 | Cross-Matter link | **FAIL** | The course Matter carries `creation: work-417dc…`, which is the **Chicago checklist**. The link was made at 11:49 when the old Continue card resumed that workspace while the course was in focus |
 | C6 | Course creation complete? | **NOT complete** | Chat text only; nothing saved or editable. Not marked complete |
-| C-fix | Conversation → Create hand-off (`89aad5a3`) | **Fixed, code-verified; live retest pending** | (1) "it's for X, and Y" saves **audience** and **purpose** on the Matter in focus, in the member's words. (2) Approving an outline Spark just gave saves it on the Matter as the **approved outline** (member_decision, with the approval quoted). (3) "develop / turn / write the full …" hands the build to Create. It builds from the approved outline, never from a later menu. A new outline counts as approved by the request. (4) The browser writes one Create section at a time through `/api/brain/develop/section`, which builds from the Matter's brief, decisions and outline. Each section is saved (durable) before the next, progress shows in chat, and the editable workspace opens at the end. (5) The Foothold records progress ("Wrote 2 of 6 sections…", next "Write section 3 of 6…"), so "keep writing" resumes. (6) A legacy label from a chat sentence never starts a Matter. A reopened Create piece with no name is never attached to whatever is in focus. **Second document type:** an outline of emails plus "turn this into an email sequence" → Email Sequence (test). 26 new tests from the live conversation; neighbouring suites 0 new failures; 366 type errors (no change) |
+| C-fix | Conversation → Create hand-off (`89aad5a3`, Vercel "Deployment has completed") | **Fixed, code-verified; live retest pending** | (1) "it's for X, and Y" saves **audience** and **purpose** on the Matter in focus, in the member's words. (2) Approving an outline Spark just gave saves it on the Matter as the **approved outline** (member_decision, with the approval quoted). (3) "develop / turn / write the full …" hands the build to Create. It builds from the approved outline, never from a later menu. A new outline counts as approved by the request. (4) The browser writes one Create section at a time through `/api/brain/develop/section`, which builds from the Matter's brief, decisions and outline. Each section is saved (durable) before the next, progress shows in chat, and the editable workspace opens at the end. (5) The Foothold records progress ("Wrote 2 of 6 sections…", next "Write section 3 of 6…"), so "keep writing" resumes. (6) A legacy label from a chat sentence never starts a Matter. A reopened Create piece with no name is never attached to whatever is in focus. **Second document type:** an outline of emails plus "turn this into an email sequence" → Email Sequence (test). 26 new tests from the live conversation; neighbouring suites 0 new failures; 366 type errors (no change) |
+| C7 | Live retest on `89aad5a3` | pending | Step 1: "Back to Launch a course" (focus returns to the course from the stray `mat_58d7…`) |
 | D3 | Duplicate send: "Actually no, the first." pressed twice quickly | paused | |
 | D4 | $49 correction | pending | |
 | D5 | "What were my choices?" | pending | |
