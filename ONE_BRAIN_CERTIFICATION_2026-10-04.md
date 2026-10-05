@@ -1,7 +1,7 @@
 # One Brain — Certification Report (2026-10-04 → 2026-10-05)
 
-**Integration branch (single):** `one-brain/convergence` @ `c3773daed5c5c5f29093e3a559c1e2955d584cdb`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/48wfPkiUZb2bJcrJaK8mHR6PhVrt (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `12790bfdbdd7891d102e6845147d11f5b1fdf7bb`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/DSCRz7Nv8ZVQnxig71dqi7mYcEf2 (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
 ## Current status (2026-10-05)
@@ -39,7 +39,7 @@
 | W1 | Review → Combine (`c3773dae`, 15:25) | **PASS (partial)** | Live trace `turn_fbd2…` `reconcile`: Chicago unlinked, 4 merges, 2 requirements. `mat_0fee…`, `mat_db4b…`, `mat_58d7…` and `mat_27a8…` are now superseded with `mergedInto` = course (kept, not deleted). Course: **$59** and the outline choice still current; Project `1791141639086-ntyago` linked; Project **renamed to "Launch a course"** (synced record, 15:25:14). The "everything we write…" Matter was not included (the include option was not used) |
 | W1b | Include the mixed Matter | **FAIL → fixed (`12790bfd`)** | After the combine the review notice disappeared: the planner lost the trail because the work in focus when that Matter was made had itself been merged. Fixed: reconcile follows merged copies, and the notice stays while a kept-separate item remains (test reproduces the live order) |
 | W1c | Combine should open a Project | **Added (`12790bfd`)** | After combining, and when Continue opens work that has a Project, its Project home opens (next step, decisions, requirements, materials, "Pick up in conversation") |
-| W2 | One course entry in Continue; opens its Project | pending (`12790bfd`) | |
+| W2 | Include the mixed Matter, then one course entry in Continue, opening its Project (`12790bfd`, Vercel "Deployment has completed") | pending | |
 
 | Area | What is implemented | Verified how | Result |
 |---|---|---|---|
