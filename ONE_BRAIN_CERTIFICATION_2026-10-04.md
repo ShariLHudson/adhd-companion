@@ -49,7 +49,7 @@ Every fix added regression tests built from the live records (15 new tests). Typ
 
 ### Full suite on `ec9b9c01`
 
-FULL_SUITE_PLACEHOLDER
+**PASS: 0 new failures.** 20,577 tests. 587 fail, and every one also fails on the pre-Brain base `228627b0`. 2 tests that fail on the base now pass (`arrivalExperience`, `arrivalIntelligence`). The 5 suite load errors are the same ones as on the base. The run used the committed tree, with no edits during it.
 
 ### Release gate
 
@@ -60,7 +60,7 @@ FULL_SUITE_PLACEHOLDER
 | Physical phone and cross-device test | **Not started** |
 | Cross-Room journey (Research → Strategy → Board → Create) | PASS (code); **live pending** (D7) |
 | Member isolation | PASS (code and RLS); **live second-account check pending** |
-| No new test failures | SEE_FULL_SUITE |
+| No new test failures | **PASS** (`ec9b9c01`: 0 new, 2 more passing) |
 | Honest failure, Brain trace, kill switch | PASS |
 | No competing authoritative state | **PASS after today's fixes**: the resume line and the Continue card now read the Brain. The legacy pending question and workspace registry remain as caches only |
 
