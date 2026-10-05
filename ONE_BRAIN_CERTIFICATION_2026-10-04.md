@@ -19,7 +19,7 @@
 | Duplicate chat call without a Brain turn ID | **Fixed, code-verified** | The quality-repair rewrite no longer writes. Only the reply shown is recorded, on the same turn (`b72a8513`). Live recheck: step D3 |
 | Reload keeps the decision | **PASS** | R2: "You'd chosen price: $59… Still open: …". No price question |
 | Home → Continue shows the course | **PASS** | R3e: numbered list "1. Launch a course · You'd chosen price: $59", "2. Speaking Engagement in Chicago Checklist" |
-| Click Continue item → resumes the course | **pending** | R3f |
+| Click Continue item → resumes the course | **PASS** (state); reply now lists the open choices (`dc828ff7`), live recheck R3g | R3f |
 | Duplicate send ("Actually no, the first." twice) | **pending** | D3 |
 | $49 correction | **pending** | D4 |
 | "What were my choices?" | **pending** | D5 |
@@ -43,6 +43,7 @@
 | `83358267` | On reload Spark asked for the price again | The legacy resume line read a stale `spine.pendingQuestion` | The resume line comes from the Brain Foothold. The pending question is cleared when the Brain answers |
 | `71fa97e3` | Continue card showed an old workspace | The Welcome card read only the legacy workspace registry | The Brain's Matter leads Continue, and clicking it re-enters through the Brain |
 | `feabf347` | Still the old workspace | The account's onboarding flag (`complete: false`) hid all Continue options | Saved Brain work always counts. Numbered list added at the member's request |
+| `dc828ff7` | Resume reply didn't show the open question's choices | The re-entry reply used only the Foothold text | The stored choices are listed, numbered, in the reply |
 | `ec9b9c01` | Course listed 3 times, no numbers visible | Leftover run-1 copies; card styles hid the list numbers | Same-work entries collapse into one. Numbers are drawn explicitly |
 
 Every fix added regression tests built from the live records (15 new tests). TypeScript: **366 errors, unchanged** (baseline 370).
@@ -266,7 +267,8 @@ Note: the test Matters from run 1 remain on the test account. They do not affect
 | R3c | Member request: several items to go back to | **Added in `feabf347`** | When there is more than one thing to go back to, the Continue card shows a **numbered list**: the Brain's open Matters, the one in focus first, each with its saved decision ("Launch a course: You'd chosen price: $59"), then the legacy workspace. Clicking a number opens that item directly. A Matter re-enters through the Brain. With one item the card is unchanged. 6 new tests pass. 366 type errors (no change) |
 | R3d | Home → numbered Continue list (on `feabf347`) | **PARTIAL → fixed** | PASS: "Launch a course · You'd chosen price: $59" is now first, and Chicago is listed. FAIL: the course appeared **three times**, and no numbers were visible. **Cause:** two older Matters for the same course are left over from the phone run of `a76b021c` (`mat_0fee…`, `mat_db4b…`), created before the one-Matter fix in `d111c947`. They are titled with the raw sentence and hold no decisions or offers. The card's styles also hide list markers. **Fixed in `ec9b9c01`:** entries for the same work collapse into the Matter in focus, using the Brain's own "same work" rule. Numbers are drawn explicitly. The leftover Matters are **not deleted** (saved work preserved); merging them is offered as an optional cleanup |
 | R3e | Home → Continue list (on `ec9b9c01`, Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/62UgNdwnw6CHnSXyEudjjYGZsCLX) | **PASS** | Screenshot: "1. Launch a course · You'd chosen price: $59", "2. Speaking Engagement in Chicago Checklist · In Progress". One entry per piece of work, numbered and clickable, no price question |
-| R3f | Click "1. Launch a course" | pending | |
+| R3f | Click "1. Launch a course" (on `ec9b9c01`) | **PASS (state) / PARTIAL (reply) → fixed** | Reply: "Launch a course. You'd chosen price: $59. Still open: Which one would you like to dive into? Want to pick up there…". Brain: trace `turn_b069…` `reentry`, ops `focusMatter` + `setReentry` on `mat_61a6…`, no model call, **no decision written**. Price **$59** is still the only current decision. The open offer is `off_60a6…` (1. Create a course content outline, 2. Develop a marketing strategy, 3. Set up the platform). PARTIAL: the reply named the open question but **not its choices** (member request). **Fixed in `dc828ff7`:** re-entry and "Back to …" list the stored choices, numbered as stored, and "2" then answers that same offer (regression test). Note: at 12:32, on `feabf347`, a click on one of the duplicate entries sent "Back to Launch a course give me three price options as…" → `return_unclear`, nothing written. That duplicate entry was removed in `ec9b9c01` |
+| R3g | Continue → course shows its numbered choices (on `dc828ff7`) | pending | |
 | D3 | Duplicate send: "Actually no, the first." pressed twice quickly | paused | |
 | D4 | $49 correction | pending | |
 | D5 | "What were my choices?" | pending | |
