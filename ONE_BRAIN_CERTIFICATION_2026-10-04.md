@@ -1,8 +1,84 @@
-# One Brain — Certification Report (2026-10-04 → 2026-10-05)
+# One Brain — Certification Report (2026-10-04 → 2026-10-06)
 
-**Integration branch (single):** `one-brain/convergence` @ `4058d03f32e97da736d00e41e6629b5a2a308fc8`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/CRzR3Mg22i97s88zRLsLea47opFL (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `21488dd6d21fff8a40ce20b7598973d1fb37bd08`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/6rv2neVB3XkMqYUXM2HT22T9US9X (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
+
+## Final combined candidate (2026-10-06): `21488dd6d`
+
+**Branch:** `one-brain/convergence` @ `21488dd6d21fff8a40ce20b7598973d1fb37bd08`
+**Preview:** Vercel "Deployment has completed" for exactly this commit: https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/6rv2neVB3XkMqYUXM2HT22T9US9X (open it, press **Visit**). Pushed once.
+**Production:** unchanged (`main` untouched). **Release gate: CLOSED. Production: HOLD.**
+
+### What the candidate contains (checked by ancestry, nothing added twice)
+
+| Source | How it is in | Check |
+|---|---|---|
+| `557b078c8` (four repairs: Board exit/resume, separate projects, section removal, normal Claude/ChatGPT mentions) | merged at `189e96725` | `git merge-base --is-ancestor 557b078c8 HEAD` ✔ |
+| Research/VTS `caedafb8a` (+ readability `b8e939316`, convergence `5a8f654a3`) | merged at `870ccb30e` | ancestor ✔ (both) |
+| Conversation recovery `e78283fb9` (brain/one-brain-core, based on production `0620aa0a8`) | cherry-picked as `cd91d6dbd` (different base, so only that one commit) | 7 of 8 files byte-identical; `CompanionPageClient.tsx` differs by one blank line only |
+| One Brain ownership work | `9640e6e9b` … `21488dd6d` | — |
+
+**e78283fb9, from the commit itself** (the owning agent isn't reachable from this session):
+- **Cause:** on every Supabase session save (sign-in, page load, hourly refresh), the storage cleanup deleted `companion-conversation-v1` as a cache. Home never reloaded the saved conversation.
+- **Changed files:** `companionStorageRecovery.ts`, `companionLoginTransition.ts`, `CompanionAuthProvider.tsx`, `restoreHomeConversation.ts` (new), `CompanionPageClient.tsx`, plus tests.
+- **Its tests, rerun on this candidate:**
+  - `companionStorageRecovery.test.ts`: 10/10
+  - `restoreHomeConversation.test.ts`: 5/5
+  - `myStrategies.test.ts`: pass
+  - The one failure in the folder, "discardContextualHelpSession…", is pre-existing and also fails on the base commit.
+
+### Fixes made today on the combined candidate (all simulated-page findings)
+
+| Commit | What was wrong (found by driving the page) | Fix |
+|---|---|---|
+| `d4865f971` | "give me an outline for the course" (a Brain-owned turn on the course) was taken by Create's entrance search, so no outline appeared in chat and approval never happened | An outline asked for on the work in focus stays in chat. Requirement and brief turns are saved on the work, never opened as a Create request |
+| `d4865f971` | "I'm planning a spring retreat event" opened Events, which made a Project "Retreat" that the Brain treated as separate work. Everything after landed on the wrong record | A room opened for the work in focus gives what it makes there that work's id |
+| `d4865f971` | Empty, never-saved Create pieces (a sales page that was only opened) were linked as the work's material, so "reopen from Project" opened an empty piece | A piece is linked to its work at its first verified save |
+| `d4865f971` | Active Work bridge could start a Matter | It only joins by an id it carries |
+| `d4865f971` | "fail_safe_no_reply" was logged even when a reply was visible | Logged only when there really is no reply |
+| `b62fbc121` | The outline turn produced 2 offers (the first reply, then the corrected reply the member actually saw) | Same turn: the one offer is re-pointed to the shown version |
+| `ebbd3fbaf` | "give me a new outline for the course" started new work | A new version of a part of the work (outline, draft…) revises it |
+| `21488dd6d` | After "keep writing", asking to build again silently used the old approved outline, skipping the newer one waiting for approval | A newer shown outline still needs the member's yes (or no) |
+
+### Results on `21488dd6d`: SIMULATED (canned model, fake Supabase, local production build)
+
+The page harness drives the real page in Chromium against a `next build` of this exact commit. Brain routes, chat route and Brain code are real. The model is scripted. Supabase is an in-memory fake with per-account row ownership.
+
+**10/10 page tests pass, 102 per-turn checks pass, 0 fail.**
+
+| Area | Result |
+|---|---|
+| Course, client proposal and event journeys: <br>• brief, requirement <br>• choose → correct → recall <br>• "yes", "help me with the next step" <br>• related piece; "a proposal for this course" stays; "a proposal for a different client" is new <br>• errand stays out <br>• outline shown → "looks great" binds to that saved version <br>• build → verified save → Board (no work id: question kept, focus unchanged) → Research → unrelated podcast → back <br>• another device: conversation restored, Continue lists the work once <br>• move to Project → Project home shows decision + requirement → material reopens <br>• "Where were we?" <br>• one owner, one reply, no duplicate offers per turn | **PASS** (30 + 26 + 26 checks) |
+| Changed outline needs fresh approval; "keep writing" resumes the existing piece; a repeated send never makes another piece; fresh yes → new piece, old untouched | **PASS** (8 checks) |
+| Live conversation 11:46 replay ("yes lesson 1" … "no") | **PASS** |
+| Normal ChatGPT/Claude mention gets the ordinary reply | **PASS** |
+| **Conversation continuity** on the combined build: <br>• reload <br>• new tab <br>• Sign Out (via the account menu → sign-in page, no session left) <br>• reopening while signed out shows nothing <br>• sign back in → conversation back | **PASS** (12 checks with the row below; sign-in is *simulated*: the harness restores the session; the password form is not exercised) |
+| **Second account** on the same database: <br>• sees none of A's conversation <br>• has its own saved record <br>• each keeps its own after reload <br>• Brain records separate | **PASS (simulated)** |
+| "Another device" in these tests | **Simulated** (a fresh browser context against the same fake account data). This is not actual account persistence on Supabase |
+
+**Unit and regression suites:** full Vitest suite run at `21488dd6d` and at base `5a8f654a3`, in separate checkouts. Candidate: 20,760 tests, 589 failing. Base: 20,653 tests, 588 failing. **No new failure caused by this work.** The one difference is `numberedChoiceResolution` "new set replaces old". It passed 2 of 3 reruns on the candidate. Its two menu ids come from `Date.now()` and collide in the same millisecond. The branch doesn't touch `lib/pendingChoice`, so it is a pre-existing timing flake. Brain suite: 271/272, the 1 is the known baseline failure. Type errors: 365, unchanged from baseline.
+
+### Not yet verified on the combined build (honest list)
+
+| Item | Status |
+|---|---|
+| Board exit/resume, section removal, Projects help choices, Board → Projects → Brainstorm, Research save → return → reopen (UI) | Covered by their own unit/component tests in the regression run. **Not driven through the page here.** Needs the live walkthrough |
+| Real model (gpt-4o-mini) on any of the above | **BLOCKED** (live access) |
+| Real Supabase persistence, real sign-in form, real second account | **BLOCKED** (live access) |
+| Remove-button live failure (R1) | Tracked separately; needs live access to reproduce |
+| 0af97cd00 journey recovery (S10) | Queued until ownership certification passes, as directed |
+
+### Remaining blockers: owner and exact action
+
+| # | Blocker | Owner | Exact action |
+|---|---|---|---|
+| 1 | This session can't reach the preview or Supabase (`connect` refused) | You (environment settings, not chat) | In this environment's network settings, allow `*.vercel.app` and `weercszpdcxjxauxrhmj.supabase.co` |
+| 2 | No test accounts available to this session | You (environment settings, not chat) | Add env vars `PAGE_HARNESS_EMAIL`/`PAGE_HARNESS_PASSWORD` (test account A) and `PAGE_HARNESS_EMAIL_B`/`PAGE_HARNESS_PASSWORD_B` (account B); if the preview is protected, `VERCEL_AUTOMATION_BYPASS_SECRET`. Never paste these in chat |
+| 3 | Research/VTS report §6 (items A–F and H) not obtained; G (both back-control conditions) passes in `originWork.test.tsx` | Research/VTS agent | Commit §6 to the repo (or give the file path) so each item can be checked against `21488dd6d` |
+| 4 | Scenarios A–D: their definitions aren't in any file this session can see | You / the agent that defined them | Point to the file or message that defines A–D |
+| 5 | Conversation-recovery owner's own test evidence (their preview results) | Conversation-recovery agent | Not needed for certification (rechecked here on the combined build). Optional: confirm no follow-up commits after `e78283fb9` |
+| 6 | Live walkthrough on the deployed `21488dd6d` (real model, real account, phone and desktop) | Me, once 1–2 are done | Run `e2e-harness/liveJourney.live.test.ts` against the preview, then the desktop walkthrough |
 
 ## Current status (2026-10-05)
 
