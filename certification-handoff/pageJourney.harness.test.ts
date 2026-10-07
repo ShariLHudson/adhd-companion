@@ -1243,6 +1243,48 @@ describe.skipIf(!RUN)("page harness", () => {
     expect(results.filter(([, ok]) => !ok).map(([n]) => n)).toEqual([]);
   });
 
+  it("ordinary chat 'research X': every request gets a visible answer or opens Research with the question; nothing is silent", async () => {
+    store = createMemoryBrainStore();
+    const supa = createFakeSupabase(USER);
+    const log: string[] = [];
+    scripted.length = 0;
+    scripted.push([/./, "RESEARCH-CHAT-OK: here's what I can tell you, and what we'd want to check further."]);
+    const results: Array<[string, boolean, string]> = [];
+    const facts: string[] = [];
+    const check = (name: string, ok: boolean, detail = "") => { results.push([name, ok, detail]); };
+    onTestFailed(() => console.log("RESEARCH-X (stopped early):\n" + facts.join("\n") + "\n" + results.map(([n, ok, d]) => `${ok ? "PASS" : "FAIL"}  ${n}${ok || !d ? "" : `  — ${d}`}`).join("\n")));
+    for (const phrase of ["research the newest AI tools", "look into local business groups", "help me research some groups to reach out to", "find out what the latest ADHD coaching trends are"]) {
+      const h = await openPage(browser, supa, log);
+      const page = h.page;
+      await page.goto(`${BASE}/companion`, { waitUntil: "domcontentloaded", timeout: 600_000 });
+      const intro = page.getByRole("button", { name: "Continue to Welcome Home" });
+      await Promise.race([intro.waitFor({ timeout: 300_000 }), page.locator("textarea").first().waitFor({ timeout: 300_000 })]).catch(() => undefined);
+      if (await intro.isVisible().catch(() => false)) await intro.click();
+      await page.waitForTimeout(6_000);
+      const sys0 = chatSystems.length;
+      const box = page.getByRole("button", { name: "Send", exact: true }).first().locator("xpath=ancestor::*[.//textarea][1]//textarea").first();
+      await box.fill(phrase);
+      await box.press("Enter");
+      await page.waitForTimeout(20_000);
+      const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      const researchOpen = await page.getByTestId("research-library-panel").first().isVisible().catch(() => false);
+      const answered = body.includes("RESEARCH-CHAT-OK");
+      const systems = chatSystems.slice(sys0);
+      const grounded = systems.some((x) => /RESEARCH SUPPORT|Topic=research/i.test(x));
+      const panelText = researchOpen ? (await page.getByTestId("research-library-panel").first().innerText()).replace(/\s+/g, " ") : "";
+      const panelHasQuestion = panelText.toLowerCase().includes(phrase.split(" ").slice(-3).join(" ").toLowerCase());
+      const answerInResearch = panelText.includes("RESEARCH-CHAT-OK");
+      const researchPrompt = systems.some((x) => /research/i.test(x));
+      facts.push(`FACT "${phrase}": Research opened=${researchOpen} (question carried=${panelHasQuestion}, answer inside Research=${answerInResearch}); model calls=${systems.length}; research framing in the model prompt=${researchPrompt}; RESEARCH SUPPORT line=${grounded}`);
+      check(`"${phrase}": never silent (an answer in chat, or Research opens with the question and answers it)`, (answered && !researchOpen) || (panelHasQuestion && answerInResearch), facts.at(-1)!);
+      check(`"${phrase}": one model call, framed as research`, systems.length === 1 && researchPrompt, facts.at(-1)!);
+      await h.shot(`research-x-${phrase.split(" ").slice(0, 3).join("-")}`);
+      await page.context().close();
+    }
+    console.log("RESEARCH-X:\n" + facts.join("\n") + "\n" + results.map(([n, ok, d]) => `${ok ? "PASS" : "FAIL"}  ${n}${ok || !d ? "" : `  — ${d}`}`).join("\n"));
+    expect(results.filter(([, ok]) => !ok).map(([n]) => n)).toEqual([]);
+  });
+
   it("build integrity: changed outline needs fresh approval; 'keep writing' resumes the piece; a repeated send never makes another piece", async () => {
     store = createMemoryBrainStore();
     modelPrompts.length = 0;

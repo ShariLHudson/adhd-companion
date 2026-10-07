@@ -1,8 +1,51 @@
 # One Brain — Certification Report (2026-10-04 → 2026-10-07)
 
-**Integration branch (single):** `one-brain/convergence` @ `b3bf1f997fb9c182b923f33395f6f6dd8dc4eae3`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/3kDuTSVDz8yhJcwuBFEgsqsYg6uw (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `81135935bc0fa5d77d20dedc1b77f274f1c9039c`
+**Preview of that commit:** https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HwRutWE6oXQHa4nX6Ano3jjZMhqx · branch host https://adhd-business-companion-vs3-git-o-4626ae-shari-hudsons-projects.vercel.app/companion
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
+
+## Candidate `81135935b` (2026-10-07, latest)
+
+**Branch:** `one-brain/convergence` @ `81135935bc0fa5d77d20dedc1b77f274f1c9039c` (pushed once).
+- **Exact deployment:** https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HwRutWE6oXQHa4nX6Ano3jjZMhqx ("Deployment has completed").
+- **Branch preview host:** https://adhd-business-companion-vs3-git-o-4626ae-shari-hudsons-projects.vercel.app/companion
+- **Production:** unchanged.
+
+**What it contains** (ancestry checked first):
+
+| Commit | In the candidate? |
+|---|---|
+| `557b078c8` MISC UPDATES | ancestor ✔ |
+| `a1f05cc3d`, `032dbd03c` | ancestors ✔ through `557b078c8`, not added twice |
+| `dfa71596c` "Task added." readability | **was missing → merged** as `81135935b` (one CSS file, no conflicts) |
+| `e78283fb9` continuity | ✔ included as `cd91d6dbd`: the same change in all 8 files, one blank line apart. A cherry-pick, because it is based on production `0620aa0a8`. Your note says it passed six signed-in preview checks on its own preview. That report (`BRAIN_AGENT_CONTINUITY_e78283fb9.md`) is only in your local vs3 folder, not on GitHub, so I couldn't read it from here. Its separate results don't certify the combined build; C1/C2 in the live script recheck it here |
+| Research/VTS `caedafb8a`, `b5fbc341b` | ancestors ✔ |
+
+### SIMULATED results at `81135935b` (local production build of this commit, scripted model, fake Supabase)
+
+**13 page tests, 140 checks, 0 failures.** New since `b3bf1f997`, ordinary-chat "research X" (8 checks) for:
+- "research the newest AI tools"
+- "look into local business groups"
+- "help me research some groups to reach out to"
+- "find out what the latest ADHD coaching trends are"
+
+Each opens Research with the question and answers it there. Each makes exactly one model call, framed as research. Nothing is silent.
+
+The 11 failing `researchSupportLivePath` unit tests assume the older design: stay in chat and add a "RESEARCH SUPPORT" line to the prompt. They fail on base too. **They are outdated expectations, not a defect in the current path.**
+
+### LIVE results at `81135935b`
+
+**Not run yet.**
+- This session's network policy blocks the preview host (`EGRESS_BLOCKED`) and Supabase.
+- No local session is reachable from here: ListAgents shows none on this machine, and the Research/VTS session runs on your computer.
+
+**Handoff** (pushed, `certification-handoff/` on this branch):
+- `HANDOFF.md`
+- `liveCertification.live.test.ts`: C1, C2, J1–J3, B1, P1–P3, R1, **RX**, X1
+- `MESSAGE_FOR_RESEARCH_VTS_SESSION.md`: paste it into that session; it also asks for their own V1–V5 and W1 checks
+- the simulated harness files
+
+When the results come back, I'll record them here under LIVE, kept separate from SIMULATED. I'll also confirm account persistence read-only through the Supabase connector.
 
 ## Update (2026-10-07, later): five UI workflows driven; live handoff (candidate held at `b3bf1f997`)
 

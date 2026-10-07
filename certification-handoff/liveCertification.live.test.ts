@@ -1,12 +1,12 @@
 /**
- * LIVE certification of One Brain candidate b3bf1f997 on its deployed preview.
+ * LIVE certification of One Brain candidate 81135935b on its deployed preview.
  * Real sign-in, real Supabase, real model. Nothing is stubbed. Read-mostly:
  * it creates a little test work on the account it signs in as.
  *
- * Copy this file into e2e-harness/ of a checkout of EXACTLY b3bf1f997
- * (git checkout b3bf1f997fb9c182b923f33395f6f6dd8dc4eae3), npm ci, then:
+ * Copy this file into e2e-harness/ of a checkout of EXACTLY 81135935b
+ * (git checkout <81135935b full sha from HANDOFF.md>), npm ci, then:
  *
- *   PAGE_HARNESS_LIVE=1 PAGE_HARNESS_BASE=https://<preview host for b3bf1f997> \
+ *   PAGE_HARNESS_LIVE=1 PAGE_HARNESS_BASE=https://<preview host for 81135935b> \
  *   PAGE_HARNESS_EMAIL=<test account A> PAGE_HARNESS_PASSWORD=<…> \
  *   PAGE_HARNESS_EMAIL_B=<test account B> PAGE_HARNESS_PASSWORD_B=<…> \
  *   [VERCEL_AUTOMATION_BYPASS_SECRET=<…>] \
@@ -97,10 +97,10 @@ async function goHome(p: Page) {
   await p.waitForTimeout(5_000);
 }
 
-describe.skipIf(!RUN)("LIVE certification — candidate b3bf1f997", () => {
+describe.skipIf(!RUN)("LIVE certification — candidate 81135935b", () => {
   let browser: Browser;
   beforeAll(async () => {
-    if (!BASE) throw new Error("PAGE_HARNESS_BASE is required (the preview host of b3bf1f997)");
+    if (!BASE) throw new Error("PAGE_HARNESS_BASE is required (the preview host of 81135935b)");
     mkdirSync(SHOTS, { recursive: true });
     browser = await chromium.launch(process.env.PAGE_HARNESS_CHROMIUM ? { executablePath: process.env.PAGE_HARNESS_CHROMIUM } : {});
   });
@@ -265,6 +265,25 @@ describe.skipIf(!RUN)("LIVE certification — candidate b3bf1f997", () => {
     check("R1", "Reopen opens that exact research", again.includes(answer.slice(40, 120)) && !/couldn't find that saved research/i.test(await text(p)), again.slice(0, 120));
     await shot(p, "R1");
     void projectName;
+  });
+
+  it("RX ordinary chat 'research X': Research opens with the question and gives a real answer (or chat answers); never silent", async () => {
+    for (const phrase of ["research the newest AI tools", "find out what the latest ADHD coaching trends are"]) {
+      const p = await (await contextFor(browser, "A")).newPage();
+      await boot(p);
+      if (!(await tid(p, "global-daily-resume-list").isVisible().catch(() => false))) await p.getByRole("button", { name: "New Chat" }).first().click().catch(() => undefined);
+      await p.waitForTimeout(4_000);
+      const said = await say(p, phrase, 60_000);
+      const open = await tid(p, "research-library-panel").isVisible().catch(() => false);
+      const panel = open ? (await tid(p, "research-library-panel").innerText()).replace(/\s+/g, " ") : "";
+      const carried = panel.toLowerCase().includes(phrase.split(" ").slice(-3).join(" ").toLowerCase());
+      const answer = open ? (await tid(p, "research-library-conversation").innerText().catch(() => "")).replace(/\s+/g, " ") : said;
+      check("RX", `"${phrase}": Research opens with the question, or chat answers`, (open && carried) || (!open && said.length > 80), `open=${open} carried=${carried}`);
+      check("RX", `"${phrase}": a real answer (not a failure or a stall)`, answer.length > 200 && !/couldn't (?:run|finish)|something went wrong|try again/i.test(answer), answer.slice(0, 160));
+      check("RX", `"${phrase}": no claim of live web results unless sources are shown`, !/I (?:just )?searched the web|according to (?:today's|live) search/i.test(answer) || /https?:\/\//.test(answer), answer.slice(0, 160));
+      await shot(p, `RX-${phrase.split(" ").slice(0, 3).join("-")}`);
+      await p.context().close();
+    }
   });
 
   it("X1 Remove from Recent on the account (the live failure)", async () => {
