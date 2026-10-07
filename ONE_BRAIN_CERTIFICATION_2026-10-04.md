@@ -1,8 +1,162 @@
-# One Brain — Certification Report (2026-10-04 → 2026-10-06)
+# One Brain — Certification Report (2026-10-04 → 2026-10-07)
 
-**Integration branch (single):** `one-brain/convergence` @ `21488dd6d21fff8a40ce20b7598973d1fb37bd08`
-**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/6rv2neVB3XkMqYUXM2HT22T9US9X (open it, press **Visit**)
+**Integration branch (single):** `one-brain/convergence` @ `b3bf1f997fb9c182b923f33395f6f6dd8dc4eae3`
+**Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/3kDuTSVDz8yhJcwuBFEgsqsYg6uw (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
+
+## Certification candidate (2026-10-07): `b3bf1f997`
+
+**Branch:** `one-brain/convergence` @ `b3bf1f997fb9c182b923f33395f6f6dd8dc4eae3` (local = remote, verified before testing)
+**Preview of exactly this commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/3kDuTSVDz8yhJcwuBFEgsqsYg6uw (open it, press **Visit**). Pushed once today.
+**Production:** unchanged. **Release gate: CLOSED. Production: HOLD.**
+
+**Since `21488dd6d`:**
+- `0bb7076b8`: merged Research/VTS's certified `b5fbc341b` (lane `research-vts/lane-repairs`). It was not included before. Clean merge, no conflicts.
+- `b3bf1f997`: Continue fix: removing the last item no longer hides its Undo. Found by the new Remove page test.
+
+### Acceptance checklist (from our agreed journeys, replacing the unexplained A–D labels)
+
+| ID | Requirement | Source |
+|---|---|---|
+| J1 | Course: brief, requirement → choices → pick → correction → recall | our journeys |
+| J2 | Course approval: outline shown in chat; "looks great" approves that saved version | our journeys |
+| J3 | "yes lesson 1" → lesson written in Create from outline + requirements, verified save | our journeys |
+| J4 | Reopen material from its Project; reload | our journeys |
+| J5 | Changed outline needs fresh approval; "keep writing" resumes; a repeated send never makes another piece | our journeys |
+| J6 | Proposal and event journeys: same as J1–J4 | our journeys |
+| J7 | One owner, one reply, no duplicate effects per turn | our journeys |
+| J8 | "a proposal for this course" stays; "a proposal for a different client" is new | our journeys |
+| C1 | Conversation after reload, new tab, sign-out → sign-in | conversation recovery (`e78283fb9`) |
+| C2 | A second account sees none of the first account's records | conversation recovery |
+| B1 | Board: exit and resume; an unfinished review never takes over chat | `12b374730` |
+| B2 | Board question with no work id is kept, focus unchanged, saved with work only on yes | `2a7feebff` |
+| P1 | Projects: removing a section asks what happens to its tasks | `75ec6814f` |
+| P2 | Projects help choices; help focuses the project first | `a1f05cc3d`, `09835c951`, `3f716b114` |
+| P3 | Board → Projects → Brainstorm | founder walkthrough |
+| R1 | Research: save → return → Reopen opens the exact saved research | `c10fb5df3`, `04833d38f` |
+| R2 | A failed research attempt is never saved as a finding | `76bc3301f` |
+| V1 | A visual with an origin has one "← Back to <origin>" (both back-control conditions) | `caedafb8a`, `d44bd2944` |
+| V2 | A new Research hand-off beats an older resume point | `a0a8c3127` |
+| V3 | Mind Map keeps the same map, provenance and work | `219c34d5b` |
+| V4 | A saved research visual reopened later continues as the same work | `b5fbc341b` |
+| V5 | VTS → Create keeps research and origin; edits keep provenance; version restore keeps connections | `8d92fc611`, `a0280342a`, `584b235b5` |
+| W1 | Creation Workspace follows the member to another browser | `b6282d1ee` |
+| N1 | Normal ChatGPT/Claude mentions get an ordinary reply | `557b078c8` |
+| S1 | Separate projects stay separate | `327e77904` |
+| X1 | Remove from Recent works, persists, and can be undone (live failure R1) | your report |
+
+**Research/VTS §6:** not committed on any Research/VTS branch. I searched all of them. That owner has no session reachable from here. V1–V5 and W1 above are their requirements as stated in their own commit messages, so §6 no longer blocks the checklist. If §6 lists anything beyond them, it needs adding.
+
+### PASS / FAIL / BLOCKED at `b3bf1f997`
+
+**Simulated:**
+- local production build of this commit
+- real page in Chromium
+- real Brain code and routes
+- scripted model, fake Supabase with per-account row ownership
+
+**Unit:** the full Vitest suite at this commit.
+
+**Live:** the deployed preview with a real account and the real model.
+
+| ID | Simulated (page) | Unit | Live (preview, real model, real account) |
+|---|---|---|---|
+| J1 | PASS (course journey) | PASS | BLOCKED |
+| J2 | PASS | PASS | BLOCKED |
+| J3 | PASS | PASS | BLOCKED |
+| J4 | PASS | PASS | BLOCKED |
+| J5 | PASS (8 checks) | PASS | BLOCKED |
+| J6 | PASS (26 + 26 checks) | PASS | BLOCKED |
+| J7 | PASS (per turn, all journeys) | PASS | BLOCKED |
+| J8 | PASS | PASS | BLOCKED |
+| C1 | PASS (12 checks; sign-in restores the session, the password form is not exercised) | PASS (`restoreHomeConversation` 5/5, `companionStorageRecovery` 10/10) | BLOCKED |
+| C2 | PASS (same fake database, row ownership enforced) | — | BLOCKED (needs a second real account) |
+| B1 | not driven through the page | PARTIAL: `boardDirector` 45/47. 2 Board-intake tests fail here and on base (pre-existing) | BLOCKED |
+| B2 | PASS | PASS | BLOCKED |
+| P1 | not driven | PASS (`removeSection` 2/2) | BLOCKED |
+| P2 | not driven | PARTIAL: `ProjectFormedSurface` 33/34 (1 pre-existing). `projectHomesUsability` 21/21 | BLOCKED |
+| P3 | not driven | no dedicated test | BLOCKED |
+| R1 | PASS (Research joins the work, by id) | PASS (`researchReopenExact` 4/4; `researchLibrary` 468/471, 3 pre-existing) | BLOCKED |
+| R2 | — | PASS (`failedResearchTurn` 5/5) | BLOCKED |
+| V1 | — | PASS (`originWork` 7/7) | BLOCKED |
+| V2 | — | PASS (`handoffBeatsResume` 3/3) | BLOCKED |
+| V3 | — | PASS (`editableConversion` 2/2, `gatherContextWorkIsolation` 1/1) | BLOCKED |
+| V4 | — | PASS (`savedVisualResume` 2/2) | BLOCKED |
+| V5 | — | PASS (`visualToCreate` 5/5, `editProvenance` 6/6, `relationshipsVersionRestore` 3/3) | BLOCKED |
+| W1 | — | PASS (`creationWorkspaceSync` 3/3) | BLOCKED |
+| N1 | PASS | PASS (`sparkHumanVoice` 8/8) | BLOCKED |
+| S1 | PASS | PASS (`liveRegression` 16/16) | BLOCKED |
+| X1 | PASS after fix (8 checks: leaves Continue, saved on the account, gone after reload on another device, Undo brings it back). **FAIL → fixed `b3bf1f997`**: removing the last item hid its Undo | PASS (`welcomeResumeList` 3/3) | BLOCKED |
+
+**Page suite:** 11/11 tests, 110 checks pass, 0 fail.
+
+**Full unit suite vs. base `5a8f654a3`:**
+- 20,773 tests, 591 failing; base had 588.
+- The 3 extra fail on the base commit too when run today: two depend on the date (`arrivalExperience`, `welcomePresenceIntelligence`), one is a 5-second timeout (`chamberMemberRegistry`).
+- None of the three files is touched by this branch. **No regression from this work.**
+
+**Type errors:** 365, unchanged from baseline.
+
+### Why every Live cell is BLOCKED (exact, current)
+
+This session's network policy refuses the preview host and the Supabase project ("connect_rejected" for `adhd-business-companion-vs3.vercel.app` and `weercszpdcxjxauxrhmj.supabase.co`). No test-account credentials are in its environment either. To unblock:
+
+1. **Network:** in this cloud environment's settings (environment menu in the session title bar → Edit → Network access), add `*.vercel.app` and `weercszpdcxjxauxrhmj.supabase.co` under Allowed domains, keeping "Allow package managers" ticked. Steps: https://code.claude.com/docs/en/cloud-environments#network-access
+2. **Accounts:** in the same settings, add environment variables:
+   - `PAGE_HARNESS_EMAIL` / `PAGE_HARNESS_PASSWORD` (test account A)
+   - `PAGE_HARNESS_EMAIL_B` / `PAGE_HARNESS_PASSWORD_B` (test account B)
+   - `VERCEL_AUTOMATION_BYPASS_SECRET` if the preview is protected
+
+   Never in chat. A new session picks them up.
+3. Then I run `e2e-harness/liveJourney.live.test.ts` against the preview above and fill the Live column, with no further changes to the commit.
+
+### Consolidated walkthrough (desktop, preview `b3bf1f997`, about 25 minutes)
+
+Use a test account, not your member account, for steps 1–8. Use your own account only for step 9.
+
+1. **Conversation recovery (C1, C2):**
+   - Sign in. Say "please remember the code PINEAPPLE-7".
+   - Reload: it's there. Open a new tab: it's there.
+   - Account menu (initial ▼) → Sign Out → sign-in page. Sign in again: it's back.
+   - Sign in as account B in a private window: no PINEAPPLE-7.
+2. **Course (J1–J5):**
+   - "I want to launch a course on ADHD-friendly productivity"
+   - "it's for ADHD business owners, and fun ways to get unstuck"
+   - "every lesson needs a 5-minute action step"
+   - "give me three format options as a numbered list" → "2" → "actually no, the first" → "what did we choose for the format?"
+   - "give me an outline for the course with 3 lessons"
+     - **Check:** the outline appears in chat, not Create.
+   - "looks great" → "yes lesson 1"
+     - **Check:** lesson 1 opens in Create with the action step.
+   - Send "yes lesson 1" again.
+     - **Check:** no second piece.
+3. **Changed outline (J5):**
+   - "give me a new outline for the course" → "write the full course in Create"
+     - **Check:** it asks you to approve the new one.
+   - "keep writing"
+     - **Check:** the existing piece continues.
+   - "write the full course in Create" → "yes"
+     - **Check:** a new piece; the old one is untouched.
+4. **Project and reopen (J4):** New Chat → Continue → ⋯ → Move to Project → open the Project → the lesson reopens → reload.
+5. **Proposal for this course vs. different client (J8):** "write a proposal for this course" (stays) → "I need to write a proposal for a different client" (new work) → "Back to <course>".
+6. **Board (B1, B2):**
+   - Call the Board with "Should our course launch in January or March?"
+   - Leave mid-review, chat normally (the review must not take over), come back and resume.
+   - Without work in focus, the question is kept; "Save with <work>?" appears and Undo works.
+7. **Projects (P1–P3):**
+   - In a Project, remove a section that has tasks: it asks what happens to them.
+   - Ask for Help: choices appear and stay on that project.
+   - Board → Projects → Brainstorm.
+8. **Research and visuals (R1, R2, V1–V5, W1):**
+   - Research a question → save → leave → Reopen opens that exact research.
+   - Show it as a Mind Map → Back to <origin> → reopen the saved visual later: same map.
+   - Develop it in Create. Open Create on a second browser: the unfinished workspace is there.
+9. **Remove button (X1), on your own account:**
+   - Welcome Home → Continue → ⋯ → Remove from Recent on the old Board marketing question: it disappears.
+   - Undo brings it back. Remove it again, then reload: still gone.
+10. **ChatGPT/Claude (N1):** "I pasted this from ChatGPT earlier, can you tidy it up?" gets an ordinary reply.
+
+Tell me any step number that misbehaves, with a screenshot. Nothing else is needed.
 
 ## Final combined candidate (2026-10-06): `21488dd6d`
 
