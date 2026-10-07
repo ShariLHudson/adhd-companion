@@ -4,6 +4,81 @@
 **Preview of that commit:** Vercel "Deployment has completed": https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/3kDuTSVDz8yhJcwuBFEgsqsYg6uw (open it, press **Visit**)
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
+## Update (2026-10-07, later): five UI workflows driven; live handoff (candidate held at `b3bf1f997`)
+
+**Candidate held steady:**
+- `one-brain/convergence` is still at `b3bf1f997fb9c182b923f33395f6f6dd8dc4eae3`. Nothing was pushed, rebuilt or redeployed.
+- The tests below ran against the production build of exactly this commit, already running.
+- The new test files live with this report (`certification-handoff/`), not on the candidate branch.
+
+### The five workflows, driven through the page (SIMULATED: scripted model, fake Supabase)
+
+| Workflow | Checks | Result |
+|---|---|---|
+| **B1 Board exit/resume:** <br>• question → review <br>• leave via the menu → ordinary chat gets the ordinary reply, no Board intake <br>• return → "You have an unfinished Board discussion" → Resume reopens the same question → Begin → advice | 6 | **PASS** |
+| **P3 Board → Projects → Brainstorm:** <br>• from the Board's advice → Build → Projects → open the project → Ask for Help → "Brainstorm ideas" <br>• ideas shown, no Board intake <br>• the turn is about that project (work in focus carries the project's id) <br>• one Brain turn | 5 | **PASS** |
+| **P2 Projects help choices:** the chooser opens for that project, with all seven choices | 2 | **PASS** |
+| **P1 Section removal:** <br>• add a section + task → "Remove section…" asks "This section has 1 task. What should happen to them?" <br>• "Move tasks to Inbox" → section gone, task kept | 3 | **PASS** |
+| **R1 Research save → return → reopen:** <br>• Research from the project → answer shown → "Back to project" → listed under Saved research <br>• Reopen opens that exact research <br>• **no new research or model call** | 6 | **PASS** |
+
+**Totals on `b3bf1f997`:** 12 page tests, **132 checks, 0 failures**:
+- the 110 from earlier today
+- 22 new: 21 above, plus the project opening from the Board
+
+### Baseline failures vs. defects affecting these workflows
+
+**Defects still affecting these workflows: none observed.** Every workflow passes through the page (simulated). The live, real-model run is still outstanding (see below).
+
+**Baseline failures in these areas:** all fail identically on the base commit `5a8f654a3`. They come from test setup or outdated expectations, not product behaviour:
+
+| Area | Failing tests | Why (from the failure message) | Product effect seen in the page run |
+|---|---|---|---|
+| Board | 10 (`BoardDirectorDiscussionIntake` ×2, `boardDirectorDiscussion.chairOptional` ×2, `boardroomGatherHandoff` ×2, `BoardroomRoomPanel`, `BoardRoomLivingModelScene`, `BoardRoomPracticeMeetingScene`, `BoardroomLivingTableEntranceSeed`) | Test setup: "useSharedWorkAttachmentComposer must run inside WorkAttachmentComposerProvider". The components are rendered without the provider the app supplies | None: intake, review, resume and advice all work in the page |
+| Research panel | `ResearchLibraryPanel` ×3 | The tests' `runResearch` mock is outdated (argument `undefined`) | None: research, save and Reopen work |
+| Chat research grounding | `researchSupportLivePath` ×11 | Expected "RESEARCH SUPPORT" prompt lines are no longer emitted | Not in these five workflows. **Worth an owner's look:** chat replies to "research X" typed in ordinary chat may lack the research-support framing |
+| Projects | `ProjectFormedSurface` ×1 (room label "Auditorium" vs. expected "Study Hall"); `projectHomesExclusiveDestination` ×2 (removed helper; presence flag); `startNewProjectNeverOpensCreate` ×1 (searches source text) | Outdated expectations / source-text checks | None: Projects open, help and section removal work |
+| Navigation | `destinationWiring` ×2 | Source-text checks for removed code | None |
+| VTS | `truthfulnessRemovals` ×2 | 5-second timeouts | None |
+| Date-dependent (any area) | `arrivalExperience` ×1, `welcomePresenceIntelligence` ×1 | Fail on base too when run on 2026-10-07 | — |
+
+### Live run: handed off (this container can't reach the hosts)
+
+- **Blocked here:** this session's network policy refuses `*.vercel.app` and `weercszpdcxjxauxrhmj.supabase.co`.
+- **No agent to hand it to from here:**
+  - No other agent with access is reachable from this session. ListAgents shows none, and the cloud sessions visible are idle and use the same policy.
+  - The task card that would start a session on your computer timed out twice.
+- **The handoff is self-contained:** `certification-handoff/HANDOFF.md`, `liveCertification.live.test.ts`, plus the simulated harness files.
+  - It pins `b3bf1f997` and its preview, and checks C1, C2, J1–J3, B1, P1–P3, R1, X1 with the real model on real accounts.
+  - It accepts dedicated test accounts or an authorized browser sign-in (`PAGE_HARNESS_STORAGE_STATE`).
+  - Any local Claude Code session on your machine, or the Research/VTS agent that already tested `b6282d1ee` live, can run it unchanged.
+- **Supabase (read-only):** this session *can* read the live project through the Supabase connector. After a live run, I can confirm account persistence (conversation, Projects, research, Brain records) for the test account directly.
+
+### Consolidated desktop walkthrough (`b3bf1f997` preview, about 25 minutes)
+
+Use a test account for 1–8 and your own account for 9.
+
+1. **C1 conversation:**
+   - Say "please remember the code PINEAPPLE-7".
+   - Reload, then open a new tab: it's still there.
+   - Account menu (your initial ▼) → Sign Out → sign in again: it's back.
+   - In a private window as account B: it isn't there.
+2. **J1–J3 course:**
+   - "I want to launch a course on ADHD-friendly productivity"
+   - "it's for ADHD business owners…"
+   - "every lesson needs a 5-minute action step"
+   - "give me three format options as a numbered list" → "2" → "actually no, the first" → "what did we choose for the format?"
+   - "give me an outline for the course with 3 lessons" → it appears **in chat** → "looks great" → "yes lesson 1"
+   - **Check:** lesson 1 opens in Create with the action step. Send "yes lesson 1" again: no second piece.
+3. **J5:** "give me a new outline for the course" → "write the full course in Create" asks for approval → "keep writing" continues the old piece → "write the full course in Create" → "yes" makes a new piece.
+4. **J4:** New Chat → Continue → ⋯ → Move to Project → open the Project → the lesson reopens → reload.
+5. **B1:** menu → Guidance → Boardroom → type "Should our course launch in January or March?" → leave via menu → Welcome Home → chat "any ideas for a newsletter name?" (ordinary answer, no Board questions) → Guidance → Boardroom → "Continue where I left off" → Begin Board Discussion → advice.
+6. **P3 + P2:** from the advice → menu → Build → Projects → Open Project → Ask for Help (seven choices, "For this project: …") → Brainstorm ideas → ideas about that project.
+7. **P1:** in the project → See the project → add section "Marketing" and a task → Remove section… → "What should happen to them?" → Move tasks to Inbox → reload: the task is in the Inbox.
+8. **R1:** in the project → Research → wait for the answer → Back to the project → Saved research → Reopen → the same research, nothing new starts.
+9. **X1 (your account):** Welcome Home → Continue → ⋯ → Remove from Recent on the old Board marketing question → it disappears → Undo brings it back → remove again → reload: still gone.
+
+Tell me the step number of anything that misbehaves, with a screenshot.
+
 ## Certification candidate (2026-10-07): `b3bf1f997`
 
 **Branch:** `one-brain/convergence` @ `b3bf1f997fb9c182b923f33395f6f6dd8dc4eae3` (local = remote, verified before testing)
