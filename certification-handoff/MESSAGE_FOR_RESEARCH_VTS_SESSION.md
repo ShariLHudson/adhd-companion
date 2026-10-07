@@ -18,9 +18,8 @@ You already reached the Vercel previews and Supabase. Please run the live, signe
   - R1 Research save → reopen
   - RX ordinary-chat "research X"
   - X1 Remove from Recent
-- **Please also report**, from your own lane's live checklist on this same preview:
-  - V1–V5: Back to origin, hand-off beats resume, Mind Map keeps its map, saved visual continues, VTS → Create
-  - W1: the Creation Workspace on a second browser
+- **Visual and Creation Workspace checks:** the script now covers V1–V5 and W1 too. Please add anything else from your own lane's live checklist.
+- **Start on desktop.** First confirm the deployed commit as described in HANDOFF.md ("First: confirm the deployed commit"), because the branch address can change.
 - **Send back:**
   - the printed `LIVE RESULTS` table
   - the preview host and commit you ran against

@@ -4,6 +4,43 @@
 **Preview of that commit:** https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HwRutWE6oXQHa4nX6Ano3jjZMhqx · branch host https://adhd-business-companion-vs3-git-o-4626ae-shari-hudsons-projects.vercel.app/companion
 **Production:** `main` untouched. **Release gate: CLOSED. Production: HOLD.**
 
+## Certification of exactly `81135935b`: status (2026-10-07, evening)
+
+**Commit confirmed before testing:**
+- GitHub `one-brain/convergence` = `81135935bc0fa5d77d20dedc1b77f274f1c9039c`, unchanged during certification.
+- Vercel deployment for that exact commit: "Deployment has completed" at 17:10 UTC (https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HwRutWE6oXQHa4nX6Ano3jjZMhqx).
+- Local test build: the same commit (built 16:53, four minutes after the commit). The server was restarted, not rebuilt.
+
+### SIMULATED (desktop 1280×900, local production build of `81135935b`, scripted model, fake Supabase)
+
+**14 page tests, 156 checks, 0 failures:**
+- 13 tests with 140 checks in one full run
+- the new visuals test, 16 checks, run on the same build
+
+| ID | Visuals and Creation Workspace (new) | Result |
+|---|---|---|
+| V1 | Research from the project → "Show This Visually" → VTS with exactly one "← Back to Course launch", no second back; the map is saved with the project id and research; Back returns to the project | PASS (6) |
+| V4 | The project's Saved visuals → Open → "← Back to capture" shows that visual's own material; still one Back | PASS (3) |
+| V3 | Mind Map: no new map, the same map id now a mind map with the same origin and research; no "Begin My Map"; nodes shown | PASS (3) |
+| V5 | "Develop this in Create" opens the Creation Workspace carrying the visual id, project origin and research | PASS (2) |
+| W1 | A second browser on the same account: "open creation workspace" opens the same unfinished workspace (same title), through account sync | PASS (1) |
+| V2 | A new Research hand-off opens the new research (its Back names it), with nothing from the older visual | PASS (1) |
+
+**Observed, not a defect:** a research answer that is a single paragraph can't be laid out visually. Spark says so plainly: "I need a little more saved from this research before I can lay it out visually…". A structured answer (headed points, like real model answers) works. The live run will show what the real model's answers do here.
+
+### REAL-MODEL / LIVE: not run
+
+- This session still has no route to the preview (`EGRESS_BLOCKED`) and no browser or computer tools. No reachable session has access either.
+- The live script now covers, at desktop size:
+  - C1, C2: conversation recovery and account separation
+  - J1–J3: course approval → lesson 1 → verified save
+  - B1, P1–P3: Board exit/resume, section removal, help choices, Board → Projects → Brainstorm
+  - R1, RX: Research save → reopen, ordinary-chat "research X"
+  - **V1–V5, W1:** visuals and the Creation Workspace on a second browser
+  - X1: Remove from Recent
+- It confirms the deployed commit first, because the branch address can change.
+- It's in `certification-handoff/` with `MESSAGE_FOR_RESEARCH_VTS_SESSION.md` to paste into the Research/VTS session.
+
 ## Candidate `81135935b` (2026-10-07, latest)
 
 **Branch:** `one-brain/convergence` @ `81135935bc0fa5d77d20dedc1b77f274f1c9039c` (pushed once).

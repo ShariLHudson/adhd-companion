@@ -267,6 +267,89 @@ describe.skipIf(!RUN)("LIVE certification — candidate 81135935b", () => {
     void projectName;
   });
 
+  it("V1–V5, W1 visuals and Creation Workspace: Research → visual with one Back to origin; saved visual reopens; Mind Map keeps the map; → Create keeps research and origin; workspace on another browser; new hand-off beats old resume", async () => {
+    const ctxA = await contextFor(browser, "A");
+    const p = await ctxA.newPage();
+    await boot(p);
+    const ls = (suffix: string) => p.evaluate((sfx) => {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const k = localStorage.key(i)!;
+        if (k === sfx || k.endsWith(`/${sfx}`)) { try { return JSON.parse(localStorage.getItem(k) ?? "null"); } catch { return null; } }
+      }
+      return null;
+    }, suffix);
+    const maps = async () => {
+      const v = (await ls("companion-visual-focus-maps-v1")) as unknown;
+      const list = Array.isArray(v) ? v : v && typeof v === "object" ? Object.values(v as Record<string, unknown>).find(Array.isArray) ?? [] : [];
+      return list as Array<{ id: string; mode?: string; originWork?: { projectId?: string }; researchCollectionIds?: string[] }>;
+    };
+    const toVisual = async () => {
+      await p.waitForTimeout(60_000); // real research answer
+      await tid(p, "research-add-session").click().catch(() => undefined);
+      await p.waitForTimeout(3_000);
+      await tid(p, "research-library-use-this-from-conversation").click();
+      await visible(p, "research-library-use-options", 20_000);
+      const opts = (await tid(p, "research-library-use-options").innerText()).replace(/\s+/g, " ");
+      await tid(p, "research-library-use-options").getByRole("button", { name: /Visually/ }).first().click({ timeout: 15_000 }).catch(() => undefined);
+      const ok = await visible(p, "visual-focus-workspace", 60_000);
+      return { ok, opts, notice: await tid(p, "research-visual-substance-notice").innerText().catch(() => "") };
+    };
+    await menu(p, "build", "projects");
+    const card = p.locator("[data-testid^=library-primary-]").first();
+    if (!(await card.isVisible({ timeout: 30_000 }).catch(() => false))) { check("V1", "account A has a project", false, "create one project, then rerun"); return; }
+    await card.click();
+    await visible(p, "project-home-detail");
+    await tid(p, "project-home-research").click();
+    const v = await toVisual();
+    check("V1", "Research → 'Show … Visually' opens the Visual Thinking Studio", v.ok, v.ok ? "" : `options: ${v.opts.slice(0, 200)} | notice: ${v.notice}`);
+    if (!v.ok) return;
+    const backText = await tid(p, "vts-back-to-origin").innerText().catch(() => "");
+    check("V1", "exactly one '← Back to <origin>' and no second back", (await p.getByTestId("vts-back-to-origin").count()) === 1 && (await p.getByTestId("loose-thinking-close").count()) === 0, backText);
+    await tid(p, "loose-thinking-help-me-see-this").click().catch(() => undefined);
+    await p.waitForTimeout(5_000);
+    const mapA = (await maps()).at(-1);
+    check("V1", "saved with its origin (project id + research)", Boolean(mapA?.originWork?.projectId && mapA?.researchCollectionIds?.length), JSON.stringify(mapA?.originWork ?? null));
+    await shot(p, "V1");
+    await tid(p, "vts-back-to-origin").click();
+    check("V1", "Back to origin returns to the project", await visible(p, "project-home-detail", 30_000));
+    check("V4", "Saved visuals lists it", await visible(p, "project-home-saved-visuals", 30_000));
+    await tid(p, "project-home-saved-visuals-open").click().catch(() => undefined);
+    await visible(p, "visual-focus-workspace", 30_000);
+    await tid(p, "loose-thinking-working-back").click().catch(() => undefined);
+    await p.waitForTimeout(4_000);
+    check("V4", "reopened → Back to capture: same work, one Back to origin", (await p.getByTestId("vts-back-to-origin").count()) === 1 && (await p.getByTestId("loose-thinking-close").count()) === 0);
+    const before = (await maps()).length;
+    await tid(p, "loose-thinking-know-what-i-want").click().catch(() => undefined);
+    await tid(p, "visual-type-picker-mind-map").click().catch(() => undefined);
+    await p.waitForTimeout(5_000);
+    const m3 = await maps();
+    const same = m3.find((m) => m.id === mapA?.id);
+    check("V3", "Mind Map keeps the same map, origin and research (no new map, no 'Begin My Map')", m3.length === before && same?.mode === "mind-map" && Boolean(same?.originWork?.projectId) && !/Begin My Map/.test(await text(p)), `${before}→${m3.length} mode=${same?.mode}`);
+    await shot(p, "V3");
+    await tid(p, "vts-send-to-create").click().catch(() => undefined);
+    const cw = await visible(p, "creation-workspace-panel", 60_000);
+    const store = JSON.stringify((await ls("companion-creation-workspace-store-v1")) ?? "");
+    check("V5", "Develop this in Create keeps the visual, origin and research", cw && store.includes(mapA?.id ?? "@@") && /researchCollectionIds/.test(store), store.slice(0, 160));
+    const title = cw ? await tid(p, "creation-workspace-panel").locator("h1").first().innerText().catch(() => "") : "";
+    await shot(p, "V5");
+    await p.waitForTimeout(5_000);
+    const p2 = await (await contextFor(browser, "A")).newPage();
+    await boot(p2);
+    await say(p2, "open creation workspace", 15_000);
+    const cw2 = await visible(p2, "creation-workspace-panel", 60_000);
+    const title2 = cw2 ? await tid(p2, "creation-workspace-panel").locator("h1").first().innerText().catch(() => "") : "";
+    check("W1", "another browser opens the same unfinished Creation Workspace", cw2 && Boolean(title) && title2 === title, `"${title}" vs "${title2}"`);
+    await shot(p2, "W1");
+    await boot(p);
+    await menu(p, "get-advice", "research-library");
+    await tid(p, "research-library-input").fill(`ways to grow a small podcast audience ${STAMP}`);
+    await tid(p, "research-library-explore").click();
+    const v2 = await toVisual();
+    const back2 = await tid(p, "vts-back-to-origin").innerText().catch(() => "");
+    check("V2", "a new Research hand-off opens the new research, not the older visual", v2.ok && /podcast/i.test(back2), back2);
+    await shot(p, "V2");
+  });
+
   it("RX ordinary chat 'research X': Research opens with the question and gives a real answer (or chat answers); never silent", async () => {
     for (const phrase of ["research the newest AI tools", "find out what the latest ADHD coaching trends are"]) {
       const p = await (await contextFor(browser, "A")).newPage();

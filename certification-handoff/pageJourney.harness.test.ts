@@ -1285,6 +1285,168 @@ describe.skipIf(!RUN)("page harness", () => {
     expect(results.filter(([, ok]) => !ok).map(([n]) => n)).toEqual([]);
   });
 
+  it("visuals and Creation Workspace: Research → visual with one Back to origin; Mind Map keeps the same map; → Create keeps research and origin; workspace on another browser; saved visual reopens as the same work; a new hand-off beats the old resume point", async () => {
+    store = createMemoryBrainStore();
+    const supa = createFakeSupabase(USER);
+    const log: string[] = [];
+    const { hashString } = await import("@/lib/memberSync/engine");
+    const PROJECT = { id: "proj-vts-1", name: "Course launch", goal: "Launch the ADHD productivity course", color: "#1e4f4f", goals: [], status: "in-progress", horizon: "now", archived: false, createdAt: "2026-10-01T10:00:00.000Z", updatedAt: "2026-10-01T10:00:00.000Z", nextAction: "", projectHomeRoomId: "writing-room" };
+    supa.rows("companion_member_records").push({ id: crypto.randomUUID(), user_id: USER, domain: "member_store", record_id: "companion-projects-v1", status: "active", schema_version: 1, record_version: 1,
+      payload: { format: "json", value: [PROJECT], hash: hashString(JSON.stringify([PROJECT])), savedAt: new Date().toISOString() }, created_at: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    scripted.length = 0;
+    scripted.push(
+      [/podcast/i, "PODCAST-RESEARCH: here is what grows a small podcast audience.\n\n**Guest swaps**\nAppearing on shows of a similar size brings listeners who already like the format, and inviting those hosts back doubles the reach.\n\n**Weekly release**\nA consistent weekly release day builds a listening habit; irregular shows lose subscribers between episodes.\n\n**Short clips**\nThirty to sixty second clips shared on social media are the main discovery path for new listeners of small shows.\n\n**Episode length**\nPractical episodes under thirty minutes are finished more often than long interviews."],
+      [/Course launch/i, "COURSE-RESEARCH: here is what makes a course launch work for ADHD buyers.\n\n**Free mini-lesson**\nA short free lesson that solves one small problem shows the teaching style and builds trust before the sale opens.\n\n**Waitlist two weeks ahead**\nOpening a waitlist about two weeks before launch gathers interested buyers and raises first-week sales.\n\n**Live session**\nA live Q&A or workshop during launch week answers objections in real time and lifts conversions.\n\n**Early-bird pricing**\nA clear early-bird window rewards quick decisions, which suits buyers who act on momentum.\n\n**Short daily emails**\nBrief daily emails during launch keep ADHD buyers engaged without overwhelming them."],
+    );
+    const results: Array<[string, string, boolean, string]> = [];
+    const check = (id: string, name: string, ok: boolean, detail = "") => { results.push([id, name, ok, detail]); };
+    const print = (t: string) => console.log(`${t}\n` + results.map(([id, n, ok, d]) => `${ok ? "PASS" : "FAIL"}  ${id}  ${n}${ok || !d ? "" : `  — ${d}`}`).join("\n"));
+    onTestFailed(() => print("VISUALS (stopped early):"));
+    let h = await openPage(browser, supa, log);
+    let page = h.page;
+    const text = async () => (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    const tid = (id: string) => page.getByTestId(id).first();
+    const visible = (id: string, ms = 60_000) => tid(id).waitFor({ timeout: ms }).then(() => true, () => false);
+    const menu = async (section: string, dest: string) => {
+      await page.locator("[data-testid=estate-room-experience-menu] button.estate-room-experience-menu__trigger").filter({ visible: true }).first().click();
+      await page.waitForTimeout(800);
+      await tid(`estate-room-menu-section-${section}`).click();
+      await page.waitForTimeout(800);
+      await tid(`estate-open-${dest}`).click();
+      await page.waitForTimeout(4_000);
+    };
+    const openProject = async () => {
+      if (await tid("project-home-detail").isVisible().catch(() => false)) return true;
+      await menu("build", "projects");
+      await visible("project-homes-gallery");
+      await page.getByTestId(`library-primary-${PROJECT.id}`).first().click({ timeout: 15_000 });
+      return visible("project-home-detail");
+    };
+    const ls = (suffix: string) => page.evaluate((sfx) => {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const k = localStorage.key(i)!;
+        if (k === sfx || k.endsWith(`/${sfx}`)) { try { return JSON.parse(localStorage.getItem(k) ?? "null"); } catch { return null; } }
+      }
+      return null;
+    }, suffix);
+    const maps = async () => {
+      const v = (await ls("companion-visual-focus-maps-v1")) as unknown;
+      const list = Array.isArray(v) ? v : v && typeof v === "object" ? Object.values(v as Record<string, unknown>).find(Array.isArray) ?? [] : [];
+      return list as Array<{ id: string; mode?: string; originWork?: { projectId?: string }; researchCollectionIds?: string[] }>;
+    };
+    const boot = async () => {
+      await page.goto(`${BASE}/companion`, { waitUntil: "domcontentloaded", timeout: 600_000 });
+      const intro = page.getByRole("button", { name: "Continue to Welcome Home" });
+      await Promise.race([intro.waitFor({ timeout: 300_000 }), page.locator("textarea").first().waitFor({ timeout: 300_000 })]).catch(() => undefined);
+      if (await intro.isVisible().catch(() => false)) await intro.click();
+      await page.waitForTimeout(8_000);
+    };
+    /** In Research: save what was found, then "Show … Visually". */
+    const researchToVisual = async (answerMark: string) => {
+      await page.getByText(answerMark).last().waitFor({ timeout: 120_000 }).catch(() => undefined);
+      await page.waitForTimeout(3_000);
+      console.log("RESEARCH CONTROLS:", (await page.locator("[data-testid^=research-]").evaluateAll((els) => els.map((e) => `${e.getAttribute("data-testid")}${e.tagName === "BUTTON" ? `[${(e.textContent ?? "").trim().slice(0, 30)}]` : ""}`))).join(", ").slice(0, 1500));
+      await tid("research-add-session").click().catch((e) => console.log("NO ADD SESSION", String(e).slice(0, 100)));
+      await page.waitForTimeout(2_000);
+      await tid("research-library-use-this-from-conversation").click();
+      const opts = await visible("research-library-use-options", 20_000);
+      console.log("USE OPTIONS:", opts, opts ? (await tid("research-library-use-options").innerText()).replace(/\s+/g, " ").slice(0, 600) : "", "| notice:", await tid("research-visual-substance-notice").innerText().catch(() => "none"));
+      await tid("research-library-use-options").getByRole("button", { name: /Visually/ }).first().click({ timeout: 15_000 }).catch((e) => console.log("NO VISUAL OPTION", String(e).slice(0, 120)));
+      await page.waitForTimeout(3_000);
+      console.log("AFTER VISUAL CLICK:", (await text()).slice(0, 400), "| notice:", await tid("research-visual-substance-notice").innerText().catch(() => "none"));
+      return visible("visual-focus-workspace", 60_000);
+    };
+
+    await boot();
+    // V1: Research from the project → visual; one "← Back to <origin>".
+    await openProject();
+    await tid("project-home-research").click();
+    const vtsOpen = await researchToVisual("COURSE-RESEARCH");
+    check("V1", "Research → 'Show this visually' opens the Visual Thinking Studio", vtsOpen, (await text()).slice(0, 200));
+    await h.shot("vts-1-hub");
+    const backs = await page.getByTestId("vts-back-to-origin").count();
+    const backText = backs ? await tid("vts-back-to-origin").innerText() : "";
+    check("V1", "exactly one '← Back to <origin>', naming the project", backs === 1 && /Back to/.test(backText) && /Course launch/.test(backText), `${backs} × "${backText}"`);
+    check("V1", "no second back control", (await page.getByTestId("loose-thinking-close").count()) === 0, "");
+    const capture = await text();
+    check("V1", "the visual starts from this research's material", capture.includes("waitlist") || capture.includes("mini-lesson"), capture.slice(0, 200));
+    // Lay it out so it is saved with its origin.
+    await tid("loose-thinking-help-me-see-this").click().catch(() => undefined);
+    await page.waitForTimeout(4_000);
+    const m0 = await maps();
+    const mapA = m0.at(-1);
+    check("V1", "the visual is saved with its origin (project id and research)", Boolean(mapA?.originWork?.projectId === PROJECT.id && mapA?.researchCollectionIds?.length), JSON.stringify(mapA?.originWork ?? null));
+
+    // V4: leave, reopen from the project's Saved visuals, Back to capture: same work.
+    await tid("vts-back-to-origin").click();
+    check("V1", "Back to origin returns to the project", await visible("project-home-detail", 30_000), "");
+    check("V4", "the project lists it under Saved visuals", await visible("project-home-saved-visuals", 20_000), "");
+    await tid("project-home-saved-visuals-open").click().catch(() => undefined);
+    const reopened = await visible("visual-focus-workspace", 30_000);
+    await page.waitForTimeout(3_000);
+    await tid("loose-thinking-working-back").click().catch(() => undefined);
+    await page.waitForTimeout(3_000);
+    const cap2 = await text();
+    check("V4", "reopened → Back to capture shows that visual's own material", reopened && (cap2.includes("waitlist") || cap2.includes("mini-lesson")), cap2.slice(0, 200));
+    check("V4", "still one Back to origin, no second back", (await page.getByTestId("vts-back-to-origin").count()) === 1 && (await page.getByTestId("loose-thinking-close").count()) === 0, "");
+    await h.shot("vts-4-reopened-capture");
+
+    // V3: Mind Map keeps the same map (no new map, same origin and research).
+    const before = (await maps()).length;
+    await tid("loose-thinking-know-what-i-want").click().catch(() => undefined);
+    await tid("visual-type-picker-mind-map").click().catch(() => undefined);
+    await page.waitForTimeout(4_000);
+    const m3 = await maps();
+    const same = m3.find((m) => m.id === mapA?.id);
+    check("V3", "Mind Map: no new map; the same map is now a mind map with its origin and research", m3.length === before && same?.mode === "mind-map" && same?.originWork?.projectId === PROJECT.id && (same?.researchCollectionIds?.length ?? 0) > 0, `${before}→${m3.length} mode=${same?.mode}`);
+    check("V3", "no fresh discovery interview", !/Begin My Map/.test(await text()), "");
+    check("V3", "the mind map shows nodes", (await page.locator("[data-testid^=mind-map-node-]").count()) > 0, "");
+    await h.shot("vts-3-mindmap");
+
+    // V5: Develop this in Create — keeps research and origin.
+    await tid("vts-send-to-create").click().catch(() => undefined);
+    const cw = await visible("creation-workspace-panel", 60_000);
+    check("V5", "'Develop this in Create' opens the Creation Workspace", cw, (await text()).slice(0, 200));
+    const store1 = (await ls("companion-creation-workspace-store-v1")) as unknown;
+    const s1 = JSON.stringify(store1 ?? "");
+    check("V5", "the workspace keeps the visual, its origin and its research", s1.includes(mapA?.id ?? "@@") && s1.includes(PROJECT.id) && /researchCollectionIds/.test(s1), s1.slice(0, 200));
+    const cwTitle = cw ? (await tid("creation-workspace-panel").locator("h1").first().innerText().catch(() => "")) : "";
+    await h.shot("vts-5-create");
+    await page.waitForTimeout(3_000); // member sync is debounced
+
+    // W1: another browser — the unfinished workspace is there.
+    const h2 = await openPage(browser, supa, log);
+    const keep = { h, page };
+    h = h2; page = h2.page;
+    await boot();
+    const box = page.getByRole("button", { name: "Send", exact: true }).first().locator("xpath=ancestor::*[.//textarea][1]//textarea").first();
+    await box.fill("open creation workspace");
+    await box.press("Enter");
+    const cw2 = await visible("creation-workspace-panel", 60_000);
+    const title2 = cw2 ? await tid("creation-workspace-panel").locator("h1").first().innerText().catch(() => "") : "";
+    check("W1", "another browser: the unfinished Creation Workspace opens with the same work", cw2 && Boolean(cwTitle) && title2 === cwTitle, `"${cwTitle}" vs "${title2}"`);
+    await h.shot("vts-w1-other-browser");
+    h = keep.h; page = keep.page;
+
+    // V2: a new Research hand-off beats the older resume point.
+    await boot();
+    await menu("get-advice", "research-library");
+    await tid("research-library-input").fill("ways to grow a small podcast audience");
+    await tid("research-library-explore").click();
+    await researchToVisual("PODCAST-RESEARCH");
+    await page.waitForTimeout(3_000);
+    const b = await text();
+    const showsB = /guest swaps|weekly release|podcast/i.test(b);
+    const showsA = /waitlist|mini-lesson/i.test(b);
+    console.log("V2 FACTS: showsB", showsB, "showsA", showsA, "| A context:", showsA ? b.slice(Math.max(0, b.search(/waitlist|mini-lesson/i) - 200), b.search(/waitlist|mini-lesson/i) + 100) : "");
+    const backB = await tid("vts-back-to-origin").innerText().catch(() => "");
+    check("V2", "a new hand-off opens the new research (its Back names it), with nothing from the older visual", showsB && !showsA && /podcast/i.test(backB), `back="${backB}"`);
+    await h.shot("vts-2-new-handoff");
+
+    print("VISUALS:");
+    expect(results.filter(([, , ok]) => !ok).map(([id, n]) => `${id} ${n}`)).toEqual([]);
+  });
+
   it("build integrity: changed outline needs fresh approval; 'keep writing' resumes the piece; a repeated send never makes another piece", async () => {
     store = createMemoryBrainStore();
     modelPrompts.length = 0;

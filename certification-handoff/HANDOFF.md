@@ -16,6 +16,18 @@
 
 **What it contains** (checked by ancestry): `557b078c8` (MISC UPDATES), `a1f05cc3d` and `032dbd03c` (through `557b078c8`, not added twice), `dfa71596c`, Research/VTS `caedafb8a` and `b5fbc341b`. Continuity repair `e78283fb9` is included as `cd91d6dbd`, the same change in all 8 files (only one blank line differs), because it comes from a different base (`0620aa0a8`).
 
+## First: confirm the deployed commit (the branch address can change)
+
+1. `git ls-remote https://github.com/ShariLHudson/adhd-business-companion-vs3 one-brain/convergence` must print `81135935bc0fa5d77d20dedc1b77f274f1c9039c`.
+2. On https://vercel.com/shari-hudsons-projects/adhd-business-companion-vs3/HwRutWE6oXQHa4nX6Ano3jjZMhqx check two things:
+   - it shows commit `81135935b` with status Ready;
+   - its "Domains" list includes `adhd-business-companion-vs3-git-o-4626ae-shari-hudsons-projects.vercel.app`.
+
+   Prefer the deployment's own unique `…vercel.app` URL, shown on that page, as `PAGE_HARNESS_BASE`. It can't move.
+3. If either check fails, stop and report: someone changed the candidate.
+
+Start on desktop: the script uses a 1280×900 viewport.
+
 ## Run (about 25 minutes, unattended)
 
 ```bash
@@ -54,19 +66,26 @@ npx vitest run e2e-harness/liveCertification.live.test.ts --testTimeout=3600000 
 | P1 | Removing a section asks what happens to its tasks; the task is kept in the Inbox; it persists after reload |
 | R1 | Research from the project → real answer → Back → Saved research → Reopen opens that exact research |
 | RX | Ordinary chat "research the newest AI tools" / "find out what the latest ADHD coaching trends are": Research opens with the question and gives a real answer (not a failure or stall); no claim of live web results without sources |
+| V1 | Research (from a project) → "Show … Visually" → exactly one "← Back to <project>", no second back; the map is saved with its origin and research; Back returns to the project |
+| V4 | The project's Saved visuals → Open → "← Back to capture": the same work, one Back to origin |
+| V3 | Mind Map keeps the same map (no new map, same origin and research, no "Begin My Map") |
+| V5 | "Develop this in Create" opens the Creation Workspace carrying the visual id, origin and research |
+| W1 | A second browser signed in as A: "open creation workspace" opens the same unfinished workspace (same title) |
+| V2 | A new Research hand-off ("ways to grow a small podcast audience") opens that research, not the older visual |
 | X1 | Remove from Recent: the item leaves Continue; Undo is offered and brings it back |
 
 Account persistence can be confirmed afterwards, read-only, in Supabase `companion_member_records` (domains `member_store`, `brain_matter`) for the test account's user id.
 
 ## Already verified at `81135935b` (SIMULATED: local production build of this exact commit, scripted model, fake Supabase)
 
-The page harness (`pageJourney.harness.test.ts` + `fakeSupabase.ts` in this folder) has **13 tests and 140 per-step checks, all passing**:
+The page harness (`pageJourney.harness.test.ts` + `fakeSupabase.ts` in this folder) has **14 tests and 156 per-step checks, all passing**:
 
 - course, proposal and event journeys
 - build integrity
 - continuity and second account
 - Remove from Recent
-- the five UI workflows: Board exit/resume, Board → Projects → Brainstorm, Projects help choices, section removal, Research save → return → reopen
-- ordinary-chat "research X": four phrases; Research opens with the question and answers it with one research-framed model call
+- the five UI workflows
+- ordinary-chat "research X"
+- **visuals and Creation Workspace, V1–V5 and W1 (16 checks)**
 
 The live run is what remains.
