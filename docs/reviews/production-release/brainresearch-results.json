@@ -1,0 +1,174 @@
+[
+  {
+    "id": "B0 seed in account",
+    "ok": true,
+    "detail": {
+      "titles": [
+        "What should someone know about None of those. Open my research about g",
+        "pros and cons of a 73 year old woman going back to college",
+        "pros and cons of a 73 year old woman going back to college",
+        "What should someone know about sources 1 and 3 to make a good next dec",
+        "Price the course"
+      ]
+    }
+  },
+  {
+    "id": "B1 dental work in focus",
+    "ok": true,
+    "detail": {
+      "matters": [
+        "Plan a Harbor Dental client workshop proposal"
+      ],
+      "focus": "mat_2b2e80bf77124c04"
+    }
+  },
+  {
+    "id": "R1 rename research (UI + database)",
+    "ok": true,
+    "detail": {
+      "reply": "Renamed \"What should someone know about None of those. Open my research about g\" to \"AUDIT test - college at 73\". It's saved to your account.",
+      "dbTitle": "AUDIT test - college at 73",
+      "count": 5,
+      "dentalKeys": []
+    }
+  },
+  {
+    "id": "R1b the thread carries the new name too",
+    "ok": true,
+    "detail": {
+      "localTitle": "AUDIT test - college at 73"
+    }
+  },
+  {
+    "id": "S1 \"the college research\" (now two different fits): asks, then opens the one picked; nothing new",
+    "ok": true,
+    "detail": {
+      "reply": "I found more than one saved research that fits. Which one should I open?\n\nAUDIT test - college at 73 (Oct 9)\npros and cons of a 73 year old woman going back to college (Oct 9)",
+      "pickReply": "Opening your research \"pros and cons of a 73 year old woman going back to college\" from Oct 9. Nothing new was started.",
+      "count": 5
+    }
+  },
+  {
+    "id": "L1 reload keeps the conversation",
+    "ok": true,
+    "detail": {
+      "kept": true
+    }
+  },
+  {
+    "id": "S2 \"None of those. Open my research about…\" opens it, nothing new",
+    "ok": true,
+    "detail": {
+      "reply": "Opening your research \"pros and cons of a 73 year old woman going back to college\" from Oct 9. Nothing new was started. You asked this 2 times; this is the most recent.",
+      "count": 5
+    }
+  },
+  {
+    "id": "P1 repeating the same research reopens it (no copy)",
+    "ok": true,
+    "detail": {
+      "reply": "You already have research on this from Oct 9 — I opened it instead of starting another copy. Say \"research it again\" if you want a fresh run.",
+      "count": 5
+    }
+  },
+  {
+    "id": "W1 back to the dental work",
+    "ok": true,
+    "detail": {
+      "reply": "Back to it. Plan a Harbor Dental client workshop proposal. Pick up there?",
+      "focus": "mat_2b2e80bf77124c04"
+    }
+  },
+  {
+    "id": "W2 college research opens; dental work untouched; focus kept",
+    "ok": true,
+    "detail": {
+      "reply": "Opening your research \"pros and cons of a 73 year old woman going back to college\" from Oct 9. Nothing new was started. You asked this 2 times; this is the most",
+      "focus": "mat_2b2e80bf77124c04",
+      "dentalKeys": []
+    }
+  },
+  {
+    "id": "C1 college research files on its own work, never the dental work",
+    "ok": true,
+    "detail": {
+      "prop": {
+        "status": 200,
+        "body": {
+          "available": true,
+          "committed": true,
+          "outcomes": [
+            {
+              "kind": "research_finding",
+              "accepted": true,
+              "reason": null,
+              "matterId": "mat_7e0886d2712040d3"
+            }
+          ]
+        }
+      },
+      "collegeMatter": "pros and cons of a 73 year old woman going back to college",
+      "focus": "mat_2b2e80bf77124c04"
+    }
+  },
+  {
+    "id": "X1 a wrong reference starts nothing; picking from the list opens that one",
+    "ok": true,
+    "detail": {
+      "askedPick": true,
+      "picked": true,
+      "tail": "cons of a 73 year old woman going back to college (Oct 9)\nWhat should someone know about sources 1 and 3 to make a good next dec (Oct 7)\n\n2\n\nOpening your research \"pros and cons of a 73 year old woman going back to college\" from Oct 9. Nothing new was started.",
+      "count": 5
+    }
+  },
+  {
+    "id": "X2 rename a piece of work (read back from the database)",
+    "ok": true,
+    "detail": {
+      "reply": "Renamed \"Plan a Harbor Dental client workshop proposal\" to \"Harbor Dental workshop 2026\". It's saved.",
+      "dbTitle": "Harbor Dental workshop 2026"
+    }
+  },
+  {
+    "id": "V1 concept map of pasted notes: not a task on the dental work",
+    "ok": true,
+    "detail": {
+      "trace": "",
+      "footholdText": "Renamed from \"Plan a Harbor Dental client workshop proposal\"",
+      "visualShown": false,
+      "keysBefore": 0,
+      "keysAfter": 0
+    }
+  },
+  {
+    "id": "F1 failed save is not reported as saved",
+    "ok": true,
+    "detail": {
+      "reply": "I renamed \"pros and cons of a 73 year old woman going back to college\" to \"College decision 2026\" on this device, but it hasn't reached your account yet, so it isn't saved everywhere. I'll keep trying; check again in a moment.",
+      "dbTitleWhileFailing": "pros and cons of a 73 year old woman going back to college"
+    }
+  },
+  {
+    "id": "F2 the change reaches the account once it is reachable again",
+    "ok": true,
+    "detail": {
+      "dbTitleAfterRetry": "College decision 2026"
+    }
+  },
+  {
+    "id": "I1 second account sees none of the first account's research",
+    "ok": true,
+    "detail": {
+      "bCount": 0,
+      "bReply": "I couldn't find any saved research, so nothing was opened and nothing new was started."
+    }
+  },
+  {
+    "id": "N1 no research run was started by any resume, rename or repeat",
+    "ok": true,
+    "detail": {
+      "exploreModelCalls": 0,
+      "modelCalls": 0
+    }
+  }
+]
