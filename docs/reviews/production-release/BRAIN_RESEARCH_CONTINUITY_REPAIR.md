@@ -131,3 +131,28 @@ The script and raw results are pushed (`bedcef9`).
 5. Kill switch, unchanged: `NEXT_PUBLIC_ONE_BRAIN=0` (the research actions ride on the Brain turn). No database migration.
 
 **No merge and no deployment were done.**
+
+---
+
+## Erratum (2026-10-09): full-suite test counts
+
+**What was wrong:** §3 quoted **unique test names** (21,030 base and 21,056 branch) as test totals.
+
+**The Vitest totals from the same saved runs** (no rerun):
+
+| | Vitest total | Passed | Failed | Skipped | Unique names |
+|---|---|---|---|---|---|
+| Base `0cb567fe7` | **21,041** | 20,389 | **588** | 64 | 21,030 |
+| Branch `a82c2dfe7` | **21,067** | 20,415 | **588** | 64 | 21,056 |
+
+**Why they differ by 11:** in both runs, 8 test names repeat (parameterised tests such as `memberAuth.route` and `companionIntentRouting`), giving **11 extra rows**. All 19 of those rows **pass** in both runs, so the failure comparison is unaffected.
+
+**Where the +26 tests come from:**
+
+| File | Base | Branch |
+|---|---|---|
+| `researchContinuity.test.ts` | 0 | 23 |
+| `researchContract.test.ts` | 17 | 19 |
+| `client.test.ts` | 5 | 6 |
+
+**Conclusions unchanged:** 588 failing in each; 0 new failures attributable to the repair. The 21,041 base figure matches the earlier recorded run of `0cb567fe7`.
