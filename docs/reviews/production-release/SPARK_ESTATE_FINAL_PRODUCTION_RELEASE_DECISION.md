@@ -211,7 +211,7 @@ The two checks that expected the old claim prompt now test the stricter Round 0A
 | Check | Result |
 |---|---|
 | Two-account image privacy | **9/9** (§4) |
-| Isolation and persistence suite (both accounts reset first) | RUNNING: rerun in progress; result to follow in this file |
+| Isolation and persistence suite (both accounts reset first) | **Partial: 6/6 checks run passed** (S1.0 sign-out, S1.1–S1.5: B sees and sends none of A's data; requests carry the member token). The local dev server stopped mid-run and the founder ended the session before a full rerun. **S2–S5 (persistence, failed saves, concurrent edits, legacy claim) were NOT rerun on `0cb567fe7`**; they passed 24/24 on the earlier reconciled candidate. |
 
 ### Journeys rerun after the final integration commit
 
